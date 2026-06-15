@@ -53,7 +53,7 @@ under `samples`.
 ## Apply Guarantees
 
 - Requires the old `SECRET_KEY` to decrypt legacy Fernet-encrypted X tokens and runtime settings.
-- Re-encrypts migrated X tokens and runtime settings with the new `SECRET_KEY`; settings include the supplied `--key-id`.
+- Re-encrypts migrated X tokens and runtime settings with AES-256-GCM key material derived from the new `SECRET_KEY`; settings include the supplied `--key-id`.
 - Preserves valid user, bookmark, collection, summary, and X connection IDs.
 - Validates ownership and referential integrity for bookmarks, summaries, collections, collection memberships, and X connections.
 - Sanitizes archived HTML during import.

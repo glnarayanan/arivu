@@ -19,6 +19,7 @@ import (
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
+	"github.com/glnarayanan/arivu/internal/secrets"
 )
 
 const xScopes = "bookmark.read tweet.read users.read offline.access"
@@ -413,7 +414,11 @@ func normalizeForDedup(raw string) string {
 }
 
 func sealSecret(secretKey, plaintext string) (string, error) {
-	block, err := aes.NewCipher(secretMaterial(secretKey))
+	key, err := secrets.EncryptionKey(secretKey)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -434,7 +439,11 @@ func openSecret(secretKey, encoded string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	block, err := aes.NewCipher(secretMaterial(secretKey))
+	key, err := secrets.EncryptionKey(secretKey)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -452,11 +461,6 @@ func openSecret(secretKey, encoded string) (string, error) {
 		return "", err
 	}
 	return string(plaintext), nil
-}
-
-func secretMaterial(secretKey string) []byte {
-	sum := sha256.Sum256([]byte(secretKey))
-	return sum[:]
 }
 
 func pkceChallenge(verifier string) string {

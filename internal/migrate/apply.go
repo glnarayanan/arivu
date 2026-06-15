@@ -24,6 +24,7 @@ import (
 	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/sanitize"
+	"github.com/glnarayanan/arivu/internal/secrets"
 )
 
 type ApplyOptions struct {
@@ -465,7 +466,7 @@ func decryptLegacySecret(token string, oldSecretKey string) (string, error) {
 	if oldSecretKey == "" {
 		return "", errors.New("old secret key is required")
 	}
-	key := sha256.Sum256([]byte(oldSecretKey))
+	key := legacyFernetKey(oldSecretKey)
 	raw, err := base64.URLEncoding.DecodeString(token)
 	if err != nil {
 		raw, err = base64.RawURLEncoding.DecodeString(token)
@@ -503,7 +504,11 @@ func decryptLegacySecret(token string, oldSecretKey string) (string, error) {
 }
 
 func sealNewSecret(secretKey, plaintext string) (string, error) {
-	block, err := aes.NewCipher(secretMaterial(secretKey))
+	key, err := secrets.EncryptionKey(secretKey)
+	if err != nil {
+		return "", err
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
@@ -534,7 +539,10 @@ func unpadPKCS7(value []byte) ([]byte, error) {
 	return value[:len(value)-padding], nil
 }
 
-func secretMaterial(secretKey string) []byte {
+func legacyFernetKey(secretKey string) []byte {
+	// The legacy Python app encrypted provider tokens with a Fernet-compatible
+	// key derived this way. Migration must reproduce it exactly so existing
+	// encrypted tokens can be re-keyed into the v2 HKDF/AES-GCM format.
 	sum := sha256.Sum256([]byte(secretKey))
 	return sum[:]
 }

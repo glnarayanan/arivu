@@ -6,8 +6,11 @@ library and first-party browser code.
 ## Runtime Dependencies
 
 - `github.com/mattn/go-sqlite3`: SQLite database driver.
-- `golang.org/x/crypto`: Argon2id and legacy bcrypt verification.
+- `golang.org/x/crypto`: Argon2id, HKDF key derivation, and legacy bcrypt verification.
 - `golang.org/x/net/html`: HTML parser for the sanitizer.
+
+The module targets Go 1.24 or newer so the patched `golang.org/x/crypto` and
+`golang.org/x/net` lines can be used without carrying known vulnerable versions.
 
 Provider SDKs are not used in the current rewrite. Gemini, Resend, and X are
 called through narrow direct HTTP clients.

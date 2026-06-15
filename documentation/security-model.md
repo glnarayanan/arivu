@@ -3,11 +3,12 @@
 ## Auth
 
 - Web, CLI, and extension clients receive opaque tokens with explicit audiences.
-- Tokens are stored only as SHA-256 hashes in SQLite.
+- Session tokens are stored only as one-way SHA-256 hashes in SQLite; raw bearer tokens are returned once and compared by hash on later requests.
 - Web sessions use HTTP-only access/refresh cookies.
 - Cookie-authenticated mutations require an `X-CSRF-Token` header matching the CSRF cookie.
 - Password reset and password change revoke affected sessions.
 - Legacy bcrypt hashes are accepted and upgraded to Argon2id on successful login.
+- Runtime provider secrets are encrypted with AES-256-GCM using HKDF-derived key material from `SECRET_KEY`.
 
 ## Fetching And Archived Content
 

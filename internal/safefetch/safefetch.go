@@ -59,10 +59,11 @@ func New() *Client {
 }
 
 func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
-	if err := ValidateURL(rawURL); err != nil {
+	parsedURL, err := validatedURL(rawURL)
+	if err != nil {
 		return Result{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
 	if err != nil {
 		return Result{}, err
 	}
@@ -95,26 +96,31 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 }
 
 func ValidateURL(raw string) error {
+	_, err := validatedURL(raw)
+	return err
+}
+
+func validatedURL(raw string) (*url.URL, error) {
 	parsed, err := url.Parse(raw)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" {
-		return errors.New("only HTTP and HTTPS URLs are allowed")
+		return nil, errors.New("only HTTP and HTTPS URLs are allowed")
 	}
 	if parsed.User != nil {
-		return errors.New("embedded credentials are not allowed")
+		return nil, errors.New("embedded credentials are not allowed")
 	}
 	if parsed.Hostname() == "" {
-		return errors.New("missing hostname")
+		return nil, errors.New("missing hostname")
 	}
 	if strings.EqualFold(parsed.Hostname(), "localhost") || strings.HasSuffix(strings.ToLower(parsed.Hostname()), ".local") {
-		return errors.New("local hostnames are blocked")
+		return nil, errors.New("local hostnames are blocked")
 	}
 	if ip := net.ParseIP(parsed.Hostname()); ip != nil && blockedIP(ip) {
-		return errors.New("private or reserved IPs are blocked")
+		return nil, errors.New("private or reserved IPs are blocked")
 	}
-	return nil
+	return parsed, nil
 }
 
 func resolveSafe(ctx context.Context, host string) (net.IP, error) {

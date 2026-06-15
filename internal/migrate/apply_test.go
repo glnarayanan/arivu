@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/database"
+	"github.com/glnarayanan/arivu/internal/secrets"
 )
 
 func TestApplyExportMigratesRowsAndRekeysSecrets(t *testing.T) {
@@ -223,7 +224,11 @@ func openMigratedSecretForTest(t *testing.T, secretKey, encoded string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	block, err := aes.NewCipher(secretMaterial(secretKey))
+	key, err := secrets.EncryptionKey(secretKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := aes.NewCipher(key)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,6 +15,8 @@ Arivu is a self-hosted bookmarking app with an embedded browser UI, SQLite persi
 
 ## Quick Start
 
+Requires Go 1.24 or newer.
+
 ```bash
 go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
 ```

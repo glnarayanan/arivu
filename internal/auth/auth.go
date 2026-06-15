@@ -304,9 +304,9 @@ func (s *Service) issueWebSession(w http.ResponseWriter, r *http.Request, user U
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "Could not create session"})
 		return
 	}
-	setCookie(w, "access_token", tokens.AccessToken, s.cfg.SessionTTL, true, s.cfg.CookieSecure)
-	setCookie(w, "refresh_token", tokens.RefreshToken, s.cfg.RefreshTTL, true, s.cfg.CookieSecure)
-	setCookie(w, "csrf_token", tokens.CSRFToken, s.cfg.RefreshTTL, false, s.cfg.CookieSecure)
+	setHTTPOnlyCookie(w, "access_token", tokens.AccessToken, s.cfg.SessionTTL, s.cfg.CookieSecure)
+	setHTTPOnlyCookie(w, "refresh_token", tokens.RefreshToken, s.cfg.RefreshTTL, s.cfg.CookieSecure)
+	setReadableCookie(w, "csrf_token", tokens.CSRFToken, s.cfg.RefreshTTL, s.cfg.CookieSecure)
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": tokens.AccessToken, "refresh_token": tokens.RefreshToken, "token_type": "bearer", "csrf_token": tokens.CSRFToken})
 }
 
@@ -453,8 +453,12 @@ func mutates(method string) bool {
 	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
 }
 
-func setCookie(w http.ResponseWriter, name, value string, ttl time.Duration, httpOnly, secure bool) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: int(ttl.Seconds()), HttpOnly: httpOnly, Secure: secure, SameSite: http.SameSiteLaxMode})
+func setHTTPOnlyCookie(w http.ResponseWriter, name, value string, ttl time.Duration, secure bool) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: int(ttl.Seconds()), HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode})
+}
+
+func setReadableCookie(w http.ResponseWriter, name, value string, ttl time.Duration, secure bool) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: "/", MaxAge: int(ttl.Seconds()), HttpOnly: false, Secure: secure, SameSite: http.SameSiteLaxMode})
 }
 
 func clearCookie(w http.ResponseWriter, name string, secure bool) {

@@ -45,17 +45,26 @@ func TestWebAuthRequiresCSRFForBookmarkCreate(t *testing.T) {
 		t.Fatalf("signup status = %d", resp.StatusCode)
 	}
 
-	var accessCookie, csrfCookie *http.Cookie
+	var accessCookie, refreshCookie, csrfCookie *http.Cookie
 	for _, cookie := range resp.Cookies() {
 		if cookie.Name == "access_token" {
 			accessCookie = cookie
+		}
+		if cookie.Name == "refresh_token" {
+			refreshCookie = cookie
 		}
 		if cookie.Name == "csrf_token" {
 			csrfCookie = cookie
 		}
 	}
-	if accessCookie == nil || csrfCookie == nil {
-		t.Fatalf("expected access and csrf cookies, got %#v", resp.Cookies())
+	if accessCookie == nil || refreshCookie == nil || csrfCookie == nil {
+		t.Fatalf("expected access, refresh, and csrf cookies, got %#v", resp.Cookies())
+	}
+	if !accessCookie.HttpOnly || !refreshCookie.HttpOnly {
+		t.Fatalf("expected access and refresh cookies to be HttpOnly")
+	}
+	if csrfCookie.HttpOnly {
+		t.Fatalf("expected csrf cookie to remain readable for the double-submit header")
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/bookmarks", strings.NewReader(`{"url":"https://example.com"}`))

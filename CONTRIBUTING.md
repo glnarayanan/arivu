@@ -4,6 +4,8 @@ Thanks for your interest in contributing. This repository contains the standalon
 
 ## Local Development
 
+Use Go 1.24 or newer.
+
 ```bash
 git clone https://github.com/glnarayanan/arivu.git
 cd arivu
