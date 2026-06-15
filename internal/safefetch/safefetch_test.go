@@ -1,6 +1,8 @@
 package safefetch
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestValidateURLBlocksLocalTargets(t *testing.T) {
 	blocked := []string{
@@ -31,5 +33,23 @@ func TestValidatedURLKeepsPublicTarget(t *testing.T) {
 	}
 	if parsed.Scheme != "https" || parsed.Hostname() != "example.com" || parsed.Port() != "443" {
 		t.Fatalf("unexpected parsed URL: %#v", parsed)
+	}
+}
+
+func TestFetchUsesConfiguredUserAgent(t *testing.T) {
+	client := NewWithUserAgent("ForkedArivu/1.0")
+	req, err := client.newRequest(t.Context(), "https://example.com/article")
+	if err != nil {
+		t.Fatalf("newRequest error = %v", err)
+	}
+	if req.UserAgent() != "ForkedArivu/1.0" {
+		t.Fatalf("User-Agent = %q", req.UserAgent())
+	}
+}
+
+func TestNewWithUserAgentFallsBackToNeutralDefault(t *testing.T) {
+	client := NewWithUserAgent(" ")
+	if client.userAgent != DefaultUserAgent {
+		t.Fatalf("userAgent = %q, want %q", client.userAgent, DefaultUserAgent)
 	}
 }

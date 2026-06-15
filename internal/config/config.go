@@ -27,6 +27,7 @@ type Config struct {
 	RefreshTTL     time.Duration
 	ExtensionTTL   time.Duration
 	MaxRequestBody int64
+	FetchUserAgent string
 }
 
 func FromEnv() Config {
@@ -51,6 +52,7 @@ func FromEnv() Config {
 		RefreshTTL:     30 * 24 * time.Hour,
 		ExtensionTTL:   30 * 24 * time.Hour,
 		MaxRequestBody: 10 << 20,
+		FetchUserAgent: env("ARIVU_FETCH_USER_AGENT", "Arivu/2.0"),
 	}
 }
 

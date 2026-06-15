@@ -45,7 +45,7 @@ func New(cfg config.Config) (*App, error) {
 	a := &App{cfg: cfg, db: db}
 	a.auth = auth.New(db, cfg)
 	a.jobs = jobs.New(db)
-	a.fetcher = safefetch.New()
+	a.fetcher = safefetch.NewWithUserAgent(cfg.FetchUserAgent)
 	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{APIKey: cfg.GeminiAPIKey})
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel

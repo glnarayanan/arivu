@@ -19,6 +19,7 @@ Open `http://127.0.0.1:8080/auth`.
 - `ADMIN_EMAILS`: comma-separated admin emails.
 - `SIGNUPS_ENABLED`: defaults to `true`.
 - `COOKIE_SECURE`: set `true` behind HTTPS.
+- `ARIVU_FETCH_USER_AGENT`: outbound bookmark fetch user agent, default `Arivu/2.0`; forks may set a project-specific value.
 - `GEMINI_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `X_*`: optional provider integrations.
 - `X_API_BASE_URL` and `X_AUTHORIZE_URL`: optional X endpoint overrides for tests or controlled environments; production should use defaults.
 

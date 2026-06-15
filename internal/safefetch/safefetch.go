@@ -12,10 +12,14 @@ import (
 	"time"
 )
 
-const MaxBodyBytes = 10 << 20
+const (
+	MaxBodyBytes     = 10 << 20
+	DefaultUserAgent = "Arivu/2.0"
+)
 
 type Client struct {
-	http *http.Client
+	http      *http.Client
+	userAgent string
 }
 
 type Result struct {
@@ -28,6 +32,14 @@ type Result struct {
 }
 
 func New() *Client {
+	return NewWithUserAgent(DefaultUserAgent)
+}
+
+func NewWithUserAgent(userAgent string) *Client {
+	userAgent = strings.TrimSpace(userAgent)
+	if userAgent == "" {
+		userAgent = DefaultUserAgent
+	}
 	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
 	transport := &http.Transport{
 		Proxy: nil,
@@ -55,20 +67,14 @@ func New() *Client {
 			}
 			return ValidateURL(req.URL.String())
 		},
-	}}
+	}, userAgent: userAgent}
 }
 
 func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
-	parsedURL, err := validatedURL(rawURL)
+	req, err := c.newRequest(ctx, rawURL)
 	if err != nil {
 		return Result{}, err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
-	if err != nil {
-		return Result{}, err
-	}
-	req.Header.Set("User-Agent", "Arivu/2.0 (+https://github.com/glnarayanan/arivu)")
-	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1")
 	// The request URL has passed scheme/host validation above. The custom
 	// transport also disables proxy env use and re-resolves every dial target,
 	// including redirects, before connecting so DNS rebinding cannot bypass the
@@ -97,6 +103,20 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 	text := ExtractText(html)
 	title := ExtractTitle(html)
 	return Result{URL: parsed.String(), Title: title, HTML: html, Text: text, Domain: parsed.Hostname()}, nil
+}
+
+func (c *Client) newRequest(ctx context.Context, rawURL string) (*http.Request, error) {
+	parsedURL, err := validatedURL(rawURL)
+	if err != nil {
+		return nil, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsedURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("User-Agent", c.userAgent)
+	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1")
+	return req, nil
 }
 
 func ValidateURL(raw string) error {

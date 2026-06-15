@@ -41,6 +41,10 @@ go build -trimpath -ldflags="-s -w" -o arivu ./cmd/arivu
 ./arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
 ```
 
+## Forks
+
+Arivu keeps `github.com/glnarayanan/arivu` as the canonical Go module path, so internal imports match the upstream module. Forks can build normally without renaming those imports; only rename the module path if the fork becomes a separate long-lived distribution. Runtime outbound fetches use the neutral `Arivu/2.0` user agent by default and can be branded with `ARIVU_FETCH_USER_AGENT`.
+
 ## Docker
 
 ```bash
