@@ -1,0 +1,22 @@
+services:
+  arivu:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    image: arivu:local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      ARIVU_ADDR: ":8080"
+      ARIVU_DB: "/data/arivu.sqlite3"
+      APP_URL: "https://arivu.example.com"
+      COOKIE_SECURE: "true"
+      SIGNUPS_ENABLED: "false"
+      ADMIN_EMAILS: "admin@example.com"
+      SECRET_KEY: "replace-with-at-least-32-random-bytes"
+    volumes:
+      - arivu-data:/data
+
+volumes:
+  arivu-data:

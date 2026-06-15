@@ -1,0 +1,28 @@
+[Unit]
+Description=Arivu Go single-binary service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arivu
+Group=arivu
+WorkingDirectory=/var/lib/arivu
+EnvironmentFile=/etc/arivu/arivu.env
+ExecStart=/usr/local/bin/arivu serve
+Restart=on-failure
+RestartSec=5s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/arivu
+CapabilityBoundingSet=
+LockPersonality=true
+MemoryDenyWriteExecute=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

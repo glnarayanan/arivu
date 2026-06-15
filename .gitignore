@@ -1,0 +1,23 @@
+# Build output
+/bin/
+/dist/
+coverage.out
+
+# Local databases
+*.sqlite3
+*.sqlite3-*
+*.db
+*.db-*
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+arivu.json
+.arivu.json
+migration-manifest.json
+
+# Caches
+.DS_Store
+/tmp/
+.cache/

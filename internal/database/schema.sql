@@ -1,0 +1,224 @@
+CREATE TABLE IF NOT EXISTS users (
+  id TEXT PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  name TEXT NOT NULL DEFAULT '',
+  password_hash TEXT,
+  password_scheme TEXT NOT NULL DEFAULT 'bcrypt',
+  avatar_data TEXT,
+  avatar_mime TEXT,
+  banned INTEGER NOT NULL DEFAULT 0,
+  invite_pending INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  audience TEXT NOT NULL CHECK (audience IN ('web','cli','extension')),
+  access_hash TEXT NOT NULL UNIQUE,
+  refresh_hash TEXT UNIQUE,
+  csrf_hash TEXT,
+  user_agent TEXT NOT NULL DEFAULT '',
+  origin TEXT NOT NULL DEFAULT '',
+  revoked_at TEXT,
+  access_expires_at TEXT NOT NULL,
+  refresh_expires_at TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+CREATE INDEX IF NOT EXISTS idx_sessions_access_hash ON sessions(access_hash);
+CREATE INDEX IF NOT EXISTS idx_sessions_refresh_hash ON sessions(refresh_hash);
+
+CREATE TABLE IF NOT EXISTS password_reset_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  used_at TEXT,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS bookmarks (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  title TEXT,
+  description TEXT,
+  favicon TEXT,
+  thumbnail TEXT,
+  sanitized_html TEXT,
+  text_content TEXT,
+  domain TEXT,
+  reading_time INTEGER NOT NULL DEFAULT 0,
+  read_status INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'web',
+  x_tweet_id TEXT,
+  x_author_username TEXT,
+  x_author_name TEXT,
+  x_tweet_url TEXT,
+  x_metrics_json TEXT,
+  embedding BLOB,
+  embedding_model TEXT,
+  embedding_dim INTEGER NOT NULL DEFAULT 0,
+  version INTEGER NOT NULL DEFAULT 1,
+  resurfacing_snoozed_until TEXT,
+  resurfacing_archived INTEGER NOT NULL DEFAULT 0,
+  last_accessed TEXT,
+  view_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(user_id, url)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user_created ON bookmarks(user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user_domain ON bookmarks(user_id, domain);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user_source ON bookmarks(user_id, source);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
+  title,
+  description,
+  text_content,
+  content='bookmarks',
+  content_rowid='rowid'
+);
+
+CREATE TABLE IF NOT EXISTS ai_summaries (
+  id TEXT PRIMARY KEY,
+  bookmark_id TEXT NOT NULL UNIQUE REFERENCES bookmarks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  one_sentence TEXT,
+  bullet_points_json TEXT NOT NULL DEFAULT '[]',
+  long_form TEXT,
+  highlights_json TEXT NOT NULL DEFAULT '[]',
+  suggested_tags_json TEXT NOT NULL DEFAULT '[]',
+  processing_status TEXT NOT NULL DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS collections (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  description TEXT,
+  color TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(user_id, name)
+);
+
+CREATE TABLE IF NOT EXISTS collection_bookmarks (
+  collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+  bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  added_at TEXT NOT NULL,
+  PRIMARY KEY(collection_id, bookmark_id)
+);
+
+CREATE TABLE IF NOT EXISTS bookmark_accesses (
+  id TEXT PRIMARY KEY,
+  bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  accessed_at TEXT NOT NULL,
+  context TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS bookmark_entities (
+  bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  entity TEXT NOT NULL,
+  PRIMARY KEY(bookmark_id, entity)
+);
+
+CREATE TABLE IF NOT EXISTS bookmark_concepts (
+  bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  concept TEXT NOT NULL,
+  PRIMARY KEY(bookmark_id, concept)
+);
+
+CREATE TABLE IF NOT EXISTS import_jobs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  total_bookmarks INTEGER NOT NULL DEFAULT 0,
+  content_fetched INTEGER NOT NULL DEFAULT 0,
+  ai_processed INTEGER NOT NULL DEFAULT 0,
+  failed INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'processing',
+  estimated_completion_time TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS x_connections (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+  x_user_id TEXT,
+  x_username TEXT,
+  x_name TEXT,
+  x_profile_image TEXT,
+  access_token_cipher TEXT NOT NULL,
+  refresh_token_cipher TEXT,
+  token_expires_at TEXT,
+  scopes_json TEXT NOT NULL DEFAULT '[]',
+  connected_at TEXT NOT NULL,
+  last_sync_at TEXT,
+  sync_status TEXT NOT NULL DEFAULT 'idle',
+  total_synced INTEGER NOT NULL DEFAULT 0,
+  next_cursor TEXT
+);
+
+CREATE TABLE IF NOT EXISTS oauth_states (
+  state TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL,
+  verifier_cipher TEXT NOT NULL,
+  redirect_uri TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY,
+  value_cipher TEXT,
+  value_plain TEXT,
+  key_id TEXT,
+  updated_by TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS rate_limits (
+  key TEXT PRIMARY KEY,
+  window_start TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 0,
+  expires_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS audit_events (
+  id TEXT PRIMARY KEY,
+  actor_user_id TEXT,
+  action TEXT NOT NULL,
+  target_type TEXT NOT NULL DEFAULT '',
+  target_id TEXT NOT NULL DEFAULT '',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
+  id TEXT PRIMARY KEY,
+  user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  type TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',
+  priority INTEGER NOT NULL DEFAULT 100,
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  attempts INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 5,
+  leased_until TEXT,
+  last_error TEXT,
+  run_after TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_jobs_ready ON jobs(status, run_after, priority);

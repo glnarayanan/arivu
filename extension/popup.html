@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Arivu - Save Bookmark</title>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 360px;
+      padding: 0;
+      font-family: 'DM Sans', -apple-system, system-ui, sans-serif;
+      background: #F7F7F7;
+      color: #0F0F0F;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 20px;
+      border-bottom: 2px solid #0F0F0F;
+      background: #0F0F0F;
+      color: white;
+    }
+
+    .header-icon {
+      width: 28px;
+      height: 28px;
+      background: #F97316;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .header-icon svg {
+      width: 16px;
+      height: 16px;
+    }
+
+    h1 {
+      font-family: 'Bebas Neue', sans-serif;
+      font-size: 22px;
+      font-weight: 400;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      line-height: 1;
+    }
+
+    .content {
+      padding: 20px;
+    }
+
+    .form-group {
+      margin-bottom: 16px;
+    }
+
+    label {
+      display: block;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #0F0F0F;
+      margin-bottom: 6px;
+    }
+
+    input, select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 2px solid #0F0F0F;
+      font-size: 14px;
+      font-family: 'DM Sans', sans-serif;
+      background: white;
+      color: #0F0F0F;
+    }
+
+    input:focus, select:focus {
+      outline: none;
+      border-color: #F97316;
+    }
+
+    input[readonly] {
+      background: #F0F0F0;
+      color: #666;
+    }
+
+    .btn {
+      width: 100%;
+      padding: 12px;
+      background: #F97316;
+      color: white;
+      border: 2px solid #0F0F0F;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 13px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      cursor: pointer;
+      box-shadow: 4px 4px 0 #0F0F0F;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+
+    .btn:hover {
+      transform: translate(2px, 2px);
+      box-shadow: 2px 2px 0 #0F0F0F;
+    }
+
+    .btn:active {
+      transform: translate(4px, 4px);
+      box-shadow: none;
+    }
+
+    .btn:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+      transform: none;
+      box-shadow: 4px 4px 0 #0F0F0F;
+    }
+
+    .status {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border: 2px solid #0F0F0F;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      text-align: center;
+    }
+
+    .status.success {
+      background: #dcfce7;
+      color: #166534;
+    }
+
+    .status.error {
+      background: #fee2e2;
+      color: #991b1b;
+    }
+
+    .login-prompt {
+      text-align: center;
+      padding: 32px 20px;
+    }
+
+    .login-prompt p {
+      margin-bottom: 8px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      color: #0F0F0F;
+    }
+
+    .login-prompt .subtitle {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #666;
+      margin-bottom: 20px;
+    }
+
+    .login-btn {
+      display: inline-block;
+      padding: 10px 24px;
+      background: #0F0F0F;
+      color: white;
+      border: 2px solid #0F0F0F;
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      text-decoration: none;
+      cursor: pointer;
+      box-shadow: 4px 4px 0 #F97316;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+
+    .login-btn:hover {
+      transform: translate(2px, 2px);
+      box-shadow: 2px 2px 0 #F97316;
+    }
+
+    .settings-bar {
+      display: flex;
+      justify-content: flex-end;
+      padding: 8px 20px;
+      border-top: 2px solid #0F0F0F;
+      background: #F0F0F0;
+    }
+
+    .settings-link {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: #666;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .settings-link:hover {
+      color: #F97316;
+    }
+
+    .settings-panel {
+      padding: 16px 20px;
+      border-top: 2px solid #0F0F0F;
+      background: #F0F0F0;
+      display: none;
+    }
+
+    .settings-panel label {
+      margin-bottom: 4px;
+    }
+
+    .settings-panel input {
+      font-size: 12px;
+      padding: 8px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-icon">
+      <svg viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="3" y="1" width="10" height="14" fill="white"/>
+        <polygon points="3,11 8,15 13,11 13,15 3,15" fill="#0F0F0F"/>
+      </svg>
+    </div>
+    <h1>Save to Arivu</h1>
+  </div>
+
+  <div id="loginPrompt" class="login-prompt" style="display:none;">
+    <p>Log in to save bookmarks</p>
+    <p class="subtitle">Open Arivu and sign in first</p>
+    <a id="loginLink" href="https://arivu.app/auth" target="_blank" class="login-btn">Open Arivu</a>
+  </div>
+
+  <div id="saveForm" class="content" style="display:none;">
+    <form id="bookmarkForm">
+      <div class="form-group">
+        <label>URL</label>
+        <input type="text" id="url" readonly>
+      </div>
+      <div class="form-group">
+        <label>Title</label>
+        <input type="text" id="title" placeholder="Page title">
+      </div>
+      <div class="form-group">
+        <label>Collection</label>
+        <select id="collection">
+          <option value="">None</option>
+        </select>
+      </div>
+      <button type="submit" class="btn" id="saveBtn">Save Bookmark</button>
+      <div id="status" class="status" style="display:none;"></div>
+    </form>
+  </div>
+
+  <div id="settingsPanel" class="settings-panel">
+    <div class="form-group">
+      <label>API URL</label>
+      <input type="text" id="apiUrlInput" placeholder="https://arivu.app/api">
+    </div>
+  </div>
+
+  <div class="settings-bar">
+    <a id="settingsToggle" class="settings-link">Settings</a>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

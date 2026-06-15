@@ -1,0 +1,20 @@
+{
+  "concepts": [
+    "Vector Search",
+    "Backlog",
+    "Knowledge Graph",
+    "Recipes"
+  ],
+  "entities": [
+    "Embeddings",
+    "Cooking",
+    "Reading",
+    "SQLite"
+  ],
+  "total_bookmarks": 4,
+  "total_concepts": 4,
+  "total_entities": 4,
+  "vector_related": [
+    "embedding"
+  ]
+}

@@ -1,0 +1,16 @@
+[
+  {
+    "ids": [
+      "embedding",
+      "vector"
+    ],
+    "type": "exact_url"
+  },
+  {
+    "ids": [
+      "embedding",
+      "vector"
+    ],
+    "type": "similar_content"
+  }
+]

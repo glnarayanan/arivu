@@ -1,0 +1,7 @@
+.git
+*.sqlite3
+*.sqlite3-*
+coverage.out
+tmp/
+dist/
+bin/
