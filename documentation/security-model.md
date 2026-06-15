@@ -17,6 +17,12 @@
 - Redirects are revalidated and capped.
 - Response size and content type are capped before archived content is processed.
 - Archived HTML is sanitized server-side with strict tag, attribute, and URL allowlists.
+- CodeQL may classify the final outbound fetch as user-controlled because Arivu intentionally fetches user-submitted bookmark URLs; the mitigation boundary is `internal/safefetch` URL validation plus per-dial DNS/IP validation.
+
+## Legacy Migration Cryptography
+
+- Legacy exports used Python Fernet with a key derived as `base64url(SHA-256(SECRET_KEY))`.
+- The migration importer reproduces that derivation only to decrypt existing legacy runtime settings and X tokens, then immediately re-encrypts them with the new HKDF/AES-256-GCM secret format.
 
 ## Browser Controls
 

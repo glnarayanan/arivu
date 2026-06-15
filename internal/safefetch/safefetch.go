@@ -69,6 +69,10 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 	}
 	req.Header.Set("User-Agent", "Arivu/2.0 (+https://github.com/glnarayanan/arivu)")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.1")
+	// The request URL has passed scheme/host validation above. The custom
+	// transport also disables proxy env use and re-resolves every dial target,
+	// including redirects, before connecting so DNS rebinding cannot bypass the
+	// private/reserved IP blocklist.
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return Result{}, err
