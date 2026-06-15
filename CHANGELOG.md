@@ -9,6 +9,7 @@ All notable changes to this project will be documented in this file.
 - Created the standalone low-dependency Go repository for Arivu.
 - Included the embedded frontend, SQLite persistence, auth/session subsystem, safe fetcher, sanitizer, job queue, provider clients, browser extension, deployment assets, and legacy migration tooling.
 - Added contribution guidelines, code of conduct, GitHub sponsorship metadata, and expanded security reporting policy.
+- Documented that `glnarayanan/arivu` is the active repository and `glnarayanan/arivu-legacy` is retained as the archived historical implementation.
 
 ### Security
 

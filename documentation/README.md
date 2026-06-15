@@ -1,5 +1,11 @@
 # Documentation
 
+## Repository Status
+
+This repository, `glnarayanan/arivu`, is the active Arivu codebase. The previous
+Python/FastAPI/MongoDB/React implementation is archived at
+`glnarayanan/arivu-legacy` for historical and migration reference.
+
 - `architecture.md`: runtime shape and subsystem boundaries.
 - `deployment.md`: local, Docker, and systemd deployment.
 - `security-model.md`: security controls and trust boundaries.
