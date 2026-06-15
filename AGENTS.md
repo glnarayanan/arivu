@@ -11,6 +11,8 @@ Keep this file lean. Load focused docs under `documentation/` when needed.
 - Dependency policy: `documentation/dependency-policy.md`
 - SQLite schema: `documentation/sqlite-schema.md`
 - Migration guide: `documentation/migration-guide.md`
+- Contribution guide: `CONTRIBUTING.md`
+- Security policy: `SECURITY.md`
 - Changelog: `CHANGELOG.md`
 
 ## Working Rules
