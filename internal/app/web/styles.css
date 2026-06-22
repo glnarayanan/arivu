@@ -1,20 +1,20 @@
 :root {
-  --ink: #17140f;
-  --paper: #f7f0df;
-  --panel: #fffaf0;
-  --panel-strong: #fff6dc;
-  --field: #fffdf6;
-  --muted: #665d4f;
-  --placeholder: #5b5144;
-  --line: #17140f;
-  --accent: #b83328;
-  --accent-ink: #fff7e7;
-  --accent-2: #126f64;
-  --gold: #d99a21;
-  --danger: #311812;
-  --focus: #1d52d2;
-  --sidebar: #f2d36b;
-  --scrim: rgb(23 20 15 / .55);
+  --ink: oklch(22% .025 68);
+  --paper: oklch(95% .025 84);
+  --panel: oklch(98% .014 84);
+  --panel-strong: oklch(96% .026 84);
+  --field: oklch(99% .01 84);
+  --muted: oklch(43% .026 72);
+  --placeholder: oklch(38% .028 72);
+  --line: oklch(22% .025 68);
+  --accent: oklch(45% .105 35);
+  --accent-ink: oklch(97% .018 84);
+  --accent-2: oklch(42% .07 176);
+  --gold: oklch(62% .09 82);
+  --danger: oklch(25% .055 35);
+  --focus: oklch(48% .13 255);
+  --sidebar: oklch(89% .065 86);
+  --scrim: oklch(22% .025 68 / .46);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -22,8 +22,8 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
-  --shadow: 6px 6px 0 var(--ink);
-  --shadow-sm: 3px 3px 0 var(--ink);
+  --shadow: 4px 4px 0 oklch(22% .025 68 / .92);
+  --shadow-sm: 2px 2px 0 oklch(22% .025 68 / .92);
   --ease-out-quart: cubic-bezier(.25, 1, .5, 1);
   --font-display: "Avenir Next Condensed", "Franklin Gothic Medium", Impact, sans-serif;
   --font-body: "Iowan Old Style", Georgia, serif;
@@ -46,15 +46,14 @@ body {
   min-height: 100%;
   color: var(--ink);
   background:
-    linear-gradient(90deg, rgb(23 20 15 / .045) 1px, transparent 1px),
-    linear-gradient(rgb(23 20 15 / .035) 1px, transparent 1px),
-    radial-gradient(circle at top right, rgb(184 51 40 / .2), transparent 35rem),
-    radial-gradient(circle at bottom left, rgb(18 111 100 / .12), transparent 32rem),
+    linear-gradient(90deg, oklch(22% .025 68 / .03) 1px, transparent 1px),
+    linear-gradient(oklch(22% .025 68 / .025) 1px, transparent 1px),
+    radial-gradient(circle at top right, oklch(45% .105 35 / .12), transparent 35rem),
+    radial-gradient(circle at bottom left, oklch(42% .07 176 / .08), transparent 32rem),
     var(--paper);
   background-size: 28px 28px, 28px 28px, auto, auto;
   font-family: var(--font-body);
   font-kerning: normal;
-  overflow-x: hidden;
   text-rendering: optimizeLegibility;
 }
 
@@ -76,7 +75,7 @@ body.is-routing #route-progress {
 }
 
 button {
-  font: 800 .875rem/1.2 var(--font-ui);
+  font: 700 .875rem/1.2 var(--font-ui);
 }
 
 button, .button {
@@ -101,7 +100,7 @@ button:disabled {
   cursor: not-allowed;
   opacity: .58;
   transform: translate(2px, 2px);
-  box-shadow: 1px 1px 0 var(--ink);
+  box-shadow: 1px 1px 0 oklch(22% .025 68 / .92);
 }
 button.icon-button {
   width: 44px;
@@ -127,7 +126,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background: var(--ink);
   color: var(--accent-ink);
   padding: var(--space-3) var(--space-4);
-  font: 800 .875rem/1 var(--font-ui);
+  font: 700 .875rem/1 var(--font-ui);
   text-decoration: none;
 }
 .skip-link:focus { transform: translateY(0); }
@@ -151,7 +150,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .sidebar {
-  border-right: 3px solid var(--ink);
+  border-right: 2px solid var(--ink);
   background: var(--sidebar);
   padding: max(var(--space-5), env(safe-area-inset-top)) var(--space-5) var(--space-5);
   position: sticky;
@@ -161,7 +160,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .brand {
   font-family: var(--font-display);
-  font-size: 3rem;
+  font-size: 2.75rem;
   line-height: .85;
   text-transform: uppercase;
   letter-spacing: 0;
@@ -175,7 +174,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .nav a {
   color: var(--ink);
   text-decoration: none;
-  font: 800 .875rem/1 var(--font-ui);
+  font: 700 .875rem/1 var(--font-ui);
   border: 2px solid transparent;
   min-height: 44px;
   display: flex;
@@ -214,7 +213,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .headline {
   font-family: var(--font-display);
-  font-size: 5.5rem;
+  font-size: 4.75rem;
   line-height: .82;
   text-transform: uppercase;
   letter-spacing: 0;
@@ -225,7 +224,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .panel {
   background: var(--panel);
-  border: 3px solid var(--ink);
+  border: 2px solid var(--ink);
   box-shadow: var(--shadow);
   overflow-wrap: anywhere;
   padding: var(--space-5);
@@ -238,14 +237,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   padding: max(var(--space-5), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-5), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
 }
 .auth .panel { width: min(440px, 100%); }
-.auth h1 { font: 900 4.25rem/.82 var(--font-display); margin: 0 0 var(--space-4); text-transform: uppercase; letter-spacing: 0; }
+.auth h1 { font: 800 3.75rem/.86 var(--font-display); margin: 0 0 var(--space-4); text-transform: uppercase; letter-spacing: 0; }
 
 .form {
   display: grid;
   gap: var(--space-4);
 }
 .field { display: grid; gap: var(--space-2); }
-label { font: 800 .875rem/1 var(--font-ui); text-transform: uppercase; }
+label { font: 700 .875rem/1 var(--font-ui); text-transform: uppercase; }
 input, select, textarea {
   width: 100%;
   min-height: 44px;
@@ -253,11 +252,33 @@ input, select, textarea {
   background: var(--field);
   color: var(--ink);
   padding: var(--space-3);
-  font: 700 1rem/1.25 var(--font-ui);
+  font: 600 1rem/1.25 var(--font-ui);
 }
 input::placeholder, textarea::placeholder {
   color: var(--placeholder);
   opacity: 1;
+}
+.form-message {
+  margin: 0;
+  border: 2px solid var(--ink);
+  background: var(--panel-strong);
+  color: var(--ink);
+  padding: var(--space-3);
+  font: 700 .875rem/1.35 var(--font-ui);
+}
+.form-message-error {
+  background: color-mix(in oklch, var(--accent) 14%, var(--panel));
+}
+.form-message-success {
+  background: color-mix(in oklch, var(--accent-2) 15%, var(--panel));
+}
+.form-message[hidden] { display: none; }
+.text-link {
+  color: var(--ink);
+  font: 700 .875rem/1.35 var(--font-ui);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 4px;
+  width: fit-content;
 }
 
 .toolbar {
@@ -285,20 +306,20 @@ input::placeholder, textarea::placeholder {
   min-height: 170px;
 }
 .bookmark h2 {
-  font: 900 1.5rem/1 var(--font-display);
+  font: 800 1.375rem/1 var(--font-display);
   text-transform: uppercase;
   letter-spacing: 0;
   margin: 0;
 }
 .meta {
-  font: 700 .875rem/1.4 var(--font-ui);
+  font: 600 .875rem/1.4 var(--font-ui);
   color: var(--muted);
 }
 .empty-state {
   background: var(--panel-strong);
 }
 .empty-state h2 {
-  font: 900 2rem/.95 var(--font-display);
+  font: 800 1.875rem/.98 var(--font-display);
   text-transform: uppercase;
   letter-spacing: 0;
   margin: var(--space-2) 0;
@@ -331,7 +352,7 @@ input::placeholder, textarea::placeholder {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  border-bottom: 3px solid var(--ink);
+  border-bottom: 2px solid var(--ink);
   padding-bottom: var(--space-3);
 }
 .tab-list [role="tab"] {
@@ -355,9 +376,9 @@ input::placeholder, textarea::placeholder {
 .toast {
   border: 2px solid var(--ink);
   background: var(--panel);
-  box-shadow: 4px 4px 0 var(--ink);
+  box-shadow: var(--shadow-sm);
   padding: var(--space-3);
-  font: 800 .875rem/1.25 var(--font-ui);
+  font: 700 .875rem/1.25 var(--font-ui);
 }
 .toast-success {
   background: var(--accent-2);
@@ -389,7 +410,7 @@ input::placeholder, textarea::placeholder {
   gap: var(--space-4);
 }
 .dialog h2 {
-  font: 900 2.125rem/.95 var(--font-display);
+  font: 800 2rem/.98 var(--font-display);
   text-transform: uppercase;
   letter-spacing: 0;
   margin: 0;
@@ -406,9 +427,9 @@ input::placeholder, textarea::placeholder {
   min-width: 180px;
   max-width: min(20rem, calc(100vw - 2 * var(--space-4)));
   gap: var(--space-2);
-  border: 3px solid var(--ink);
+  border: 2px solid var(--ink);
   background: var(--panel);
-  box-shadow: 5px 5px 0 var(--ink);
+  box-shadow: var(--shadow);
   padding: var(--space-2);
   z-index: var(--z-menu);
 }
@@ -422,7 +443,7 @@ input::placeholder, textarea::placeholder {
 }
 
 @media (max-width: 1024px) {
-  .headline { font-size: 4.5rem; }
+  .headline { font-size: 3.875rem; }
 }
 
 @media (max-width: 760px) {
@@ -431,7 +452,7 @@ input::placeholder, textarea::placeholder {
     position: static;
     height: auto;
     border-right: 0;
-    border-bottom: 3px solid var(--ink);
+    border-bottom: 2px solid var(--ink);
     padding: var(--space-5);
   }
   .nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -444,13 +465,13 @@ input::placeholder, textarea::placeholder {
   .top-actions > button {
     flex: 1 1 9rem;
   }
-  .headline { font-size: 3.5rem; }
+  .headline { font-size: 3rem; }
   .menu { left: 0; right: auto; width: min(100%, 20rem); }
 }
 
 @media (max-width: 460px) {
-  .auth h1 { font-size: 3.5rem; }
-  .headline { font-size: 2.75rem; }
+  .auth h1 { font-size: 3rem; }
+  .headline { font-size: 2.4rem; }
   .nav { grid-template-columns: 1fr; }
   .panel { padding: var(--space-4); }
   .toolbar button { width: 100%; }
@@ -458,18 +479,18 @@ input::placeholder, textarea::placeholder {
 
 @media (prefers-reduced-motion: no-preference) {
   button, .button, .nav a, .bookmark, .menu [role="menuitem"], input, select, textarea {
-    transition: background-color .18s var(--ease-out-quart), color .18s var(--ease-out-quart), box-shadow .18s var(--ease-out-quart), opacity .18s var(--ease-out-quart), transform .18s var(--ease-out-quart);
+    transition: background-color .18s var(--ease-out-quart), color .18s var(--ease-out-quart), border-color .18s var(--ease-out-quart), opacity .18s var(--ease-out-quart), transform .18s var(--ease-out-quart);
   }
   button:not(:disabled):active, .button:active {
     transform: translate(2px, 2px);
-    box-shadow: 1px 1px 0 var(--ink);
+    box-shadow: 1px 1px 0 oklch(22% .025 68 / .92);
   }
-  .panel, .bookmark, .menu, .dialog, .toast { animation: hardReveal .28s var(--ease-out-quart) both; }
+  .panel, .bookmark, .menu, .dialog, .toast { animation: hardReveal .22s var(--ease-out-quart) both; }
   body.is-routing #route-progress { animation: routeSweep .9s var(--ease-out-quart) infinite; }
   @media (hover: hover) {
     button:hover:not(:disabled), .button:hover, .bookmark:hover {
       transform: translate(-1px, -1px);
-      box-shadow: 5px 5px 0 var(--ink);
+      box-shadow: var(--shadow);
     }
     .nav a:hover, .menu [role="menuitem"]:hover {
       transform: translateX(2px);

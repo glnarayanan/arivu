@@ -13,10 +13,12 @@ All notable changes to this project will be documented in this file.
 - Added fork guidance for the canonical Go module path and made outbound fetch user-agent branding configurable.
 - Added persistent frontend design context for future UI work.
 - Added an interface quality audit covering accessibility, performance, theming, responsive behavior, and design anti-patterns.
+- Added public password recovery and invite acceptance entrypoints to the embedded frontend.
 
 ### Changed
 
 - Polished the embedded frontend with stronger interaction states, route loading feedback, semantic toasts, accessible search and navigation affordances, safer mobile layout behavior, and refined design tokens.
+- Resolved the frontend audit findings with explicit route access metadata, inline form errors, assertive error toasts, and a quieter OKLCH-based visual system.
 
 ### Security
 

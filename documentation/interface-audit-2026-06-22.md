@@ -10,6 +10,29 @@ Pass. The interface does not read as generic AI-generated SaaS output. It has a 
 
 The main design risk is not visual slop. It is incomplete auth-adjacent flows: the UI presents routes for password reset and invite acceptance, but unauthenticated users are redirected back to sign-in.
 
+## Follow-Up Resolution
+
+Date: 2026-06-22
+
+The audit findings were addressed in the embedded frontend:
+
+- `/reset-password` is now a public recovery route. Without a token it submits
+  the existing forgot-password API; with a token it submits the existing reset
+  API and shows inline success or error feedback.
+- `/accept-invite` is now public and reflects the current admin-mediated invite
+  model: invitees sign in with the email and temporary password provided by an
+  admin.
+- The auth page now exposes a forgot-password entrypoint.
+- Form failures for auth, invite, reset, and save URL workflows now render
+  persistent inline messages linked to fields with `aria-describedby`.
+- Error toasts now use assertive alert semantics, while success and info toasts
+  remain polite status messages.
+- Route definitions now include explicit public/protected access metadata so
+  known public auth-adjacent routes do not probe `/api/auth/me`.
+- The visual system moved to quieter OKLCH semantic tokens, lighter shadows,
+  thinner borders, smaller display type, no `box-shadow` transitions, and no
+  global `overflow-x: hidden`.
+
 ## Executive Summary
 
 Issues found:

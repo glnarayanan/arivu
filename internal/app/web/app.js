@@ -8,17 +8,17 @@ const state = {
 };
 
 const routes = [
-  ["/auth", authPage],
-  ["/dashboard", dashboardPage],
-  ["/bookmark/", bookmarkPage],
-  ["/duplicates", simplePage("Duplicates", "Find repeated saves and merge them without losing notes, summaries, or reading history.")],
-  ["/settings", settingsPage],
-  ["/imports", () => navigate("/settings?section=import", true)],
-  ["/knowledge-graph", simplePage("Knowledge Graph", "Explore the ideas, sources, and connections that recur across your saved pages.")],
-  ["/analytics", analyticsPage],
-  ["/admin", adminPage],
-  ["/reset-password", simplePage("Reset Password", "Choose a new password to get back into your library.")],
-  ["/accept-invite", simplePage("Accept Invite", "Set up your account and start saving useful pages.")],
+  { prefix: "/auth", page: authPage, access: "public" },
+  { prefix: "/reset-password", page: resetPasswordPage, access: "public" },
+  { prefix: "/accept-invite", page: acceptInvitePage, access: "public" },
+  { prefix: "/dashboard", page: dashboardPage, access: "protected" },
+  { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
+  { prefix: "/duplicates", page: simplePage("Duplicates", "Find repeated saves and merge them without losing notes, summaries, or reading history."), access: "protected" },
+  { prefix: "/settings", page: settingsPage, access: "protected" },
+  { prefix: "/imports", page: () => navigate("/settings?section=import", true), access: "protected" },
+  { prefix: "/knowledge-graph", page: simplePage("Knowledge Graph", "Explore the ideas, sources, and connections that recur across your saved pages."), access: "protected" },
+  { prefix: "/analytics", page: analyticsPage, access: "protected" },
+  { prefix: "/admin", page: adminPage, access: "protected" },
 ];
 
 async function api(path, options = {}) {
@@ -75,10 +75,34 @@ function toast(message, tone = "info") {
   const item = document.createElement("div");
   const safeTone = tone === "success" || tone === "error" ? tone : "info";
   item.className = `toast toast-${safeTone}`;
-  item.setAttribute("role", "status");
+  item.setAttribute("role", safeTone === "error" ? "alert" : "status");
+  item.setAttribute("aria-live", safeTone === "error" ? "assertive" : "polite");
   item.textContent = message;
   region.append(item);
   setTimeout(() => item.remove(), 3200);
+}
+
+function setFormMessage(form, message = "", tone = "error") {
+  const item = form?.querySelector("[data-form-message]");
+  if (!form || !item) return;
+  const ids = item.id ? [item.id] : [];
+  item.hidden = !message;
+  item.textContent = message;
+  item.className = `form-message form-message-${tone}`;
+  item.setAttribute("role", tone === "error" ? "alert" : "status");
+  item.setAttribute("aria-live", tone === "error" ? "assertive" : "polite");
+  form.querySelectorAll("input:not([data-skip-form-message]), select:not([data-skip-form-message]), textarea:not([data-skip-form-message])").forEach((field) => {
+    const describedBy = (field.getAttribute("aria-describedby") || "").split(/\s+/).filter((id) => id && !ids.includes(id));
+    if (message && ids.length) {
+      field.setAttribute("aria-describedby", [...describedBy, ...ids].join(" "));
+      if (tone === "error") field.setAttribute("aria-invalid", "true");
+      else field.removeAttribute("aria-invalid");
+    } else {
+      if (describedBy.length) field.setAttribute("aria-describedby", describedBy.join(" "));
+      else field.removeAttribute("aria-describedby");
+      field.removeAttribute("aria-invalid");
+    }
+  });
 }
 
 function setButtonBusy(button, busyLabel) {
@@ -329,10 +353,12 @@ async function authPage() {
         <h1>Arivu</h1>
         <p class="meta">Save pages worth remembering, then turn them into summaries, signals, and connections.</p>
         <form class="form" id="login-form">
-          <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="email"></div>
+          <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="username"></div>
           <div class="field"><label for="password">Password</label><input id="password" type="password" required autocomplete="current-password"></div>
+          <p class="form-message" id="auth-message" data-form-message hidden></p>
           <button type="submit">Sign in</button>
           <button type="button" class="secondary" id="signup">Create account</button>
+          <a class="text-link" href="/reset-password">Forgot password?</a>
         </form>
       </section>
     </main>
@@ -344,11 +370,13 @@ async function authPage() {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Signing in");
     const body = JSON.stringify({ email: emailInput.value, password: passwordInput.value });
+    setFormMessage(form);
     try {
       await api("/auth/login", { method: "POST", body });
       ui.toast("Signed in", "success");
       navigate("/dashboard", true);
     } catch (err) {
+      setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
       done();
@@ -357,11 +385,113 @@ async function authPage() {
   document.querySelector("#signup").addEventListener("click", async (event) => {
     if (!form.reportValidity()) return;
     const done = setButtonBusy(event.currentTarget, "Creating account");
+    setFormMessage(form);
     try {
       await api("/auth/signup", { method: "POST", body: JSON.stringify({ email: emailInput.value, password: passwordInput.value }) });
       ui.toast("Account created", "success");
       navigate("/dashboard", true);
     } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+async function resetPasswordPage() {
+  const token = new URLSearchParams(location.search).get("token") || "";
+  setRoot(`
+    <main class="auth">
+      <section class="panel">
+        <p class="meta">Account recovery</p>
+        <h1>Reset password</h1>
+        ${token ? resetPasswordForm() : forgotPasswordForm()}
+      </section>
+    </main>
+  `);
+  const form = document.querySelector("#reset-form");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, token ? "Resetting password" : "Sending link");
+    setFormMessage(form);
+    try {
+      const path = token ? "/auth/reset-password" : "/auth/forgot-password";
+      const body = token
+        ? JSON.stringify({ token, new_password: document.querySelector("#new-password").value })
+        : JSON.stringify({ email: document.querySelector("#reset-email").value });
+      const result = await api(path, { method: "POST", body });
+      setFormMessage(form, result.message || "Request received", "success");
+      ui.toast(result.message || "Request received", "success");
+      if (token) form.querySelector("button[type='submit']").hidden = true;
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+function forgotPasswordForm() {
+  return `
+    <p>Enter your account email and Arivu will send reset instructions if the account exists.</p>
+    <form class="form" id="reset-form">
+      <div class="field"><label for="reset-email">Email</label><input id="reset-email" type="email" required autocomplete="username"></div>
+      <p class="form-message" id="reset-message" data-form-message hidden></p>
+      <button type="submit">Send reset link</button>
+      <a class="text-link" href="/auth">Back to sign in</a>
+    </form>
+  `;
+}
+
+function resetPasswordForm() {
+  return `
+    <p>Choose a new password for your Arivu account.</p>
+    <form class="form" id="reset-form">
+      <label class="sr-only" for="reset-username">Email</label><input class="sr-only" id="reset-username" type="email" autocomplete="username" tabindex="-1" data-skip-form-message>
+      <div class="field"><label for="new-password">New password</label><input id="new-password" type="password" required minlength="8" autocomplete="new-password"></div>
+      <p class="form-message" id="reset-message" data-form-message hidden></p>
+      <button type="submit">Reset password</button>
+      <a class="text-link" href="/auth">Back to sign in</a>
+    </form>
+  `;
+}
+
+async function acceptInvitePage() {
+  setRoot(html`
+    <main class="auth">
+      <section class="panel">
+        <p class="meta">Invited account</p>
+        <h1>Accept invite</h1>
+        <p>Use the email and temporary password your admin provided. You can change the password after signing in.</p>
+        <form class="form" id="invite-form">
+          <div class="field"><label for="invite-email">Email</label><input id="invite-email" type="email" required autocomplete="username"></div>
+          <div class="field"><label for="invite-password">Temporary password</label><input id="invite-password" type="password" required autocomplete="current-password"></div>
+          <p class="form-message" id="invite-message" data-form-message hidden></p>
+          <button type="submit">Sign in</button>
+          <a class="text-link" href="/reset-password">Need a new password?</a>
+        </form>
+      </section>
+    </main>
+  `);
+  const form = document.querySelector("#invite-form");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Signing in");
+    setFormMessage(form);
+    try {
+      await api("/auth/login", {
+        method: "POST",
+        body: JSON.stringify({
+          email: document.querySelector("#invite-email").value,
+          password: document.querySelector("#invite-password").value,
+        }),
+      });
+      ui.toast("Invite accepted", "success");
+      navigate("/dashboard", true);
+    } catch (err) {
+      setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
       done();
@@ -387,14 +517,18 @@ async function dashboardPage() {
       ${bookmarks.map(bookmarkCard).join("") || `<div class="panel empty-state"><span class="meta">First save</span><h2>No bookmarks yet</h2><p>Save a URL above to start building your searchable reading memory.</p></div>`}
     </section>
   `));
-  document.querySelector("#save-form").addEventListener("submit", async (event) => {
+  const saveForm = document.querySelector("#save-form");
+  saveForm.insertAdjacentHTML("beforeend", `<p class="form-message" id="save-message" data-form-message hidden></p>`);
+  saveForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Saving bookmark");
+    setFormMessage(saveForm);
     try {
       await api("/bookmarks", { method: "POST", body: JSON.stringify({ url: document.querySelector("#url").value }) });
       ui.toast("Bookmark saved", "success");
       render();
     } catch (err) {
+      setFormMessage(saveForm, err.message);
       ui.toast(err.message, "error");
     } finally {
       done();
@@ -500,9 +634,10 @@ async function render() {
   state.abort = new AbortController();
   state.pendingRoutes += 1;
   document.body.classList.add("is-routing");
-  const route = routes.find(([prefix]) => location.pathname === prefix || (prefix.endsWith("/") && location.pathname.startsWith(prefix)));
-  const page = route ? route[1] : location.pathname === "/" ? () => navigate(state.user ? "/dashboard" : "/auth", true) : dashboardPage;
+  const route = routes.find(routeMatches);
+  const page = route ? route.page : location.pathname === "/" ? () => navigate(state.user ? "/dashboard" : "/auth", true) : dashboardPage;
   try {
+    if (route?.access === "protected") await requireUser();
     await page();
     const actions = document.querySelector("#global-actions");
     if (actions) {
@@ -526,6 +661,10 @@ async function render() {
     state.pendingRoutes = Math.max(0, state.pendingRoutes - 1);
     if (state.pendingRoutes === 0) document.body.classList.remove("is-routing");
   }
+}
+
+function routeMatches(route) {
+  return location.pathname === route.prefix || (route.prefix.endsWith("/") && location.pathname.startsWith(route.prefix));
 }
 
 document.addEventListener("click", (event) => {
