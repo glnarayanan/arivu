@@ -4,6 +4,7 @@ const state = {
   collections: [],
   abort: null,
   cleanup: [],
+  pendingRoutes: 0,
 };
 
 const routes = [
@@ -21,19 +22,33 @@ const routes = [
 ];
 
 async function api(path, options = {}) {
-  const headers = new Headers(options.headers || {});
-  if (options.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const { retried = false, ...requestOptions } = options;
+  const headers = new Headers(requestOptions.headers || {});
+  if (requestOptions.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const csrf = getCookie("csrf_token");
   if (csrf) headers.set("X-CSRF-Token", csrf);
-  const res = await fetch(`/api${path}`, { credentials: "include", ...options, headers });
-  if (res.status === 401 && path !== "/auth/me") {
-    const refreshed = await fetch("/api/auth/refresh", { method: "POST", credentials: "include", headers: csrf ? { "X-CSRF-Token": csrf } : {} });
-    if (refreshed.ok) return api(path, options);
+  let res;
+  try {
+    res = await fetch(`/api${path}`, { credentials: "include", ...requestOptions, headers });
+  } catch {
+    throw new Error("We couldn't reach Arivu. Check your connection and try again.");
+  }
+  if (res.status === 401 && !path.startsWith("/auth/") && !retried) {
+    let refreshed;
+    try {
+      refreshed = await fetch("/api/auth/refresh", { method: "POST", credentials: "include", headers: csrf ? { "X-CSRF-Token": csrf } : {} });
+    } catch {
+      throw new Error("We couldn't refresh your session. Sign in again.");
+    }
+    if (refreshed.ok) return api(path, { ...requestOptions, retried: true });
     navigate("/auth", true);
+    throw new Error("auth required");
   }
   const type = res.headers.get("Content-Type") || "";
-  const data = type.includes("application/json") ? await res.json() : await res.text();
-  if (!res.ok) throw Object.assign(new Error(data.detail || "Request failed"), { status: res.status, data });
+  const text = await res.text();
+  const data = type.includes("application/json") && text ? JSON.parse(text) : text;
+  const detail = typeof data === "object" && data !== null ? data.detail : data;
+  if (!res.ok) throw Object.assign(new Error(detail || "Request failed. Try again."), { status: res.status, data });
   return data;
 }
 
@@ -55,14 +70,28 @@ function setRoot(markup) {
   root.innerHTML = markup;
 }
 
-function toast(message) {
+function toast(message, tone = "info") {
   const region = document.querySelector("#toast-region");
   const item = document.createElement("div");
-  item.className = "toast";
+  const safeTone = tone === "success" || tone === "error" ? tone : "info";
+  item.className = `toast toast-${safeTone}`;
   item.setAttribute("role", "status");
   item.textContent = message;
   region.append(item);
   setTimeout(() => item.remove(), 3200);
+}
+
+function setButtonBusy(button, busyLabel) {
+  if (!button) return () => {};
+  const previousLabel = button.textContent;
+  button.disabled = true;
+  button.setAttribute("aria-busy", "true");
+  button.textContent = busyLabel;
+  return () => {
+    button.disabled = false;
+    button.removeAttribute("aria-busy");
+    button.textContent = previousLabel;
+  };
 }
 
 const ui = {
@@ -79,7 +108,7 @@ const ui = {
       <section class="dialog panel" role="dialog" aria-modal="true" aria-labelledby="dialog-title" tabindex="-1">
         <div class="dialog-head">
           <h2 id="dialog-title">${escapeHTML(title)}</h2>
-          <button type="button" class="icon-button" data-dialog-close aria-label="Close dialog">x</button>
+          <button type="button" class="icon-button" data-dialog-close aria-label="Close dialog"><span aria-hidden="true">X</span></button>
         </div>
         <div class="dialog-body"></div>
         <div class="dialog-actions"></div>
@@ -113,12 +142,12 @@ const ui = {
     requestAnimationFrame(() => firstFocusable(dialog)?.focus() || dialog.focus());
     return new Promise((resolve) => { resolver = resolve; });
   },
-  confirmDestructive({ title, body, confirm = "Delete" }) {
+  confirmDestructive({ title, body, confirm = "Delete", cancel = "Cancel" }) {
     return ui.dialog({
       title,
       body,
       actions: [
-        { label: "Cancel", value: false, kind: "secondary" },
+        { label: cancel, value: false, kind: "secondary" },
         { label: confirm, value: true, kind: "danger" },
       ],
     });
@@ -268,14 +297,18 @@ function shell(title, content) {
     ["/admin", "Admin"],
   ];
   return `
+    <a class="skip-link" href="#main-content">Skip to content</a>
     <div class="shell">
       <aside class="sidebar">
         <p class="brand">Arivu</p>
         <nav class="nav" aria-label="Primary">
-          ${nav.map(([href, label]) => `<a href="${href}" class="${location.pathname.startsWith(href) ? "active" : ""}">${label}</a>`).join("")}
+          ${nav.map(([href, label]) => {
+            const active = location.pathname.startsWith(href) || (href === "/dashboard" && location.pathname.startsWith("/bookmark/"));
+            return `<a href="${href}"${active ? ` class="active" aria-current="page"` : ""}>${label}</a>`;
+          }).join("")}
         </nav>
       </aside>
-      <main class="main">
+      <main class="main" id="main-content" tabindex="-1">
         <div class="topbar">
           <h1 class="headline">${escapeHTML(title)}</h1>
           <div class="top-actions">
@@ -294,31 +327,45 @@ async function authPage() {
     <main class="auth">
       <section class="panel">
         <h1>Arivu</h1>
-        <p class="meta">Save the web pages worth remembering, then turn them into summaries, signals, and connections.</p>
+        <p class="meta">Save pages worth remembering, then turn them into summaries, signals, and connections.</p>
         <form class="form" id="login-form">
           <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="email"></div>
           <div class="field"><label for="password">Password</label><input id="password" type="password" required autocomplete="current-password"></div>
-          <button type="submit">Log in</button>
+          <button type="submit">Sign in</button>
           <button type="button" class="secondary" id="signup">Create account</button>
         </form>
       </section>
     </main>
   `);
-  document.querySelector("#login-form").addEventListener("submit", async (event) => {
+  const form = document.querySelector("#login-form");
+  const emailInput = form.querySelector("#email");
+  const passwordInput = form.querySelector("#password");
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const body = JSON.stringify({ email: email.value, password: password.value });
+    const done = setButtonBusy(event.submitter, "Signing in");
+    const body = JSON.stringify({ email: emailInput.value, password: passwordInput.value });
     try {
       await api("/auth/login", { method: "POST", body });
-      ui.toast("Signed in");
+      ui.toast("Signed in", "success");
       navigate("/dashboard", true);
-    } catch (err) { ui.toast(err.message); }
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
   });
-  document.querySelector("#signup").addEventListener("click", async () => {
+  document.querySelector("#signup").addEventListener("click", async (event) => {
+    if (!form.reportValidity()) return;
+    const done = setButtonBusy(event.currentTarget, "Creating account");
     try {
-      await api("/auth/signup", { method: "POST", body: JSON.stringify({ email: email.value, password: password.value }) });
-      ui.toast("Account created");
+      await api("/auth/signup", { method: "POST", body: JSON.stringify({ email: emailInput.value, password: passwordInput.value }) });
+      ui.toast("Account created", "success");
       navigate("/dashboard", true);
-    } catch (err) { ui.toast(err.message); }
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
   });
 }
 
@@ -331,23 +378,30 @@ async function dashboardPage() {
       <div class="field"><label for="url">Save URL</label><input id="url" type="url" placeholder="https://example.com/article" required></div>
       <button type="submit">Save bookmark</button>
     </form>
-    <div class="toolbar" role="search">
+    <form class="toolbar" role="search" id="search-form">
+      <label class="sr-only" for="search">Search bookmarks</label>
       <input id="search" type="search" placeholder="Search bookmarks" value="${escapeHTML(new URLSearchParams(location.search).get("search") || "")}">
-      <button id="search-button" class="secondary">Search</button>
-    </div>
+      <button id="search-button" class="secondary" type="submit">Search</button>
+    </form>
     <section class="grid" aria-label="Bookmarks">
-      ${bookmarks.map(bookmarkCard).join("") || `<div class="panel"><h2>No bookmarks yet</h2><p>Save a URL to start building your knowledge graph.</p></div>`}
+      ${bookmarks.map(bookmarkCard).join("") || `<div class="panel empty-state"><span class="meta">First save</span><h2>No bookmarks yet</h2><p>Save a URL above to start building your searchable reading memory.</p></div>`}
     </section>
   `));
   document.querySelector("#save-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving bookmark");
     try {
       await api("/bookmarks", { method: "POST", body: JSON.stringify({ url: document.querySelector("#url").value }) });
-      ui.toast("Bookmark saved");
+      ui.toast("Bookmark saved", "success");
       render();
-    } catch (err) { ui.toast(err.message); }
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
   });
-  document.querySelector("#search-button").addEventListener("click", () => {
+  document.querySelector("#search-form").addEventListener("submit", (event) => {
+    event.preventDefault();
     const value = document.querySelector("#search").value.trim();
     navigate(`/dashboard${value ? `?search=${encodeURIComponent(value)}` : ""}`);
   });
@@ -373,13 +427,15 @@ async function bookmarkPage() {
     </article>
   `));
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
-    const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark" });
+    const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;
     try {
       await api(`/bookmarks/${id}`, { method: "DELETE" });
-      ui.toast("Bookmark deleted");
+      ui.toast("Bookmark deleted", "success");
       navigate("/dashboard", true);
-    } catch (err) { ui.toast(err.message); }
+    } catch (err) {
+      ui.toast(err.message, "error");
+    }
   });
 }
 
@@ -423,7 +479,7 @@ async function adminPage() {
 
 function simplePage(title, copy) {
   return async () => {
-    await requireUser().catch(() => {});
+    await requireUser();
     setRoot(shell(title, `<section class="panel"><p>${escapeHTML(copy)}</p></section>`));
   };
 }
@@ -442,6 +498,8 @@ async function requireUser() {
 async function render() {
   if (state.abort) state.abort.abort();
   state.abort = new AbortController();
+  state.pendingRoutes += 1;
+  document.body.classList.add("is-routing");
   const route = routes.find(([prefix]) => location.pathname === prefix || (prefix.endsWith("/") && location.pathname.startsWith(prefix)));
   const page = route ? route[1] : location.pathname === "/" ? () => navigate(state.user ? "/dashboard" : "/auth", true) : dashboardPage;
   try {
@@ -454,19 +512,28 @@ async function render() {
         { label: "Admin", action: () => navigate("/admin") },
       ]);
     }
-    document.querySelector("#logout")?.addEventListener("click", async () => {
+    document.querySelector("#logout")?.addEventListener("click", async (event) => {
+      const done = setButtonBusy(event.currentTarget, "Signing out");
       await api("/auth/logout", { method: "POST" }).catch(() => {});
       state.user = null;
+      ui.toast("Signed out", "success");
       navigate("/auth", true);
+      done();
     });
   } catch (err) {
-    if (err.message !== "auth required") ui.toast(err.message);
+    if (err.message !== "auth required") ui.toast(err.message, "error");
+  } finally {
+    state.pendingRoutes = Math.max(0, state.pendingRoutes - 1);
+    if (state.pendingRoutes === 0) document.body.classList.remove("is-routing");
   }
 }
 
 document.addEventListener("click", (event) => {
+  if (!(event.target instanceof Element)) return;
   const link = event.target.closest("a[href^='/']");
   if (!link) return;
+  if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  if (link.target && link.target !== "_self") return;
   event.preventDefault();
   navigate(link.getAttribute("href"));
 });

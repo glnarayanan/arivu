@@ -1,0 +1,27 @@
+# Design Context
+
+This is the working design context for Arivu's embedded frontend. It is based on the current project docs and repository instructions, and should be refined when the creator gives more specific brand references.
+
+## Users
+
+Arivu is for people who self-host their own bookmarking and reading memory: technical readers, researchers, operators, and small teams who want durable control over saved web pages, summaries, search, and resurfacing. They use it while saving links, finding prior material, reviewing archived pages, and administering a small private instance.
+
+## Brand Personality
+
+The interface should feel opinionated, durable, and tactile. It should project confidence in local ownership and low-dependency software rather than glossy SaaS polish. Copy should stay factual, direct, and compact.
+
+## Aesthetic Direction
+
+The current frontend uses a warm-paper brutalist direction: ink-heavy borders, condensed display type, serif reading text, mono UI labels, and a small set of utility colors. Preserve that physical archive quality. Avoid purple gradients, glass panels, generic card grids, stock SaaS composition, and npm-heavy UI patterns.
+
+## Quality Bar
+
+Treat the embedded browser UI as flagship polish for a self-hosted app: small enough to remain dependency-free, but finished enough that interaction states, keyboard paths, empty states, loading feedback, and mobile layouts feel intentional.
+
+## Design Principles
+
+- Keep the shipped frontend dependency-free and native-browser-first.
+- Use strong hierarchy, visible state, and direct labels over decorative complexity.
+- Make controls reliable under keyboard, touch, slow network, long text, and narrow viewport conditions.
+- Reinforce the warm archive aesthetic through tokens and layout rhythm, not one-off styling.
+- Prefer compact, useful product copy over marketing language.

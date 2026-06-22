@@ -11,6 +11,11 @@ All notable changes to this project will be documented in this file.
 - Added contribution guidelines, code of conduct, GitHub sponsorship metadata, and expanded security reporting policy.
 - Documented that `glnarayanan/arivu` is the active repository and `glnarayanan/arivu-legacy` is retained as the archived historical implementation.
 - Added fork guidance for the canonical Go module path and made outbound fetch user-agent branding configurable.
+- Added persistent frontend design context for future UI work.
+
+### Changed
+
+- Polished the embedded frontend with stronger interaction states, route loading feedback, semantic toasts, accessible search and navigation affordances, safer mobile layout behavior, and refined design tokens.
 
 ### Security
 

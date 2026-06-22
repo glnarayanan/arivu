@@ -16,8 +16,13 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - Navigation uses same-origin links intercepted by the router.
 - API calls use `fetch` with `credentials: "include"`.
 - CSRF headers are injected from the `csrf_token` cookie when present.
-- A single refresh retry is attempted after a 401.
+- A single refresh retry is attempted after a protected API route returns 401.
 - Interactive controls are native elements unless custom behavior is required.
+- Route changes expose a top progress marker while async page work is pending.
+- Form actions disable the initiating button and swap to specific busy labels.
+- Toasts use semantic tones for success and error feedback.
+- The authenticated shell includes a skip link and marks the active nav item with
+  `aria-current="page"`.
 - Custom dialogs use `role="dialog"`, `aria-modal`, focus restoration, Escape
   close, and tab containment.
 - Menus use `aria-haspopup`, `aria-expanded`, `role="menu"`, roving
@@ -30,3 +35,4 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 
 - Browser workflow tests for dashboard, settings, import, admin, mobile, and keyboard shortcuts.
 - Visual comparison against the legacy brutalist UX.
+- Creator-confirmed brand references for `documentation/design-context.md`.

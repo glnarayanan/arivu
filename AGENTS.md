@@ -5,6 +5,7 @@ Keep this file lean. Load focused docs under `documentation/` when needed.
 ## Canonical Docs
 
 - Project overview: `README.md`
+- Design context: `documentation/design-context.md`
 - Architecture: `documentation/architecture.md`
 - Deployment: `documentation/deployment.md`
 - Security model: `documentation/security-model.md`
