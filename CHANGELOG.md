@@ -12,6 +12,7 @@ All notable changes to this project will be documented in this file.
 - Documented that `glnarayanan/arivu` is the active repository and `glnarayanan/arivu-legacy` is retained as the archived historical implementation.
 - Added fork guidance for the canonical Go module path and made outbound fetch user-agent branding configurable.
 - Added persistent frontend design context for future UI work.
+- Added an interface quality audit covering accessibility, performance, theming, responsive behavior, and design anti-patterns.
 
 ### Changed
 

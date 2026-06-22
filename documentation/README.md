@@ -14,4 +14,5 @@ Python/FastAPI/MongoDB/React implementation is archived at
 - `migration-guide.md`: legacy export validation and SQLite import.
 - `frontend-runtime.md`: embedded frontend conventions.
 - `browser-workflow-checks.md`: browser QA coverage.
+- `interface-audit-2026-06-22.md`: interface quality audit findings.
 - `STATUS.md`: implementation and verification status.
