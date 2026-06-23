@@ -1,9 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log"
@@ -24,6 +27,8 @@ import (
 
 //go:embed web/*
 var webFS embed.FS
+
+var webAssetModTime = time.Unix(0, 0).UTC()
 
 type App struct {
 	cfg       config.Config
@@ -185,6 +190,9 @@ func (a *App) frontend(w http.ResponseWriter, r *http.Request) {
 	if clean == "." || clean == "/" {
 		clean = "index.html"
 	}
+	if clean == "favicon.ico" {
+		clean = "favicon.svg"
+	}
 	if strings.HasPrefix(clean, "api/") {
 		writeError(w, http.StatusNotFound, "Not found")
 		return
@@ -212,7 +220,18 @@ func serveAsset(w http.ResponseWriter, r *http.Request, name string, data []byte
 	default:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
-	http.ServeContent(w, r, name, time.Now(), strings.NewReader(string(data)))
+	w.Header().Set("ETag", assetETag(data))
+	if name == "index.html" {
+		w.Header().Set("Cache-Control", "no-cache")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	}
+	http.ServeContent(w, r, name, webAssetModTime, bytes.NewReader(data))
+}
+
+func assetETag(data []byte) string {
+	sum := sha256.Sum256(data)
+	return `"` + hex.EncodeToString(sum[:12]) + `"`
 }
 
 func (a *App) securityHeaders(next http.Handler) http.Handler {

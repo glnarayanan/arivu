@@ -14,11 +14,13 @@ All notable changes to this project will be documented in this file.
 - Added persistent frontend design context for future UI work.
 - Added an interface quality audit covering accessibility, performance, theming, responsive behavior, and design anti-patterns.
 - Added public password recovery and invite acceptance entrypoints to the embedded frontend.
+- Added a tiny embedded SVG favicon for the browser UI.
 
 ### Changed
 
 - Polished the embedded frontend with stronger interaction states, route loading feedback, semantic toasts, accessible search and navigation affordances, safer mobile layout behavior, and refined design tokens.
 - Resolved the frontend audit findings with explicit route access metadata, inline form errors, assertive error toasts, and a quieter OKLCH-based visual system.
+- Optimized embedded frontend asset delivery with content ETags, cache revalidation headers, zero-copy byte readers, and offscreen grid rendering containment.
 
 ### Security
 

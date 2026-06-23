@@ -296,6 +296,11 @@ input::placeholder, textarea::placeholder {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr));
   gap: var(--space-4);
 }
+.grid > .panel,
+.grid > .bookmark {
+  content-visibility: auto;
+  contain-intrinsic-size: 180px;
+}
 
 .bookmark {
   color: var(--ink);

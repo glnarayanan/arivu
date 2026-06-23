@@ -4,6 +4,47 @@ This page records the no-new-dependency browser checks for the Go rewrite.
 The shipped app stays dependency-free; browser automation is run through the
 Codex in-app Browser plugin rather than a checked-in Playwright dependency.
 
+## Optimize Pass
+
+Date: 2026-06-23
+
+Target:
+
+```bash
+GOCACHE=/private/tmp/arivu-build-cache \
+ARIVU_DB=/private/tmp/arivu-optimize.sqlite3 \
+SECRET_KEY=optimize-browser-secret-key-32-bytes \
+SIGNUPS_ENABLED=true \
+go run ./cmd/arivu serve -addr 127.0.0.1:18080
+```
+
+Baseline measurements:
+
+- `/app.js`: 27,694 B, no `ETag` or cache policy; conditional request returned
+  `200 OK` with the full body.
+- `/styles.css`: 12,654 B, no `ETag` or cache policy; conditional request
+  returned `200 OK` with the full body.
+- `/favicon.ico`: fell through to the SPA HTML fallback, returning 529 B of
+  HTML.
+- Browser `/auth` first pass transferred full JS/CSS bodies and the favicon
+  fallback.
+
+Optimized measurements:
+
+- `/app.js`: same 27,694 B body, content `ETag`, `Cache-Control:
+  public, max-age=0, must-revalidate`; `If-None-Match` returns `304 Not
+  Modified`.
+- `/styles.css`: 12,753 B after render-containment rules, content `ETag`,
+  same cache policy; `If-None-Match` returns `304 Not Modified`.
+- Same-session browser revisit transferred 300 B headers for each JS/CSS
+  resource with zero encoded body.
+- `/favicon.svg`: 267 B SVG; `/favicon.ico` maps to the same SVG response
+  instead of the HTML fallback.
+- Mobile-width validation at 390x844 confirmed no horizontal overflow and
+  button/input controls stayed at 44px or taller after `content-visibility`
+  changes.
+- Console warning/error collection was empty during the optimized browser pass.
+
 ## Audit Fix Pass
 
 Date: 2026-06-22

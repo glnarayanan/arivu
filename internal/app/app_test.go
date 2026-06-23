@@ -201,6 +201,54 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	}
 }
 
+func TestFrontendAssetsUseCacheValidation(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+
+	script := frontendRequest(t, handler, "/app.js", "")
+	etag := script.Header.Get("ETag")
+	if script.StatusCode != http.StatusOK {
+		t.Fatalf("script status = %d body=%s", script.StatusCode, readBody(script))
+	}
+	if etag == "" {
+		t.Fatal("script asset must expose a content ETag")
+	}
+	if got := script.Header.Get("Cache-Control"); got != "public, max-age=0, must-revalidate" {
+		t.Fatalf("script cache-control = %q", got)
+	}
+	_ = readBody(script)
+
+	revalidated := frontendRequest(t, handler, "/app.js", etag)
+	defer revalidated.Body.Close()
+	if revalidated.StatusCode != http.StatusNotModified {
+		t.Fatalf("conditional script status = %d body=%s", revalidated.StatusCode, readBody(revalidated))
+	}
+
+	icon := frontendRequest(t, handler, "/favicon.ico", "")
+	if icon.StatusCode != http.StatusOK {
+		t.Fatalf("favicon status = %d body=%s", icon.StatusCode, readBody(icon))
+	}
+	if got := icon.Header.Get("Content-Type"); got != "image/svg+xml" {
+		t.Fatalf("favicon content-type = %q", got)
+	}
+	body := readBody(icon)
+	if !strings.Contains(body, "<svg") || strings.Contains(body, "<!doctype html>") {
+		t.Fatalf("favicon must serve SVG, got %q", body)
+	}
+}
+
 func TestAdminUserMutations(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
@@ -769,6 +817,17 @@ func bearerRequest(t *testing.T, handler http.Handler, method string, path strin
 	req.Header.Set("Authorization", "Bearer "+token)
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec.Result()
+}
+
+func frontendRequest(t *testing.T, handler http.Handler, path string, etag string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
 	}
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
