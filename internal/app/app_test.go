@@ -4,6 +4,8 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -204,6 +206,12 @@ func TestProfileRoutesSupportSettingsPanel(t *testing.T) {
 	if body["email"] != "profile@example.com" || body["name"] != "Profile User" {
 		t.Fatalf("unexpected profile body: %#v", body)
 	}
+	change := adminRequest(t, handler, http.MethodPost, "/api/auth/change-password", `{"current_password":"correct horse battery staple","new_password":"new-password-123"}`, accessCookie, csrfCookie)
+	if change.StatusCode != http.StatusOK {
+		t.Fatalf("change password status = %d body=%s", change.StatusCode, readBody(change))
+	}
+	change.Body.Close()
+	assertAuditAction(t, a, "auth.password.change", "user", userIDForEmail(t, a, "profile@example.com"))
 }
 
 func TestCollectionMembershipIsUserScoped(t *testing.T) {
@@ -334,6 +342,21 @@ func TestAuthRateLimitsSensitiveEndpoints(t *testing.T) {
 		t.Fatalf("limited reset status = %d body=%s", limitedReset.StatusCode, readBody(limitedReset))
 	}
 	limitedReset.Body.Close()
+
+	_, _ = a.db.ExecContext(context.Background(), `DELETE FROM rate_limits`)
+	userID := userIDForEmail(t, a, "limited@example.com")
+	resetToken := "valid-reset-token"
+	sum := sha256.Sum256([]byte(resetToken))
+	now := time.Now().UTC()
+	if _, err := a.db.ExecContext(context.Background(), `INSERT INTO password_reset_tokens(token_hash,user_id,expires_at,created_at) VALUES(?,?,?,?)`, hex.EncodeToString(sum[:]), userID, now.Add(time.Hour).Format(time.RFC3339), now.Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert reset token: %v", err)
+	}
+	reset := publicJSONRequest(t, handler, http.MethodPost, "/api/auth/reset-password", `{"token":"valid-reset-token","new_password":"reset-password-123"}`)
+	if reset.StatusCode != http.StatusOK {
+		t.Fatalf("valid reset status = %d body=%s", reset.StatusCode, readBody(reset))
+	}
+	reset.Body.Close()
+	assertAuditAction(t, a, "auth.password.reset", "user", userID)
 }
 
 func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
@@ -1142,7 +1165,7 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("api key status = %d body=%s", keyStatus.StatusCode, readBody(keyStatus))
 	}
 	keyStatus.Body.Close()
-	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","x_redirect_uri":"https://example.com/x/callback"}`, accessCookie, csrfCookie)
+	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","x_redirect_uri":"https://example.com/x/callback","unexpected_setting":"nope"}`, accessCookie, csrfCookie)
 	if keyUpdate.StatusCode != http.StatusOK {
 		t.Fatalf("api key update = %d body=%s", keyUpdate.StatusCode, readBody(keyUpdate))
 	}
@@ -1154,6 +1177,12 @@ func TestAdminUserMutations(t *testing.T) {
 	if stored != `"test-gemini"` {
 		t.Fatalf("unexpected stored key payload: %q", stored)
 	}
+	var unexpected int
+	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM settings WHERE key='unexpected_setting'`).Scan(&unexpected)
+	if unexpected != 0 {
+		t.Fatal("api key update stored an unknown setting")
+	}
+	assertAuditAction(t, a, "admin.settings.update", "settings", "")
 
 	reset := adminRequest(t, handler, http.MethodPost, "/api/admin/users/"+userID+"/reset-password", `{"new_password":"new-password-123"}`, accessCookie, csrfCookie)
 	if reset.StatusCode != http.StatusOK {
@@ -1174,6 +1203,9 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("delete status = %d body=%s", deleted.StatusCode, readBody(deleted))
 	}
 	deleted.Body.Close()
+	for _, action := range []string{"admin.user.invite", "admin.user.reset_password", "admin.user.ban", "admin.user.unban", "admin.user.delete"} {
+		assertAuditAction(t, a, action, "user", userID)
+	}
 }
 
 func TestXOAuthStatusSyncAndDisconnect(t *testing.T) {
@@ -1745,6 +1777,17 @@ func insertBookmarkForTest(t *testing.T, a *App, userID, id, title string, creat
 	_, err := a.db.ExecContext(context.Background(), `INSERT INTO bookmarks(id,user_id,url,title,domain,reading_time,read_status,created_at,updated_at,last_accessed,view_count) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, userID, "https://example.com/"+id, title, "example.com", readingTime, false, createdAt.Format(time.RFC3339), createdAt.Format(time.RFC3339), lastAccessed.Format(time.RFC3339), viewCount)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func assertAuditAction(t *testing.T, a *App, action, targetType, targetID string) {
+	t.Helper()
+	var count int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM audit_events WHERE action=? AND target_type=? AND target_id=?`, action, targetType, targetID).Scan(&count); err != nil {
+		t.Fatalf("count audit action %s: %v", action, err)
+	}
+	if count == 0 {
+		t.Fatalf("missing audit action %s target=%s:%s", action, targetType, targetID)
 	}
 }
 

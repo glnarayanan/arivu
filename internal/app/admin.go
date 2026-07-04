@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -97,6 +98,7 @@ func (a *App) adminInviteUser(w http.ResponseWriter, r *http.Request, user auth.
 		writeError(w, http.StatusConflict, "Email already registered")
 		return
 	}
+	a.auditEvent(r.Context(), user.ID, "admin.user.invite", "user", id, map[string]any{"email": strings.ToLower(strings.TrimSpace(body.Email))})
 	writeJSON(w, http.StatusOK, map[string]any{"id": id, "email": body.Email, "name": body.Name, "created_at": now, "invite_sent": false})
 }
 
@@ -109,12 +111,14 @@ func (a *App) adminBanUser(w http.ResponseWriter, r *http.Request, user auth.Use
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE users SET banned=1, updated_at=? WHERE id=?`, now, targetID)
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE sessions SET revoked_at=? WHERE user_id=?`, now, targetID)
+	a.auditEvent(r.Context(), user.ID, "admin.user.ban", "user", targetID, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "banned", "user_id": targetID})
 }
 
 func (a *App) adminUnbanUser(w http.ResponseWriter, r *http.Request, user auth.User) {
 	targetID := r.PathValue("id")
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE users SET banned=0, updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), targetID)
+	a.auditEvent(r.Context(), user.ID, "admin.user.unban", "user", targetID, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "unbanned", "user_id": targetID})
 }
 
@@ -134,6 +138,7 @@ func (a *App) adminResetPassword(w http.ResponseWriter, r *http.Request, user au
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE users SET password_hash=?, password_scheme='bcrypt', invite_pending=0, updated_at=? WHERE id=?`, string(hash), now, r.PathValue("id"))
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE sessions SET revoked_at=? WHERE user_id=?`, now, r.PathValue("id"))
+	a.auditEvent(r.Context(), user.ID, "admin.user.reset_password", "user", r.PathValue("id"), nil)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "password_reset", "user_id": r.PathValue("id")})
 }
 
@@ -149,6 +154,7 @@ func (a *App) adminDeleteUser(w http.ResponseWriter, r *http.Request, user auth.
 		writeError(w, http.StatusNotFound, "User not found")
 		return
 	}
+	a.auditEvent(r.Context(), user.ID, "admin.user.delete", "user", targetID, nil)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "deleted", "user_id": targetID})
 }
 
@@ -170,14 +176,37 @@ func (a *App) adminUpdateAPIKeys(w http.ResponseWriter, r *http.Request, user au
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	changed := []string{}
 	for key, value := range body {
-		if key == "" {
+		if !allowedSettingKey(key) {
 			continue
 		}
 		raw, _ := json.Marshal(value)
 		_, _ = a.db.ExecContext(r.Context(), `INSERT INTO settings(key,value_plain,updated_by,updated_at) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_plain=excluded.value_plain,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, string(raw), user.Email, now)
+		changed = append(changed, key)
+	}
+	sort.Strings(changed)
+	if len(changed) > 0 {
+		a.auditEvent(r.Context(), user.ID, "admin.settings.update", "settings", "", map[string]any{"keys": changed})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "updated"})
+}
+
+func allowedSettingKey(key string) bool {
+	switch key {
+	case "gemini_api_key", "resend_api_key", "x_client_id", "x_client_secret", "x_redirect_uri", "x_integration_enabled":
+		return true
+	default:
+		return false
+	}
+}
+
+func (a *App) auditEvent(ctx context.Context, actorID, action, targetType, targetID string, metadata map[string]any) {
+	if metadata == nil {
+		metadata = map[string]any{}
+	}
+	raw, _ := json.Marshal(metadata)
+	_, _ = a.db.ExecContext(ctx, `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), actorID, action, targetType, targetID, string(raw), time.Now().UTC().Format(time.RFC3339))
 }
 
 func keyStatus(value string) map[string]any {

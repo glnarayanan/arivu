@@ -11,6 +11,10 @@
   throttles with hashed rate-limit keys.
 - Legacy bcrypt hashes are accepted and upgraded to Argon2id on successful login.
 - Runtime provider secrets are encrypted with AES-256-GCM using HKDF-derived key material from `SECRET_KEY`.
+- Provider setting updates are restricted to known provider/runtime keys, and
+  audit metadata records changed key names without storing secret values.
+- Successful admin user mutations, provider setting updates, password changes,
+  and password resets write `audit_events` rows.
 - Second-brain routes use the same web-audience boundary as bookmarks. Notes,
   annotations, tags, saved searches, review actions, and job status are all
   scoped by `user_id`.

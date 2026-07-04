@@ -235,6 +235,7 @@ func (s *Service) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE users SET password_hash=?, password_scheme='argon2id', updated_at=? WHERE id=?`, hash, now, userID)
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE password_reset_tokens SET used_at=? WHERE token_hash=?`, now, tokenHash(body.Token))
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE sessions SET revoked_at=? WHERE user_id=?`, now, userID)
+	s.auditEvent(r.Context(), userID, "auth.password.reset", "user", userID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Password reset successfully"})
 }
 
@@ -257,6 +258,7 @@ func (s *Service) ChangePassword(w http.ResponseWriter, r *http.Request, user Us
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE users SET password_hash=?, password_scheme='argon2id', updated_at=? WHERE id=?`, newHash, now, user.ID)
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE sessions SET revoked_at=? WHERE user_id=? AND audience<>'web'`, now, user.ID)
+	s.auditEvent(r.Context(), user.ID, "auth.password.change", "user", user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Password changed successfully"})
 }
 
@@ -475,6 +477,10 @@ func (s *Service) recordRateLimit(ctx context.Context, key string, window time.D
 
 func (s *Service) clearRateLimit(ctx context.Context, key string) {
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM rate_limits WHERE key=?`, key)
+}
+
+func (s *Service) auditEvent(ctx context.Context, actorID, action, targetType, targetID string) {
+	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), actorID, action, targetType, targetID, "{}", time.Now().UTC().Format(time.RFC3339))
 }
 
 func randomToken() string {

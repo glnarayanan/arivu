@@ -56,6 +56,7 @@ All notable changes to this project will be documented in this file.
 
 - Web, CLI, and extension tokens are audience-isolated.
 - Login, forgot-password, and reset-password endpoints now use the existing SQLite `rate_limits` table to throttle repeated auth attempts.
+- Sensitive admin/account mutations now write `audit_events` rows, and provider setting updates are restricted to known keys.
 - Server-side URL fetching pins connections to vetted IPs and blocks private/reserved targets.
 - Archived HTML is sanitized by the backend before storage/display.
 - GitHub Actions CI now declares least-privilege `contents: read` token permissions.
