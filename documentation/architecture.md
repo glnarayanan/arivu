@@ -8,7 +8,7 @@ Arivu is a standalone low-dependency Go single-binary app with embedded frontend
 - `internal/app`: HTTP routes, middleware, embedded frontend, admin endpoints, and workers.
 - `internal/database`: SQLite opening, pragmas, schema initialization, WAL, and foreign keys.
 - `internal/auth`: opaque web, CLI, and extension sessions with audience enforcement.
-- `internal/bookmarks`: bookmarks, collections, search, analytics, graph, resurfacing, import, and export behavior.
+- `internal/bookmarks`: bookmarks, collections, notes, annotations, tags, saved searches, search, analytics, graph, resurfacing, review, import, and export behavior.
 - `internal/jobs`: durable SQLite job queue.
 - `internal/safefetch`: SSRF-aware outbound content fetch.
 - `internal/sanitize`: backend-owned archived HTML sanitizer.
@@ -29,7 +29,7 @@ The browser app is embedded from `internal/app/web`. It uses first-party JavaScr
 
 ## Data And Search
 
-SQLite stores users, sessions, bookmarks, `ai_summaries`, collections, access history, entities, concepts, import jobs, X connections, OAuth states, settings, rate limits, audit events, and jobs. FTS5 is preferred when available; the supported fallback is SQLite `LIKE` search.
+SQLite stores users, sessions, bookmarks, `ai_summaries`, collections, access history, notes, annotations, normalized tags, tag aliases, saved searches, review events, entities, concepts, import source metadata, import jobs, X connections, OAuth states, settings, rate limits, audit events, and jobs. FTS5 is preferred when available; the supported fallback is SQLite `LIKE` search.
 
 ## Migration
 

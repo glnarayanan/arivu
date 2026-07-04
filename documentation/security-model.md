@@ -9,6 +9,10 @@
 - Password reset and password change revoke affected sessions.
 - Legacy bcrypt hashes are accepted and upgraded to Argon2id on successful login.
 - Runtime provider secrets are encrypted with AES-256-GCM using HKDF-derived key material from `SECRET_KEY`.
+- Second-brain routes use the same web-audience boundary as bookmarks. Notes,
+  annotations, tags, saved searches, review actions, and job status are all
+  scoped by `user_id`.
+- Extension and CLI tokens cannot call web-audience second-brain routes.
 
 ## Fetching And Archived Content
 
@@ -29,6 +33,16 @@
 - CSP is delivered as an HTTP response header.
 - The frontend avoids third-party scripts, external fonts, and npm packages.
 - Provider secrets never enter browser-delivered code.
+- User-authored note, tag, annotation, and saved-search strings are escaped by
+  the frontend before DOM insertion. Archived page HTML is the only direct HTML
+  render path and remains backend-sanitized.
+
+## Import And Export
+
+- Import URLs are validated through `internal/safefetch` before persistence or
+  background fetch scheduling.
+- CSV export cells are trimmed and formula-prefixed values are neutralized so
+  spreadsheet imports do not execute user-controlled formulas.
 
 ## Operational Limits
 

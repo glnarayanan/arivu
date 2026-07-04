@@ -9,6 +9,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - `app.js`: router, API client, auth flow, primary screens, and local UI state.
 - `favicon.svg`: small embedded SVG icon served by both `/favicon.svg` and
   legacy `/favicon.ico` requests.
+- `manifest.webmanifest`: installable PWA metadata and GET share-target
+  definition for mobile/browser capture into `/dashboard`.
 - `app.js` UI primitives: toasts, modal dialogs, destructive confirmations,
   focus trapping, menu roving focus, settings tabs, escape handling, and route
   cleanup for global listeners.
@@ -36,6 +38,16 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   assertive alert semantics.
 - The authenticated shell includes a skip link and marks the active nav item with
   `aria-current="page"`.
+- `/dashboard` pre-fills the save form from PWA share-target `title`, `text`,
+  and `url` query parameters. The URL field prefers the explicit `url`
+  parameter, then falls back to the first URL found in shared text.
+- Bookmark save responses include `job_id`; the dashboard shows a short
+  processing status before navigating to the saved bookmark.
+- Bookmark detail is now the reader/research surface: sanitized archived HTML,
+  summaries, tags, related items, read state, review completion, annotations,
+  and linked notes all render in one flow.
+- `/review`, `/duplicates`, `/knowledge-graph`, and `/analytics` are real
+  product routes, not placeholders.
 - Custom dialogs use `role="dialog"`, `aria-modal`, focus restoration, Escape
   close, and tab containment.
 - Menus use `aria-haspopup`, `aria-expanded`, `role="menu"`, roving
@@ -60,7 +72,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 
 ## Remaining Frontend Work
 
-- Browser workflow tests for dashboard, settings, import, admin, mobile, and keyboard shortcuts.
+- Browser workflow tests for dashboard, settings, import, admin, annotation,
+  review, duplicate merge, PWA share prefill, mobile, and keyboard shortcuts.
 - Visual comparison against the legacy brutalist UX.
 - Run `impeccable document` when the team wants a generated `DESIGN.md` to
   complement the existing `PRODUCT.md` context.
