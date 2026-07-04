@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -110,11 +111,19 @@ func (s *Service) loginWithAudience(w http.ResponseWriter, r *http.Request, audi
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "Invalid request"})
 		return
 	}
+	body.Email = strings.ToLower(strings.TrimSpace(body.Email))
+	limitKey := rateLimitKey("auth:login", audience, body.Email, requestIP(r))
+	if s.rateLimitBlocked(r.Context(), limitKey, 10, 15*time.Minute) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"detail": "Too many login attempts. Try again later."})
+		return
+	}
 	user, scheme, hash, err := s.userByEmail(r.Context(), body.Email)
 	if err != nil || !verifyPassword(body.Password, scheme, hash) {
+		s.recordRateLimit(r.Context(), limitKey, 15*time.Minute)
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"detail": "Invalid credentials"})
 		return
 	}
+	s.clearRateLimit(r.Context(), limitKey)
 	if scheme != "argon2id" {
 		if newHash, err := hashArgon2id(body.Password); err == nil {
 			_, _ = s.db.ExecContext(r.Context(), `UPDATE users SET password_hash=?, password_scheme='argon2id', updated_at=? WHERE id=?`, newHash, time.Now().UTC().Format(time.RFC3339), user.ID)
@@ -182,6 +191,10 @@ func (s *Service) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "Invalid request"})
 		return
 	}
+	if !s.consumeRateLimit(r.Context(), rateLimitKey("auth:forgot-password", requestIP(r)), 3, time.Hour) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"detail": "Too many password reset requests. Try again later."})
+		return
+	}
 	user, _, _, err := s.userByEmail(r.Context(), body.Email)
 	if err == nil {
 		token := randomToken()
@@ -196,6 +209,10 @@ func (s *Service) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var body resetPasswordRequest
 	if err := decodeJSON(r, &body); err != nil || len(body.NewPassword) < 8 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "Invalid reset request"})
+		return
+	}
+	if !s.consumeRateLimit(r.Context(), rateLimitKey("auth:reset-password", requestIP(r)), 10, 15*time.Minute) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"detail": "Too many password reset attempts. Try again later."})
 		return
 	}
 	var userID, expires string
@@ -412,6 +429,52 @@ func bearerToken(r *http.Request) string {
 func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func rateLimitKey(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "rl:" + hex.EncodeToString(sum[:])
+}
+
+func requestIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func (s *Service) consumeRateLimit(ctx context.Context, key string, limit int, window time.Duration) bool {
+	if s.rateLimitBlocked(ctx, key, limit, window) {
+		return false
+	}
+	s.recordRateLimit(ctx, key, window)
+	return true
+}
+
+func (s *Service) rateLimitBlocked(ctx context.Context, key string, limit int, window time.Duration) bool {
+	var count int
+	var expires string
+	if err := s.db.QueryRowContext(ctx, `SELECT count,expires_at FROM rate_limits WHERE key=?`, key).Scan(&count, &expires); err != nil {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expires)
+	if err != nil || !time.Now().UTC().Before(expiresAt) {
+		s.clearRateLimit(ctx, key)
+		return false
+	}
+	return count >= limit
+}
+
+func (s *Service) recordRateLimit(ctx context.Context, key string, window time.Duration) {
+	now := time.Now().UTC()
+	expires := now.Add(window).Format(time.RFC3339)
+	_, _ = s.db.ExecContext(ctx, `INSERT INTO rate_limits(key,window_start,count,expires_at) VALUES(?,?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN rate_limits.expires_at<=? THEN 1 ELSE rate_limits.count+1 END, window_start=CASE WHEN rate_limits.expires_at<=? THEN excluded.window_start ELSE rate_limits.window_start END, expires_at=CASE WHEN rate_limits.expires_at<=? THEN excluded.expires_at ELSE rate_limits.expires_at END`,
+		key, now.Format(time.RFC3339), expires, now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339))
+}
+
+func (s *Service) clearRateLimit(ctx context.Context, key string) {
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM rate_limits WHERE key=?`, key)
 }
 
 func randomToken() string {

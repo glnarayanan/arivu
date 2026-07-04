@@ -242,6 +242,66 @@ func TestCollectionMembershipIsUserScoped(t *testing.T) {
 	extensionCreate.Body.Close()
 }
 
+func TestAuthRateLimitsSensitiveEndpoints(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, _ := signupForCookies(t, handler, "limited@example.com")
+	if accessCookie == nil {
+		t.Fatal("signup did not create a session")
+	}
+
+	for i := 0; i < 10; i++ {
+		resp := publicJSONRequest(t, handler, http.MethodPost, "/api/auth/login", `{"email":"limited@example.com","password":"wrong password"}`)
+		if resp.StatusCode != http.StatusUnauthorized {
+			t.Fatalf("bad login %d status = %d body=%s", i, resp.StatusCode, readBody(resp))
+		}
+		resp.Body.Close()
+	}
+	limitedLogin := publicJSONRequest(t, handler, http.MethodPost, "/api/auth/login", `{"email":"limited@example.com","password":"wrong password"}`)
+	if limitedLogin.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limited login status = %d body=%s", limitedLogin.StatusCode, readBody(limitedLogin))
+	}
+	limitedLogin.Body.Close()
+
+	for i := 0; i < 3; i++ {
+		resp := publicJSONRequest(t, handler, http.MethodPost, "/api/auth/forgot-password", `{"email":"limited@example.com"}`)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("forgot password %d status = %d body=%s", i, resp.StatusCode, readBody(resp))
+		}
+		resp.Body.Close()
+	}
+	limitedForgot := publicJSONRequest(t, handler, http.MethodPost, "/api/auth/forgot-password", `{"email":"limited@example.com"}`)
+	if limitedForgot.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limited forgot status = %d body=%s", limitedForgot.StatusCode, readBody(limitedForgot))
+	}
+	limitedForgot.Body.Close()
+
+	for i := 0; i < 10; i++ {
+		resp := publicJSONRequest(t, handler, http.MethodPost, "/api/auth/reset-password", `{"token":"bad-token","new_password":"correct horse battery staple"}`)
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("reset password %d status = %d body=%s", i, resp.StatusCode, readBody(resp))
+		}
+		resp.Body.Close()
+	}
+	limitedReset := publicJSONRequest(t, handler, http.MethodPost, "/api/auth/reset-password", `{"token":"bad-token","new_password":"correct horse battery staple"}`)
+	if limitedReset.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limited reset status = %d body=%s", limitedReset.StatusCode, readBody(limitedReset))
+	}
+	limitedReset.Body.Close()
+}
+
 func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
@@ -1570,6 +1630,15 @@ func bearerRequest(t *testing.T, handler http.Handler, method string, path strin
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec.Result()
+}
+
+func publicJSONRequest(t *testing.T, handler http.Handler, method string, path string, body string) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec.Result()

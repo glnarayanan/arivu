@@ -7,6 +7,8 @@
 - Web sessions use HTTP-only access/refresh cookies.
 - Cookie-authenticated mutations require an `X-CSRF-Token` header matching the CSRF cookie.
 - Password reset and password change revoke affected sessions.
+- Login, forgot-password, and reset-password endpoints use SQLite-backed
+  throttles with hashed rate-limit keys.
 - Legacy bcrypt hashes are accepted and upgraded to Argon2id on successful login.
 - Runtime provider secrets are encrypted with AES-256-GCM using HKDF-derived key material from `SECRET_KEY`.
 - Second-brain routes use the same web-audience boundary as bookmarks. Notes,

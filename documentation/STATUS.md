@@ -9,6 +9,7 @@
 - Embedded dependency-free frontend assets served from the Go binary.
 - SQLite schema for users, sessions, bookmarks, `ai_summaries`, collections, normalized relationships, notes, annotations, normalized tags and aliases, saved searches, review events, import source metadata, import jobs, X connections, OAuth states, runtime settings, rate limits, audit events, and jobs.
 - Opaque token auth with `web`, `cli`, and `extension` audiences, hashed token storage, refresh rotation, HTTP-only cookies, CSRF token checks, and bcrypt-to-Argon2id rehash on login.
+- SQLite-backed throttling for login, forgot-password, and reset-password attempts.
 - SSRF-aware safe fetch client with custom dialer, no proxy environment use, redirect validation, blocked private/reserved targets, content-type validation, and response-size limits.
 - Backend-owned HTML sanitizer with strict allowlisted tags, attributes, and URL schemes.
 - Direct HTTP provider clients for Gemini, Resend, and X API calls without provider SDK dependencies.
@@ -29,7 +30,7 @@ GOCACHE=/private/tmp/arivu-build-cache go test ./...
 GOCACHE=/private/tmp/arivu-build-cache go build -trimpath -ldflags="-s -w" -o /private/tmp/arivu-check ./cmd/arivu
 ```
 
-Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, import URL extraction, import source detection, imported bookmark source persistence, import job payload/progress/source-report/provenance accounting, full JSON backup export and restore coverage, Obsidian ZIP export coverage, Markdown export escaping, migration unknown-field rejection, direct HTTP handler integration tests, collection membership ownership checks, second-brain route scoping and CSRF checks, annotation update/delete routes, tag/date/source filtering, cited answer mode with bookmark and standalone note citations, bookmark and standalone note review queues, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
+Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, auth endpoint throttling, import URL extraction, import source detection, imported bookmark source persistence, import job payload/progress/source-report/provenance accounting, full JSON backup export and restore coverage, Obsidian ZIP export coverage, Markdown export escaping, migration unknown-field rejection, direct HTTP handler integration tests, collection membership ownership checks, second-brain route scoping and CSRF checks, annotation update/delete routes, tag/date/source filtering, cited answer mode with bookmark and standalone note citations, bookmark and standalone note review queues, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
 
 Latest manual localhost smoke used a temporary SQLite database and verified:
 
