@@ -1,0 +1,43 @@
+# Frontend & Extensions
+
+Arivu embeds all user interface assets within the standalone Go binary, presenting a seamless and lightweight experience that does not require node_modules or independent build configurations.
+
+---
+
+## Embedded Web Console
+
+The UI assets are located in `/internal/app/web/` and are embedded directly into the Go server runtime binary using standard Go virtual filesystem constructs (`go:embed`).
+
+### Assets
+- `index.html`: The main console markup. Offers an accessible, clean document tree.
+- `app.js`: Vanilla browser JavaScript modules implementing reactive client routing, form submissions, settings orchestration, and API connection.
+- `styles.css`: Hardened stylesheet implementing structural layouts with support for theme scaling.
+- `favicon.svg`: Icon asset.
+
+### Asset Caching Performance
+As detailed in `/internal/app/app.go`, static asset handlers set content ETags:
+- `index.html` and SPA fallbacks use `Cache-Control: no-cache` so deploys can refresh the shell.
+- JavaScript, CSS, SVG, and favicon responses use `Cache-Control: public, max-age=0, must-revalidate` so repeat visits can revalidate and receive `304 Not Modified`.
+
+---
+
+## Companion Browser Extension
+
+The `/extension/` directory houses a companion, cross-browser compatible WebExtension.
+
+### Manifest Layout
+Declared in `manifest.json` as a Manifest V3 extension, providing integrations:
+- `background.js`: Listens for actions and maintains secure background session loops with the active Arivu backend instance.
+- `content.js`: Injected scripts to extract selected page content and trigger seamless "Save in Arivu" operations from local tabs.
+- `popup.html` & `popup.js`: Mini utility panel allowing users to connect their active local server instance, capture status flags, and organize tags or collections immediately upon index request.
+
+---
+
+## CLI Integration Client
+
+The compiled Arivu binary incorporates client interfaces to manage bookmarks securely directly from shell prompts.
+
+When users call `./arivu login --email ... --password ...`, `/cmd/arivu/main.go`
+stores the returned CLI tokens in the user's config directory. Later
+`./arivu save`, `./arivu list`, and `./arivu search` calls reuse that saved
+profile.

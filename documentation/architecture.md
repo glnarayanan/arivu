@@ -29,7 +29,7 @@ The browser app is embedded from `internal/app/web`. It uses first-party JavaScr
 
 ## Data And Search
 
-SQLite stores users, sessions, bookmarks, summaries, collections, access history, entities, concepts, import jobs, X connections, OAuth state, settings, rate limits, audit events, and durable jobs. FTS5 is preferred when available; the supported fallback is SQLite `LIKE` search.
+SQLite stores users, sessions, bookmarks, `ai_summaries`, collections, access history, entities, concepts, import jobs, X connections, OAuth states, settings, rate limits, audit events, and jobs. FTS5 is preferred when available; the supported fallback is SQLite `LIKE` search.
 
 ## Migration
 

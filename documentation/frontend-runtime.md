@@ -46,6 +46,18 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   hint so long saved-item lists skip offscreen rendering work.
 - Archived page HTML is inserted only after backend sanitization.
 
+## Browser Smoke Checks
+
+- Restart the Go server after frontend CSS or JS edits; assets are embedded in
+  the running binary.
+- Use a temporary SQLite database and `SIGNUPS_ENABLED=true` when checking
+  first-run browser flows.
+- Cover `/auth`, signup to `/dashboard`, settings tabs, Actions menu keyboard
+  movement, save/search/detail/delete, reset-password, invite copy, and a
+  390x844 mobile viewport.
+- Keep console warning/error collection empty during completed checks.
+- Keep screenshot artifacts out of the repository unless a test needs them.
+
 ## Remaining Frontend Work
 
 - Browser workflow tests for dashboard, settings, import, admin, mobile, and keyboard shortcuts.
