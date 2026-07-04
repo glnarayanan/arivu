@@ -46,6 +46,9 @@
 - CSV export cells are trimmed and formula-prefixed values are neutralized so
   spreadsheet imports do not execute user-controlled formulas.
 - Markdown export escapes bracket text and closing parentheses in URLs.
+- Obsidian ZIP export uses Go's standard `archive/zip`, sanitizes generated file
+  names, and emits only user-owned Markdown content from the authenticated
+  export route.
 
 ## Operational Limits
 

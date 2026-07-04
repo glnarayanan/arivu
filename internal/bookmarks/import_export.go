@@ -1,6 +1,7 @@
 package bookmarks
 
 import (
+	"archive/zip"
 	"context"
 	"database/sql"
 	"encoding/csv"
@@ -380,6 +381,12 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 		writeJSON(w, http.StatusOK, export)
 		return
 	}
+	if format == "obsidian" || format == "obsidian-zip" {
+		if err := s.writeObsidianExport(r.Context(), w, user.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not export Obsidian vault")
+		}
+		return
+	}
 	rows, err := s.db.QueryContext(r.Context(), `SELECT url,title,description,created_at FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not export bookmarks")
@@ -416,7 +423,7 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 			_, _ = fmt.Fprintf(w, "<DT><A HREF=\"%s\">%s</A>\n", html.EscapeString(it.URL), html.EscapeString(it.Title))
 		}
 		_, _ = fmt.Fprintln(w, "</DL><p>")
-	case "md", "markdown", "obsidian":
+	case "md", "markdown":
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		w.Header().Set("Content-Disposition", `attachment; filename="arivu-bookmarks.md"`)
 		_, _ = fmt.Fprintln(w, "# Arivu Bookmarks")
@@ -435,6 +442,34 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 	default:
 		writeJSON(w, http.StatusOK, items)
 	}
+}
+
+func (s *Service) writeObsidianExport(ctx context.Context, w http.ResponseWriter, userID string) error {
+	export, err := s.fullExport(ctx, userID)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="arivu-obsidian-vault.zip"`)
+	vault := zip.NewWriter(w)
+	defer vault.Close()
+	for _, bookmark := range mapList(export["bookmarks"]) {
+		name := "Bookmarks/" + obsidianFileName(stringValue(bookmark["title"]), stringValue(bookmark["id"]))
+		file, err := vault.Create(name)
+		if err != nil {
+			return err
+		}
+		writeObsidianBookmark(file, bookmark)
+	}
+	for _, note := range mapList(export["notes"]) {
+		name := "Notes/" + obsidianFileName(stringValue(note["title"]), stringValue(note["id"]))
+		file, err := vault.Create(name)
+		if err != nil {
+			return err
+		}
+		writeObsidianNote(file, note)
+	}
+	return nil
 }
 
 func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any, error) {
@@ -586,6 +621,73 @@ func (s *Service) exportReviewEvents(ctx context.Context, userID string) []map[s
 		events = append(events, map[string]any{"item_type": itemType, "item_id": itemID, "action": action, "snoozed_until": snoozedUntil, "created_at": created})
 	}
 	return events
+}
+
+func writeObsidianBookmark(w io.Writer, bookmark map[string]any) {
+	title := fallback(stringValue(bookmark["title"]), stringValue(bookmark["url"]))
+	fmt.Fprintf(w, "# %s\n\n", markdownText(title))
+	fmt.Fprintf(w, "Source: %s\n", markdownURL(stringValue(bookmark["url"])))
+	if domain := stringValue(bookmark["domain"]); domain != "" {
+		fmt.Fprintf(w, "Domain: %s\n", markdownText(domain))
+	}
+	if created := stringValue(bookmark["created_at"]); created != "" {
+		fmt.Fprintf(w, "Saved: %s\n", markdownText(created))
+	}
+	if tags := tagNames(bookmark["tags"]); len(tags) > 0 {
+		fmt.Fprintf(w, "Tags: %s\n", markdownText(strings.Join(tags, ", ")))
+	}
+	fmt.Fprintln(w)
+	if summary, ok := bookmark["ai_summary"].(map[string]any); ok {
+		if one := stringValue(summary["one_sentence"]); one != "" {
+			fmt.Fprintf(w, "## Summary\n\n%s\n\n", markdownText(one))
+		}
+		if bullets := stringSlice(summary["bullet_points"]); len(bullets) > 0 {
+			fmt.Fprintln(w, "## Key Points")
+			fmt.Fprintln(w)
+			for _, bullet := range bullets {
+				fmt.Fprintf(w, "- %s\n", markdownText(bullet))
+			}
+			fmt.Fprintln(w)
+		}
+	}
+	if annotations := mapList(bookmark["annotations"]); len(annotations) > 0 {
+		fmt.Fprintln(w, "## Annotations")
+		fmt.Fprintln(w)
+		for _, annotation := range annotations {
+			if quote := stringValue(annotation["quote"]); quote != "" {
+				fmt.Fprintf(w, "> %s\n", markdownText(quote))
+			}
+			if note := stringValue(annotation["note"]); note != "" {
+				fmt.Fprintf(w, "\n%s\n", markdownText(note))
+			}
+			fmt.Fprintln(w)
+		}
+	}
+	if notes := mapList(bookmark["notes"]); len(notes) > 0 {
+		fmt.Fprintln(w, "## Linked Notes")
+		fmt.Fprintln(w)
+		for _, note := range notes {
+			if title := stringValue(note["title"]); title != "" {
+				fmt.Fprintf(w, "### %s\n\n", markdownText(title))
+			}
+			if body := stringValue(note["body"]); body != "" {
+				fmt.Fprintf(w, "%s\n\n", markdownText(body))
+			}
+		}
+	}
+	if text := strings.TrimSpace(stringValue(bookmark["text_content"])); text != "" {
+		fmt.Fprintf(w, "## Archived Text\n\n%s\n", markdownText(text))
+	}
+}
+
+func writeObsidianNote(w io.Writer, note map[string]any) {
+	fmt.Fprintf(w, "# %s\n\n", markdownText(fallback(stringValue(note["title"]), "Untitled Note")))
+	if created := stringValue(note["created_at"]); created != "" {
+		fmt.Fprintf(w, "Created: %s\n\n", markdownText(created))
+	}
+	if body := stringValue(note["body"]); body != "" {
+		fmt.Fprintf(w, "%s\n", markdownText(body))
+	}
 }
 
 func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, processErr error) {
@@ -823,6 +925,29 @@ func stringSlice(value any) []string {
 	return values
 }
 
+func mapList(value any) []map[string]any {
+	if mapped, ok := value.([]map[string]any); ok {
+		return mapped
+	}
+	items := []map[string]any{}
+	for _, item := range listValue(value) {
+		if mapped, ok := item.(map[string]any); ok {
+			items = append(items, mapped)
+		}
+	}
+	return items
+}
+
+func tagNames(value any) []string {
+	names := []string{}
+	for _, tag := range mapList(value) {
+		if name := stringValue(tag["name"]); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 func jsonString(value any) string {
 	if value == nil {
 		return "{}"
@@ -871,6 +996,26 @@ func markdownText(value string) string {
 
 func markdownURL(value string) string {
 	return strings.ReplaceAll(strings.TrimSpace(value), ")", "%29")
+}
+
+func obsidianFileName(title, id string) string {
+	base := fallback(markdownText(title), "Untitled")
+	base = strings.Map(func(r rune) rune {
+		switch r {
+		case '/', '\\', ':', '*', '?', '"', '<', '>', '|':
+			return '-'
+		default:
+			return r
+		}
+	}, base)
+	base = strings.Trim(strings.Join(strings.Fields(base), " "), ". ")
+	if len(base) > 80 {
+		base = strings.TrimSpace(base[:80])
+	}
+	if id != "" {
+		base += "-" + id[:min(len(id), 8)]
+	}
+	return fallback(base, "Untitled") + ".md"
 }
 
 func scanImportJob(row scanner) map[string]any {

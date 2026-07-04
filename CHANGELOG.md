@@ -49,6 +49,7 @@ All notable changes to this project will be documented in this file.
 - Imported bookmarks now persist their detected source for source filtering.
 - JSON export now includes second-brain backup data: bookmark details, summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, import jobs, and import provenance.
 - Full JSON backups can now be restored through bookmark import, remapping IDs under the authenticated user while preserving summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, and import provenance.
+- Added an Obsidian ZIP export that writes bookmark and standalone note Markdown files into vault-ready folders without adding production dependencies.
 
 ### Security
 
@@ -62,4 +63,5 @@ All notable changes to this project will be documented in this file.
 - Validated imported URLs with the same SSRF-aware safe-fetch policy used for normal saves.
 - Full JSON backup restore writes every restored row with the authenticated user ID and remaps cross-references instead of trusting exported ownership.
 - Escaped formula-like CSV export cells to reduce spreadsheet injection risk.
+- Obsidian ZIP export sanitizes generated filenames and reuses existing Markdown escaping for file content.
 - Covered new second-brain routes with CSRF, audience isolation, and cross-user isolation tests.

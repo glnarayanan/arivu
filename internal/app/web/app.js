@@ -1172,6 +1172,7 @@ function importPanel() {
         <a class="button secondary" href="/api/bookmarks/export?format=csv">CSV</a>
         <a class="button secondary" href="/api/bookmarks/export?format=html">Browser HTML</a>
         <a class="button secondary" href="/api/bookmarks/export?format=markdown">Markdown</a>
+        <a class="button secondary" href="/api/bookmarks/export?format=obsidian">Obsidian ZIP</a>
       </div>
       <div id="import-jobs" class="stack"></div>
     </section>

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"archive/zip"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -543,6 +544,47 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if !sawAlias {
 		t.Fatalf("export missing tag alias: %#v", exportBody.Tags)
+	}
+
+	obsidianResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=obsidian", "", accessCookie, csrfCookie)
+	if obsidianResp.StatusCode != http.StatusOK {
+		t.Fatalf("obsidian export status = %d body=%s", obsidianResp.StatusCode, readBody(obsidianResp))
+	}
+	if contentType := obsidianResp.Header.Get("Content-Type"); contentType != "application/zip" {
+		t.Fatalf("obsidian content-type = %q", contentType)
+	}
+	obsidianRaw, err := io.ReadAll(obsidianResp.Body)
+	if err != nil {
+		t.Fatalf("read obsidian export: %v", err)
+	}
+	obsidianResp.Body.Close()
+	vault, err := zip.NewReader(bytes.NewReader(obsidianRaw), int64(len(obsidianRaw)))
+	if err != nil {
+		t.Fatalf("open obsidian export: %v", err)
+	}
+	var sawBookmarkFile, sawNoteFile bool
+	for _, file := range vault.File {
+		if strings.HasPrefix(file.Name, "Bookmarks/") && strings.Contains(file.Name, "Capture Loop") {
+			sawBookmarkFile = true
+			rc, err := file.Open()
+			if err != nil {
+				t.Fatalf("open obsidian bookmark: %v", err)
+			}
+			content, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				t.Fatalf("read obsidian bookmark: %v", err)
+			}
+			if !strings.Contains(string(content), "The capture loop needs review.") || !strings.Contains(string(content), "Recall with evidence") {
+				t.Fatalf("obsidian bookmark missing second-brain content: %s", string(content))
+			}
+		}
+		if strings.HasPrefix(file.Name, "Notes/") && strings.Contains(file.Name, "Recall field note") {
+			sawNoteFile = true
+		}
+	}
+	if !sawBookmarkFile || !sawNoteFile {
+		t.Fatalf("obsidian export missing bookmark or note files: %#v", vault.File)
 	}
 
 	restoreAccess, restoreCSRF := signupForCookies(t, handler, "restore@example.com")
