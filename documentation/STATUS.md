@@ -30,6 +30,14 @@ GOCACHE=/private/tmp/arivu-build-cache go build -trimpath -ldflags="-s -w" -o /p
 
 Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, import URL extraction, import source detection, Markdown export escaping, migration unknown-field rejection, direct HTTP handler integration tests, second-brain route scoping and CSRF checks, tag/date filtering, cited answer mode, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
 
+Latest manual localhost smoke used a temporary SQLite database and verified:
+
+- SPA route fallback and `/manifest.webmanifest`.
+- Signup, cookie auth, and CSRF-protected bookmark import.
+- Imported bookmark search/list results.
+- Cited answer mode.
+- Markdown export download.
+
 ## Follow-Up
 
 - Run Docker image verification where Docker is available.
