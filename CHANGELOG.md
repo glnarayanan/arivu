@@ -47,6 +47,7 @@ All notable changes to this project will be documented in this file.
 - Imported bookmark processing now updates the visible import job counters for fetched, AI-processed, and failed items.
 - Import jobs now include source reports and bounded item provenance so migration status can show where imported items came from.
 - Imported bookmarks now persist their detected source for source filtering.
+- JSON export now includes second-brain backup data: bookmark details, summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, import jobs, and import provenance.
 
 ### Security
 

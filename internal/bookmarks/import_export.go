@@ -116,6 +116,15 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 	if format == "" {
 		format = "json"
 	}
+	if format == "json" {
+		export, err := s.fullExport(r.Context(), user.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not export bookmarks")
+			return
+		}
+		writeJSON(w, http.StatusOK, export)
+		return
+	}
 	rows, err := s.db.QueryContext(r.Context(), `SELECT url,title,description,created_at FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not export bookmarks")
@@ -171,6 +180,157 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 	default:
 		writeJSON(w, http.StatusOK, items)
 	}
+}
+
+func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	bookmarks := []map[string]any{}
+	for rows.Next() {
+		bookmarks = append(bookmarks, scanBookmark(rows))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for _, bookmark := range bookmarks {
+		id, _ := bookmark["id"].(string)
+		bookmark["ai_summary"] = s.summary(ctx, userID, id)
+		bookmark["tags"] = s.bookmarkTags(ctx, userID, id)
+		bookmark["annotations"] = s.bookmarkAnnotations(ctx, userID, id)
+		bookmark["notes"] = s.bookmarkNotes(ctx, userID, id)
+	}
+	return map[string]any{
+		"version":        1,
+		"exported_at":    time.Now().UTC().Format(time.RFC3339),
+		"bookmarks":      bookmarks,
+		"notes":          s.exportStandaloneNotes(ctx, userID),
+		"tags":           s.exportTags(ctx, userID),
+		"saved_searches": s.exportSavedSearches(ctx, userID),
+		"import_jobs":    s.exportImportJobs(ctx, userID),
+		"import_sources": s.exportImportSources(ctx, userID),
+		"review_events":  s.exportReviewEvents(ctx, userID),
+	}, nil
+}
+
+func (s *Service) exportStandaloneNotes(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT n.id,n.title,n.body,n.source,n.created_at,n.updated_at,'' FROM notes n WHERE n.user_id=? AND NOT EXISTS (SELECT 1 FROM bookmark_notes bn WHERE bn.note_id=n.id AND bn.user_id=n.user_id) ORDER BY n.updated_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	notes := []map[string]any{}
+	for rows.Next() {
+		notes = append(notes, scanNote(rows))
+	}
+	return notes
+}
+
+func (s *Service) exportTags(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,slug,source,created_at,updated_at FROM tags WHERE user_id=? ORDER BY name COLLATE NOCASE`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	tags := []map[string]any{}
+	for rows.Next() {
+		var id, name, slug, source, created, updated string
+		_ = rows.Scan(&id, &name, &slug, &source, &created, &updated)
+		tags = append(tags, map[string]any{"id": id, "name": name, "slug": slug, "source": source, "created_at": created, "updated_at": updated})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return []map[string]any{}
+	}
+	rows.Close()
+	for _, tag := range tags {
+		id, _ := tag["id"].(string)
+		tag["aliases"] = s.exportTagAliases(ctx, userID, id)
+	}
+	return tags
+}
+
+func (s *Service) exportTagAliases(ctx context.Context, userID, tagID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT alias,alias_slug,created_at FROM tag_aliases WHERE user_id=? AND tag_id=? ORDER BY alias COLLATE NOCASE`, userID, tagID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	aliases := []map[string]any{}
+	for rows.Next() {
+		var alias, slug, created string
+		_ = rows.Scan(&alias, &slug, &created)
+		aliases = append(aliases, map[string]any{"alias": alias, "alias_slug": slug, "created_at": created})
+	}
+	return aliases
+}
+
+func (s *Service) exportSavedSearches(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,query,filters_json,created_at,updated_at FROM saved_searches WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	searches := []map[string]any{}
+	for rows.Next() {
+		var id, name, query, filters, created, updated string
+		_ = rows.Scan(&id, &name, &query, &filters, &created, &updated)
+		searches = append(searches, map[string]any{"id": id, "name": name, "query": query, "filters": jsonObjectValue(filters), "created_at": created, "updated_at": updated})
+	}
+	return searches
+}
+
+func (s *Service) exportImportJobs(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,total_bookmarks,content_fetched,ai_processed,failed,status,created_at,updated_at FROM import_jobs WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	jobs := []map[string]any{}
+	for rows.Next() {
+		jobs = append(jobs, scanImportJob(rows))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return []map[string]any{}
+	}
+	rows.Close()
+	for _, job := range jobs {
+		id, _ := job["id"].(string)
+		job["source_report"] = s.importSourceReport(ctx, userID, id)
+	}
+	return jobs
+}
+
+func (s *Service) exportImportSources(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT import_job_id,source_type,source_name,metadata_json,created_at FROM import_sources WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var jobID, source, name, metadata, created string
+		_ = rows.Scan(&jobID, &source, &name, &metadata, &created)
+		items = append(items, map[string]any{"import_job_id": jobID, "source": source, "title": name, "metadata": jsonObjectValue(metadata), "created_at": created})
+	}
+	return items
+}
+
+func (s *Service) exportReviewEvents(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT item_type,item_id,action,COALESCE(snoozed_until,''),created_at FROM review_events WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	events := []map[string]any{}
+	for rows.Next() {
+		var itemType, itemID, action, snoozedUntil, created string
+		_ = rows.Scan(&itemType, &itemID, &action, &snoozedUntil, &created)
+		events = append(events, map[string]any{"item_type": itemType, "item_id": itemID, "action": action, "snoozed_until": snoozedUntil, "created_at": created})
+	}
+	return events
 }
 
 func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, processErr error) {

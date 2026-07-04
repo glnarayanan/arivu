@@ -1168,7 +1168,7 @@ function importPanel() {
     <section class="panel">
       <h3>Export</h3>
       <div class="button-row">
-        <a class="button secondary" href="/api/bookmarks/export?format=json">JSON</a>
+        <a class="button secondary" href="/api/bookmarks/export?format=json">Full JSON</a>
         <a class="button secondary" href="/api/bookmarks/export?format=csv">CSV</a>
         <a class="button secondary" href="/api/bookmarks/export?format=html">Browser HTML</a>
         <a class="button secondary" href="/api/bookmarks/export?format=markdown">Markdown</a>

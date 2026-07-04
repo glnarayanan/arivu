@@ -492,6 +492,53 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatal("review completion did not mark bookmark read")
 	}
 
+	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
+	if exportResp.StatusCode != http.StatusOK {
+		t.Fatalf("export status = %d body=%s", exportResp.StatusCode, readBody(exportResp))
+	}
+	var exportBody struct {
+		Bookmarks     []map[string]any `json:"bookmarks"`
+		Notes         []map[string]any `json:"notes"`
+		Tags          []map[string]any `json:"tags"`
+		SavedSearches []map[string]any `json:"saved_searches"`
+		ReviewEvents  []map[string]any `json:"review_events"`
+	}
+	_ = json.NewDecoder(exportResp.Body).Decode(&exportBody)
+	exportResp.Body.Close()
+	if len(exportBody.Bookmarks) != 1 || len(exportBody.Notes) == 0 || len(exportBody.ReviewEvents) == 0 {
+		t.Fatalf("export missing second-brain sections: %#v", exportBody)
+	}
+	bookmarkExport := exportBody.Bookmarks[0]
+	if bookmarkExport["id"] != "capture" || len(bookmarkExport["annotations"].([]any)) == 0 || len(bookmarkExport["notes"].([]any)) == 0 || len(bookmarkExport["tags"].([]any)) == 0 {
+		t.Fatalf("bookmark export missing linked data: %#v", bookmarkExport)
+	}
+	var sawStandaloneNote bool
+	for _, note := range exportBody.Notes {
+		if note["id"] == searchNoteID {
+			sawStandaloneNote = true
+		}
+		if note["id"] == otherNoteID {
+			t.Fatalf("export leaked other user's note: %#v", exportBody.Notes)
+		}
+	}
+	if !sawStandaloneNote {
+		t.Fatalf("export missing standalone note: %#v", exportBody.Notes)
+	}
+	if len(exportBody.SavedSearches) == 0 {
+		t.Fatalf("export missing saved searches: %#v", exportBody)
+	}
+	var sawAlias bool
+	for _, tag := range exportBody.Tags {
+		for _, alias := range tag["aliases"].([]any) {
+			if alias.(map[string]any)["alias"] == "PKM" {
+				sawAlias = true
+			}
+		}
+	}
+	if !sawAlias {
+		t.Fatalf("export missing tag alias: %#v", exportBody.Tags)
+	}
+
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -602,6 +649,29 @@ func TestImportQueuesJobsWithVisibleProgressID(t *testing.T) {
 	}
 	if listBody[0]["items"] != nil {
 		t.Fatalf("import job list should stay aggregate-only: %#v", listBody)
+	}
+	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
+	if exportResp.StatusCode != http.StatusOK {
+		t.Fatalf("export status = %d body=%s", exportResp.StatusCode, readBody(exportResp))
+	}
+	var exportBody struct {
+		Bookmarks     []map[string]any `json:"bookmarks"`
+		ImportJobs    []map[string]any `json:"import_jobs"`
+		ImportSources []map[string]any `json:"import_sources"`
+	}
+	_ = json.NewDecoder(exportResp.Body).Decode(&exportBody)
+	exportResp.Body.Close()
+	if len(exportBody.Bookmarks) != 2 || len(exportBody.ImportJobs) != 1 || len(exportBody.ImportSources) != 2 {
+		t.Fatalf("export missing import provenance: %#v", exportBody)
+	}
+	var exportedBrowserSources int
+	for _, bookmark := range exportBody.Bookmarks {
+		if bookmark["source"] == "browser" {
+			exportedBrowserSources++
+		}
+	}
+	if exportedBrowserSources != 2 {
+		t.Fatalf("export missing imported bookmark source: %#v", exportBody.Bookmarks)
 	}
 	rows, err := a.db.Query(`SELECT payload_json FROM jobs WHERE type='bookmark.process' ORDER BY created_at`)
 	if err != nil {
