@@ -57,6 +57,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   vault-ready bookmark and standalone note folders from the same export route.
 - Settings tags uses native forms to create canonical tags and add aliases to
   existing tags through the normalized tag APIs.
+- Settings profile uses the existing profile and password-change routes; Settings
+  API keys uses the existing admin key status/update routes and shows an
+  admin-required message for non-admin users.
 - Bookmark save responses include `job_id`; the dashboard shows a short
   processing status before navigating to the saved bookmark.
 - Bookmark detail is now the reader/research surface: sanitized archived HTML,

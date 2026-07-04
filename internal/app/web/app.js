@@ -1073,11 +1073,88 @@ async function settingsPage() {
     <div class="tab-list" role="tablist" aria-label="Settings sections">
       ${tabs.map(([id, label]) => `<button type="button" role="tab" id="tab-${id}" aria-controls="panel-${id}" aria-selected="${id === active}">${label}</button>`).join("")}
     </div>
-    ${tabs.map(([id, label, copy]) => `<div role="tabpanel" id="panel-${id}" aria-labelledby="tab-${id}"><h2>${label}</h2><p>${copy}</p>${id === "import" ? importPanel() : ""}${id === "tags" ? tagSettingsPanel() : ""}</div>`).join("")}
+    ${tabs.map(([id, label, copy]) => `<div role="tabpanel" id="panel-${id}" aria-labelledby="tab-${id}"><h2>${label}</h2><p>${copy}</p>${settingsPanel(id)}</div>`).join("")}
   </section>`));
   ui.tabs(document.querySelector("#settings-tabs"));
+  bindProfilePanel();
   bindImportPanel();
   bindTagSettingsPanel();
+  bindAPIKeysPanel();
+}
+
+function settingsPanel(id) {
+  if (id === "profile") return profilePanel();
+  if (id === "import") return importPanel();
+  if (id === "tags") return tagSettingsPanel();
+  if (id === "api-keys") return apiKeysPanel();
+  return `<section class="panel"><p class="meta">No connection controls yet.</p></section>`;
+}
+
+function profilePanel() {
+  return `<section class="split">
+    <form class="panel form" id="profile-form">
+      <h3>Profile</h3>
+      <div class="field"><label for="profile-email">Email</label><input id="profile-email" type="email" disabled data-skip-form-message></div>
+      <div class="field"><label for="profile-name">Name</label><input id="profile-name" type="text" autocomplete="name"></div>
+      <p class="form-message" id="profile-message" data-form-message hidden></p>
+      <button type="submit">Save profile</button>
+    </form>
+    <form class="panel form" id="password-form">
+      <h3>Password</h3>
+      <div class="field"><label for="current-password">Current password</label><input id="current-password" type="password" autocomplete="current-password"></div>
+      <div class="field"><label for="new-password">New password</label><input id="new-password" type="password" autocomplete="new-password" minlength="8"></div>
+      <p class="form-message" id="password-message" data-form-message hidden></p>
+      <button type="submit">Change password</button>
+    </form>
+  </section>`;
+}
+
+async function bindProfilePanel() {
+  const profileForm = document.querySelector("#profile-form");
+  const passwordForm = document.querySelector("#password-form");
+  if (!profileForm || !passwordForm) return;
+  try {
+    const profile = await api("/user/profile");
+    document.querySelector("#profile-email").value = profile.email || "";
+    document.querySelector("#profile-name").value = profile.name || "";
+  } catch (err) {
+    setFormMessage(profileForm, err.message);
+  }
+  profileForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving");
+    setFormMessage(profileForm);
+    try {
+      state.user = await api("/user/profile", { method: "PUT", body: JSON.stringify({ name: document.querySelector("#profile-name").value }) });
+      ui.toast("Profile saved", "success");
+    } catch (err) {
+      setFormMessage(profileForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  passwordForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Changing");
+    setFormMessage(passwordForm);
+    try {
+      await api("/auth/change-password", {
+        method: "POST",
+        body: JSON.stringify({
+          current_password: document.querySelector("#current-password").value,
+          new_password: document.querySelector("#new-password").value,
+        }),
+      });
+      passwordForm.reset();
+      ui.toast("Password changed", "success");
+    } catch (err) {
+      setFormMessage(passwordForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
 }
 
 function tagSettingsPanel() {
@@ -1159,6 +1236,79 @@ async function refreshTagSettings() {
   if (select) {
     select.innerHTML = tags.map((tag) => `<option value="${escapeHTML(tag.id)}">${escapeHTML(tag.name)}</option>`).join("");
   }
+}
+
+function apiKeysPanel() {
+  return `<section class="split">
+    <section class="panel">
+      <h3>Status</h3>
+      <div id="api-key-status" class="stack"><p class="meta">Loading key status.</p></div>
+    </section>
+    <form class="panel form" id="api-keys-form">
+      <h3>Update keys</h3>
+      <div class="field"><label for="gemini-api-key">Gemini API key</label><input id="gemini-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="resend-api-key">Resend API key</label><input id="resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="x-client-id">X client ID</label><input id="x-client-id" type="text" autocomplete="off"></div>
+      <div class="field"><label for="x-client-secret">X client secret</label><input id="x-client-secret" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="x-redirect-uri">X redirect URI</label><input id="x-redirect-uri" type="url" autocomplete="off"></div>
+      <p class="form-message" id="api-keys-message" data-form-message hidden></p>
+      <button type="submit">Save keys</button>
+    </form>
+  </section>`;
+}
+
+async function bindAPIKeysPanel() {
+  const form = document.querySelector("#api-keys-form");
+  const status = document.querySelector("#api-key-status");
+  if (!form || !status) return;
+  const refresh = async () => {
+    try {
+      const keys = await api("/admin/api-keys");
+      status.innerHTML = apiKeyStatus(keys);
+      document.querySelector("#x-redirect-uri").value = keys.x_redirect_uri?.value || "";
+    } catch (err) {
+      status.innerHTML = `<p class="meta">${escapeHTML(err.status === 403 ? "Admin access required." : err.message)}</p>`;
+    }
+  };
+  await refresh();
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving");
+    setFormMessage(form);
+    const body = {};
+    for (const [key, selector] of Object.entries({
+      gemini_api_key: "#gemini-api-key",
+      resend_api_key: "#resend-api-key",
+      x_client_id: "#x-client-id",
+      x_client_secret: "#x-client-secret",
+      x_redirect_uri: "#x-redirect-uri",
+    })) {
+      const value = document.querySelector(selector).value.trim();
+      if (value) body[key] = value;
+    }
+    try {
+      await api("/admin/api-keys", { method: "PUT", body: JSON.stringify(body) });
+      form.reset();
+      await refresh();
+      ui.toast("API keys saved", "success");
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+function apiKeyStatus(keys) {
+  return ["gemini_api_key", "resend_api_key", "x_client_id", "x_client_secret", "x_redirect_uri"]
+    .map((key) => {
+      const item = keys[key] || {};
+      const label = key.replaceAll("_", " ");
+      const value = item.masked_value || item.value || "";
+      return `<p><strong>${escapeHTML(label)}</strong> <span class="meta">${item.configured || value ? "configured" : "not configured"} · ${escapeHTML(item.source || "none")} ${value ? `· ${escapeHTML(value)}` : ""}</span></p>`;
+    })
+    .join("");
 }
 
 function importPanel() {

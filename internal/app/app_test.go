@@ -172,6 +172,40 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	}
 }
 
+func TestProfileRoutesSupportSettingsPanel(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "profile@example.com")
+
+	update := adminRequest(t, handler, http.MethodPut, "/api/user/profile", `{"name":"Profile User"}`, accessCookie, csrfCookie)
+	if update.StatusCode != http.StatusOK {
+		t.Fatalf("profile update status = %d body=%s", update.StatusCode, readBody(update))
+	}
+	update.Body.Close()
+	profile := adminRequest(t, handler, http.MethodGet, "/api/user/profile", "", accessCookie, csrfCookie)
+	if profile.StatusCode != http.StatusOK {
+		t.Fatalf("profile get status = %d body=%s", profile.StatusCode, readBody(profile))
+	}
+	var body map[string]any
+	_ = json.NewDecoder(profile.Body).Decode(&body)
+	profile.Body.Close()
+	if body["email"] != "profile@example.com" || body["name"] != "Profile User" {
+		t.Fatalf("unexpected profile body: %#v", body)
+	}
+}
+
 func TestCollectionMembershipIsUserScoped(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
@@ -989,9 +1023,9 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `"source", "date_from"`} {
+	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `"source", "date_from"`, `id="profile-form"`, `id="api-keys-form"`} {
 		if !strings.Contains(source, expected) {
-			t.Fatalf("dashboard filters missing %s", expected)
+			t.Fatalf("embedded frontend missing %s", expected)
 		}
 	}
 }
@@ -1102,6 +1136,24 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("detail status = %d body=%s", detail.StatusCode, readBody(detail))
 	}
 	detail.Body.Close()
+
+	keyStatus := adminRequest(t, handler, http.MethodGet, "/api/admin/api-keys", "", accessCookie, csrfCookie)
+	if keyStatus.StatusCode != http.StatusOK {
+		t.Fatalf("api key status = %d body=%s", keyStatus.StatusCode, readBody(keyStatus))
+	}
+	keyStatus.Body.Close()
+	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","x_redirect_uri":"https://example.com/x/callback"}`, accessCookie, csrfCookie)
+	if keyUpdate.StatusCode != http.StatusOK {
+		t.Fatalf("api key update = %d body=%s", keyUpdate.StatusCode, readBody(keyUpdate))
+	}
+	keyUpdate.Body.Close()
+	var stored string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT value_plain FROM settings WHERE key='gemini_api_key'`).Scan(&stored); err != nil {
+		t.Fatalf("stored api key setting: %v", err)
+	}
+	if stored != `"test-gemini"` {
+		t.Fatalf("unexpected stored key payload: %q", stored)
+	}
 
 	reset := adminRequest(t, handler, http.MethodPost, "/api/admin/users/"+userID+"/reset-password", `{"new_password":"new-password-123"}`, accessCookie, csrfCookie)
 	if reset.StatusCode != http.StatusOK {
