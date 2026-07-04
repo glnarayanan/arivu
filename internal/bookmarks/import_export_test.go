@@ -3,7 +3,9 @@ package bookmarks
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -66,6 +68,45 @@ func TestMarkdownHelpersEscapeTitlesAndURLs(t *testing.T) {
 	}
 	if got := markdownURL("https://example.com/a)b"); got != "https://example.com/a%29b" {
 		t.Fatalf("markdownURL escaped to %q", got)
+	}
+}
+
+func TestRecordImportJobProgressIsUserScoped(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.ExecContext(ctx, `INSERT INTO users(id,email,name,created_at,updated_at) VALUES(?,?,?,?,?)`, "user-1", "one@example.com", "One", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO users(id,email,name,created_at,updated_at) VALUES(?,?,?,?,?)`, "user-2", "two@example.com", "Two", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "bookmark-1", "user-1", "https://example.com/one", "One", "example.com", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "bookmark-2", "user-2", "https://example.com/two", "Two", "example.com", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO import_jobs(id,user_id,total_bookmarks,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "import-1", "user-1", 2, "processing", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO import_jobs(id,user_id,total_bookmarks,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "import-2", "user-2", 1, "processing", now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+
+	service.recordImportJobProgress(ctx, "bookmark-1", "import-1", nil)
+	assertImportCounters(t, db, "import-1", 1, 1, 0, "processing")
+
+	service.recordImportJobProgress(ctx, "bookmark-2", "import-1", nil)
+	assertImportCounters(t, db, "import-1", 1, 1, 0, "processing")
+
+	service.recordImportJobProgress(ctx, "bookmark-1", "import-1", errors.New("fetch failed"))
+	assertImportCounters(t, db, "import-1", 1, 1, 1, "completed")
+	assertImportCounters(t, db, "import-2", 0, 0, 0, "processing")
+}
+
+func assertImportCounters(t *testing.T, db *sql.DB, id string, fetched int, processed int, failed int, status string) {
+	t.Helper()
+	var gotFetched, gotProcessed, gotFailed int
+	var gotStatus string
+	if err := db.QueryRow(`SELECT content_fetched,ai_processed,failed,status FROM import_jobs WHERE id=?`, id).Scan(&gotFetched, &gotProcessed, &gotFailed, &gotStatus); err != nil {
+		t.Fatalf("scan import job %s: %v", id, err)
+	}
+	if gotFetched != fetched || gotProcessed != processed || gotFailed != failed || gotStatus != status {
+		t.Fatalf("import job %s counters = fetched:%d processed:%d failed:%d status:%s, want fetched:%d processed:%d failed:%d status:%s", id, gotFetched, gotProcessed, gotFailed, gotStatus, fetched, processed, failed, status)
 	}
 }
 

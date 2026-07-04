@@ -27,13 +27,18 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 	switch jobType {
 	case "bookmark.process":
 		var body struct {
-			BookmarkID string `json:"bookmark_id"`
-			URL        string `json:"url"`
+			BookmarkID  string `json:"bookmark_id"`
+			URL         string `json:"url"`
+			ImportJobID string `json:"import_job_id"`
 		}
 		if err := json.Unmarshal([]byte(payload), &body); err != nil {
 			return err
 		}
-		return s.processBookmark(ctx, body.BookmarkID, body.URL)
+		err := s.processBookmark(ctx, body.BookmarkID, body.URL)
+		if body.ImportJobID != "" {
+			s.recordImportJobProgress(ctx, body.BookmarkID, body.ImportJobID, err)
+		}
+		return err
 	default:
 		return fmt.Errorf("unknown job type %s", jobType)
 	}
@@ -93,10 +98,11 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 			continue
 		}
 		if item.Source != "" {
-			_, _ = s.db.ExecContext(r.Context(), `INSERT INTO import_sources(id,user_id,bookmark_id,source_type,source_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, item.Source, item.URL, "{}", now)
+			metadata, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL})
+			_, _ = s.db.ExecContext(r.Context(), `INSERT INTO import_sources(id,user_id,import_job_id,source_type,source_name,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), user.ID, jobID, item.Source, item.Title, string(metadata), now)
 		}
 		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
-		payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL})
+		payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL, "import_job_id": jobID})
 		_ = s.jobs.Enqueue(r.Context(), user.ID, "bookmark.process", string(payload))
 		count++
 	}
@@ -164,6 +170,24 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 	default:
 		writeJSON(w, http.StatusOK, items)
 	}
+}
+
+func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, processErr error) {
+	userID, ok := s.bookmarkOwner(ctx, bookmarkID)
+	if !ok {
+		return
+	}
+	fetched := 1
+	processed := 1
+	failed := 0
+	if processErr != nil {
+		fetched = 0
+		processed = 0
+		failed = 1
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET content_fetched=content_fetched+?, ai_processed=ai_processed+?, failed=failed+?, updated_at=? WHERE id=? AND user_id=?`, fetched, processed, failed, now, importJobID, userID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET status=CASE WHEN total_bookmarks > 0 AND content_fetched + failed >= total_bookmarks THEN 'completed' ELSE status END, updated_at=? WHERE id=? AND user_id=?`, now, importJobID, userID)
 }
 
 func (s *Service) Backup(w http.ResponseWriter, r *http.Request, user auth.User) {

@@ -378,6 +378,81 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 }
 
+func TestImportQueuesJobsWithVisibleProgressID(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "importer@example.com")
+
+	importBody := `<!doctype NETSCAPE-Bookmark-file-1><DT><A HREF="https://example.com/a">A</A><DT><A HREF="https://example.com/b">B</A>`
+	resp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", importBody, accessCookie, csrfCookie)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("import status = %d body=%s", resp.StatusCode, readBody(resp))
+	}
+	var body struct {
+		Count       int    `json:"count"`
+		ImportJobID string `json:"import_job_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body.Count != 2 || body.ImportJobID == "" {
+		t.Fatalf("unexpected import body: %#v", body)
+	}
+	var total int
+	if err := a.db.QueryRow(`SELECT total_bookmarks FROM import_jobs WHERE id=?`, body.ImportJobID).Scan(&total); err != nil {
+		t.Fatalf("scan import job: %v", err)
+	}
+	if total != 2 {
+		t.Fatalf("total_bookmarks = %d, want 2", total)
+	}
+	var sources int
+	if err := a.db.QueryRow(`SELECT COUNT(*) FROM import_sources WHERE import_job_id=? AND source_type='browser'`, body.ImportJobID).Scan(&sources); err != nil {
+		t.Fatalf("count import sources: %v", err)
+	}
+	if sources != 2 {
+		t.Fatalf("import source rows = %d, want 2", sources)
+	}
+	rows, err := a.db.Query(`SELECT payload_json FROM jobs WHERE type='bookmark.process' ORDER BY created_at`)
+	if err != nil {
+		t.Fatalf("query jobs: %v", err)
+	}
+	defer rows.Close()
+	seen := 0
+	for rows.Next() {
+		var raw string
+		if err := rows.Scan(&raw); err != nil {
+			t.Fatalf("scan job payload: %v", err)
+		}
+		var payload map[string]string
+		if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+			t.Fatalf("decode job payload: %v", err)
+		}
+		if payload["import_job_id"] != body.ImportJobID || payload["bookmark_id"] == "" || payload["url"] == "" {
+			t.Fatalf("unexpected job payload: %#v", payload)
+		}
+		seen++
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate jobs: %v", err)
+	}
+	if seen != 2 {
+		t.Fatalf("queued jobs = %d, want 2", seen)
+	}
+}
+
 func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),

@@ -19,7 +19,8 @@ with foreign keys.
 - `saved_searches`: named user searches with structured filter JSON.
 - `review_events`: review completion and snooze history for bookmarks and notes.
 - `import_sources`: source metadata for migration/import reports.
-- `import_jobs`: user-facing import progress.
+- `import_jobs`: user-facing import progress with fetched, AI-processed,
+  failed, and completed status counters.
 - `x_connections` and `oauth_states`: provider connection and PKCE state.
 - `settings`: encrypted or plain runtime settings with key IDs.
 - `rate_limits`, `audit_events`, and `jobs`: local operational state.
@@ -41,7 +42,9 @@ with foreign keys.
   Text search includes bookmark title/description/body plus linked annotations
   and notes.
 - Imports use the same `safefetch` URL validation policy as normal saves before
-  inserting any bookmark or queuing a fetch job.
+  inserting any bookmark or queuing a fetch job. Queued import bookmark jobs
+  carry the owning import job ID so background processing can update progress
+  without crossing user boundaries.
 
 ## FTS5
 
