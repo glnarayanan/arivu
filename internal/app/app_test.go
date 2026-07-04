@@ -297,6 +297,36 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if annotationID == "" {
 		t.Fatalf("annotation missing id: %#v", annotationBody)
 	}
+	editableAnnotationResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/capture/annotations", `{"quote":"Draft quote","note":"Draft note","selector":{},"tags":["draft"]}`, accessCookie, csrfCookie)
+	if editableAnnotationResp.StatusCode != http.StatusOK {
+		t.Fatalf("create editable annotation status = %d body=%s", editableAnnotationResp.StatusCode, readBody(editableAnnotationResp))
+	}
+	var editableAnnotationBody struct {
+		Annotation map[string]any `json:"annotation"`
+	}
+	_ = json.NewDecoder(editableAnnotationResp.Body).Decode(&editableAnnotationBody)
+	editableAnnotationResp.Body.Close()
+	editableAnnotationID, _ := editableAnnotationBody.Annotation["id"].(string)
+	if editableAnnotationID == "" {
+		t.Fatalf("editable annotation missing id: %#v", editableAnnotationBody)
+	}
+	updateAnnotationResp := adminRequest(t, handler, http.MethodPatch, "/api/annotations/"+editableAnnotationID, `{"quote":"Updated quote","note":"Updated note","selector":{},"tags":["edited"]}`, accessCookie, csrfCookie)
+	if updateAnnotationResp.StatusCode != http.StatusOK {
+		t.Fatalf("update annotation status = %d body=%s", updateAnnotationResp.StatusCode, readBody(updateAnnotationResp))
+	}
+	var updateAnnotationBody struct {
+		Annotation map[string]any `json:"annotation"`
+	}
+	_ = json.NewDecoder(updateAnnotationResp.Body).Decode(&updateAnnotationBody)
+	updateAnnotationResp.Body.Close()
+	if updateAnnotationBody.Annotation["quote"] != "Updated quote" {
+		t.Fatalf("annotation did not update: %#v", updateAnnotationBody)
+	}
+	deleteAnnotationResp := adminRequest(t, handler, http.MethodDelete, "/api/annotations/"+editableAnnotationID, "", accessCookie, csrfCookie)
+	if deleteAnnotationResp.StatusCode != http.StatusOK {
+		t.Fatalf("delete annotation status = %d body=%s", deleteAnnotationResp.StatusCode, readBody(deleteAnnotationResp))
+	}
+	deleteAnnotationResp.Body.Close()
 
 	tagResp := adminRequest(t, handler, http.MethodPost, "/api/tags", `{"name":"Second Brain"}`, accessCookie, csrfCookie)
 	if tagResp.StatusCode != http.StatusOK {
@@ -470,6 +500,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}{
 		{"other cannot read note", http.MethodGet, "/api/notes/" + noteID, ""},
 		{"other cannot patch annotation", http.MethodPatch, "/api/annotations/" + annotationID, `{"quote":"x","selector":{}}`},
+		{"other cannot delete annotation", http.MethodDelete, "/api/annotations/" + annotationID, ""},
 		{"other cannot read job", http.MethodGet, "/api/jobs/" + jobID, ""},
 		{"other cannot complete note review", http.MethodPost, "/api/review/note:" + searchNoteID + "/complete", `{}`},
 		{"other cannot complete review", http.MethodPost, "/api/review/bookmark:capture/complete", `{}`},

@@ -735,10 +735,14 @@ function summaryPanel(summary) {
 
 function annotationList(items) {
   if (!items.length) return `<p class="meta">No annotations yet.</p>`;
-  return `<div class="stack">${items.map((item) => `<article class="annotation">
-    ${item.quote ? `<blockquote>${escapeHTML(item.quote)}</blockquote>` : ""}
-    ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
-    ${tagList((item.tags || []).map((name) => ({ name })))}
+  return `<div class="stack">${items.map((item) => `<article class="annotation form" data-annotation="${escapeHTML(item.id)}">
+    <div class="field"><label for="annotation-quote-${escapeHTML(item.id)}">Quote</label><textarea id="annotation-quote-${escapeHTML(item.id)}" data-annotation-quote rows="3">${escapeHTML(item.quote || "")}</textarea></div>
+    <div class="field"><label for="annotation-note-${escapeHTML(item.id)}">Note</label><textarea id="annotation-note-${escapeHTML(item.id)}" data-annotation-note rows="3">${escapeHTML(item.note || "")}</textarea></div>
+    <div class="field"><label for="annotation-tags-${escapeHTML(item.id)}">Tags</label><input id="annotation-tags-${escapeHTML(item.id)}" data-annotation-tags value="${escapeHTML((item.tags || []).join(", "))}"></div>
+    <p class="button-row">
+      <button type="button" data-annotation-save="${escapeHTML(item.id)}">Save changes</button>
+      <button type="button" class="danger" data-annotation-delete="${escapeHTML(item.id)}">Delete</button>
+    </p>
   </article>`).join("")}</div>`;
 }
 
@@ -1005,6 +1009,49 @@ async function bookmarkPage() {
       ui.toast(err.message, "error");
     }
   });
+  document.querySelectorAll("[data-annotation-save]").forEach((button) => {
+    button.addEventListener("click", () => updateAnnotation(button));
+  });
+  document.querySelectorAll("[data-annotation-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteAnnotation(button));
+  });
+}
+
+async function updateAnnotation(button) {
+  const card = button.closest("[data-annotation]");
+  const done = setButtonBusy(button, "Saving");
+  try {
+    await api(`/annotations/${button.dataset.annotationSave}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        quote: card.querySelector("[data-annotation-quote]").value,
+        note: card.querySelector("[data-annotation-note]").value,
+        tags: splitTags(card.querySelector("[data-annotation-tags]").value),
+        selector: {},
+      }),
+    });
+    ui.toast("Annotation updated", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+async function deleteAnnotation(button) {
+  const confirmed = await ui.confirmDestructive({ title: "Delete annotation", body: "This removes the saved quote and note from this bookmark.", confirm: "Delete", cancel: "Keep annotation" });
+  if (!confirmed) return;
+  const done = setButtonBusy(button, "Deleting");
+  try {
+    await api(`/annotations/${button.dataset.annotationDelete}`, { method: "DELETE" });
+    ui.toast("Annotation deleted", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 async function settingsPage() {

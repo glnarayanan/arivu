@@ -61,7 +61,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   summaries, tags, related items, read state, review completion, annotations,
   and linked notes all render in one flow. The annotation form can copy the
   current browser selection into the quote field when the selection is fully
-  inside the sanitized reader content.
+  inside the sanitized reader content, and existing annotations can be edited or
+  deleted inline.
 - `/review` includes the daily memory card from `/api/memory-jogger`, the due
   review queue from `/api/review`, and complete, snooze, and archive actions
   using the existing review/resurfacing APIs. Standalone notes appear in the
