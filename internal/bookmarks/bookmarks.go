@@ -46,6 +46,7 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 		CollectionID string   `json:"collection_id"`
 		Note         string   `json:"note"`
 		Quote        string   `json:"quote"`
+		Annotation   string   `json:"annotation"`
 		Tags         []string `json:"tags"`
 	}
 	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.URL) == "" {
@@ -72,10 +73,11 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	for _, tag := range cleanStringList(body.Tags, 20) {
 		_ = s.attachTag(r.Context(), user.ID, bookmarkID, tag, "manual")
 	}
-	if strings.TrimSpace(body.Note) != "" || strings.TrimSpace(body.Quote) != "" {
+	quote := fallback(body.Quote, body.Annotation)
+	if strings.TrimSpace(body.Note) != "" || strings.TrimSpace(quote) != "" {
 		selector, _ := jsonObject(nil)
 		tagJSON, _ := json.Marshal(cleanStringList(body.Tags, 20))
-		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(body.Quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
+		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
 	}
 	payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": body.URL})
 	jobID, _ := s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", string(payload))

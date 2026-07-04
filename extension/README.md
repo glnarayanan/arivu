@@ -6,7 +6,7 @@ Save bookmarks directly into Arivu from Chrome or Firefox.
 
 - Saves current tab URL to Arivu
 - Saves from the page, link, or selected-text context menu without opening the popup
-- Sends selected text as a best-effort annotation when the backend supports it
+- Sends selected text as a quote annotation
 - Lets users pick a target collection
 - Uses extension session tokens issued by Arivu (`/api/auth/extension-token`)
 - Supports custom/self-hosted API URL through popup settings
@@ -88,7 +88,7 @@ This value is stored in `chrome.storage.local` as `apiUrl`.
 ### Context menu save fails
 
 - Open Arivu once while logged in so the content script can refresh extension tokens
-- If selected-text annotations are not supported by your backend, the extension falls back to saving the URL only
+- Selected text is stored as a quote annotation on the saved bookmark
 - Use the popup save path when you need to choose a collection
 
 ## Privacy and Storage

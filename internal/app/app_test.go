@@ -156,8 +156,18 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	if resp := bearerRequest(t, handler, http.MethodGet, "/api/extension/collections", "", extensionToken); resp.StatusCode != http.StatusOK {
 		t.Fatalf("extension scoped collections status = %d body=%s", resp.StatusCode, readBody(resp))
 	}
-	if resp := bearerRequest(t, handler, http.MethodPost, "/api/extension/bookmarks", `{"url":"https://example.com/extension"}`, extensionToken); resp.StatusCode != http.StatusOK {
+	if resp := bearerRequest(t, handler, http.MethodPost, "/api/extension/bookmarks", `{"url":"https://example.com/extension","annotation":"Selected passage"}`, extensionToken); resp.StatusCode != http.StatusOK {
 		t.Fatalf("extension scoped bookmark status = %d body=%s", resp.StatusCode, readBody(resp))
+	} else {
+		resp.Body.Close()
+	}
+	userID := userIDForEmail(t, a, "admin@example.com")
+	var quote string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT a.quote FROM annotations a JOIN bookmarks b ON b.id=a.bookmark_id AND b.user_id=a.user_id WHERE a.user_id=? AND b.url=?`, userID, "https://example.com/extension").Scan(&quote); err != nil {
+		t.Fatalf("extension selected-text annotation missing: %v", err)
+	}
+	if quote != "Selected passage" {
+		t.Fatalf("extension quote = %q", quote)
 	}
 }
 

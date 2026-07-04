@@ -55,7 +55,7 @@ function bookmarkPayload(url, selectionText) {
   const text = (selectionText || '').trim();
 
   if (text) {
-    payload.annotation = text.slice(0, 5000);
+    payload.quote = text.slice(0, 5000);
   }
 
   return payload;
@@ -82,7 +82,7 @@ async function saveBookmark(url, selectionText) {
 
   if (response.ok) return;
 
-  if (payload.annotation && (response.status === 400 || response.status === 422)) {
+  if (payload.quote && (response.status === 400 || response.status === 422)) {
     const fallback = await fetch(`${apiUrl}/extension/bookmarks`, {
       method: 'POST',
       headers,
