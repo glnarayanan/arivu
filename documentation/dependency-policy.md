@@ -9,11 +9,18 @@ library and first-party browser code.
 - `golang.org/x/crypto`: Argon2id, HKDF key derivation, and legacy bcrypt verification.
 - `golang.org/x/net/html`: HTML parser for the sanitizer.
 
-The module targets Go 1.24 or newer so the patched `golang.org/x/crypto` and
+The module targets Go 1.25 or newer so the patched `golang.org/x/crypto` and
 `golang.org/x/net` lines can be used without carrying known vulnerable versions.
 
 Provider SDKs are not used in the current rewrite. Gemini, Resend, and X are
 called through narrow direct HTTP clients.
+
+## Supply-Chain Checks
+
+- CI runs `go mod verify` before tests to check downloaded module checksums.
+- CI runs `go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...` with a pinned
+  scanner version.
+- Dependabot monitors Go modules and GitHub Actions weekly.
 
 ## Frontend Dependencies
 

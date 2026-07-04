@@ -22,15 +22,18 @@
 - The embedded frontend includes a PWA manifest with a GET share target that pre-fills dashboard capture from shared title, text, and URL parameters.
 - Legacy JSON export migration validation and SQLite import executor with secret re-encryption, relationship checks, archived HTML sanitization, embedding validation, and intentional legacy session invalidation.
 - Production packaging with Dockerfile, Compose sample, hardened systemd unit, and environment template.
+- CI verifies Go module checksums, runs pinned `govulncheck`, and Dependabot monitors Go modules and GitHub Actions.
 
 ## Verification
 
 ```bash
 GOCACHE=/private/tmp/arivu-build-cache go test ./...
 GOCACHE=/private/tmp/arivu-build-cache go build -trimpath -ldflags="-s -w" -o /private/tmp/arivu-check ./cmd/arivu
+go mod verify
+go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
 ```
 
-Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, auth endpoint throttling, audit-event writes for sensitive mutations, provider setting allowlisting, import URL extraction, import source detection, imported bookmark source persistence, import job payload/progress/source-report/provenance accounting, full JSON backup export and restore coverage, Obsidian ZIP export coverage, Markdown export escaping, migration unknown-field rejection, direct HTTP handler integration tests, collection membership ownership checks, second-brain route scoping and CSRF checks, annotation update/delete routes, tag/date/source filtering, cited answer mode with bookmark and standalone note citations, bookmark and standalone note review queues, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
+Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, auth endpoint throttling, audit-event writes for sensitive mutations, provider setting allowlisting, Go module checksum verification, govulncheck scanning, import URL extraction, import source detection, imported bookmark source persistence, import job payload/progress/source-report/provenance accounting, full JSON backup export and restore coverage, Obsidian ZIP export coverage, Markdown export escaping, migration unknown-field rejection, direct HTTP handler integration tests, collection membership ownership checks, second-brain route scoping and CSRF checks, annotation update/delete routes, tag/date/source filtering, cited answer mode with bookmark and standalone note citations, bookmark and standalone note review queues, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
 
 Latest manual localhost smoke used a temporary SQLite database and verified:
 
