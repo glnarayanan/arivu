@@ -97,7 +97,6 @@ func runServe(args []string) {
 
 func runMigrate(args []string) {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
-	source := fs.String("mongo-uri", "", "MongoDB URI for legacy migration discovery")
 	var exportPath string
 	fs.StringVar(&exportPath, "mongo-export", "", "Path to a dependency-free JSON export file or directory to validate")
 	fs.StringVar(&exportPath, "json-export", "", "Alias for --mongo-export")
@@ -112,8 +111,8 @@ func runMigrate(args []string) {
 	allowExisting := fs.Bool("allow-existing", false, "Allow applying into a non-empty SQLite database")
 	_ = fs.Parse(args)
 
-	if *source == "" && exportPath == "" {
-		log.Fatal("--mongo-uri, --mongo-export, or --json-export is required for migration discovery")
+	if exportPath == "" {
+		log.Fatal("--mongo-export or --json-export is required for migration discovery")
 	}
 	if !*dryRun {
 		report, err := migrate.ApplyExport(context.Background(), migrate.ApplyOptions{
@@ -134,7 +133,6 @@ func runMigrate(args []string) {
 		return
 	}
 	if err := migrate.DiscoverMongoSchema(context.Background(), migrate.Options{
-		MongoURI:    *source,
 		ExportPath:  exportPath,
 		DBName:      *dbName,
 		OutPath:     *out,

@@ -8,7 +8,6 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"path"
@@ -292,17 +291,3 @@ func decodeJSON(r *http.Request, dst any) error {
 	}
 	return nil
 }
-
-func methodNotAllowed(w http.ResponseWriter) {
-	writeError(w, http.StatusMethodNotAllowed, "Method not allowed")
-}
-
-func notImplemented(w http.ResponseWriter, name string) {
-	writeJSON(w, http.StatusAccepted, map[string]any{
-		"status":  "unavailable",
-		"feature": name,
-		"message": "This connection is not available yet. Check your integration settings and try again later.",
-	})
-}
-
-var errNotFound = errors.New("not found")

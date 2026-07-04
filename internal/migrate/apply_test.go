@@ -220,25 +220,9 @@ func pkcs7ForTest(value []byte) []byte {
 
 func openMigratedSecretForTest(t *testing.T, secretKey, encoded string) string {
 	t.Helper()
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
+	plaintext, err := secrets.Open(secretKey, encoded)
 	if err != nil {
 		t.Fatal(err)
 	}
-	key, err := secrets.EncryptionKey(secretKey)
-	if err != nil {
-		t.Fatal(err)
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		t.Fatal(err)
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		t.Fatal(err)
-	}
-	plaintext, err := gcm.Open(nil, raw[:gcm.NonceSize()], raw[gcm.NonceSize():], nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(plaintext)
+	return plaintext
 }

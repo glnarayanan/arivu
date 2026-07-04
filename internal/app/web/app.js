@@ -1,8 +1,5 @@
 const state = {
   user: null,
-  bookmarks: [],
-  collections: [],
-  abort: null,
   cleanup: [],
   pendingRoutes: 0,
 };
@@ -502,7 +499,6 @@ async function acceptInvitePage() {
 async function dashboardPage() {
   await requireUser();
   const bookmarks = await api(`/bookmarks${location.search}`) || [];
-  state.bookmarks = bookmarks;
   setRoot(shell("Saved knowledge", `
     <form class="panel form" id="save-form">
       <div class="field"><label for="url">Save URL</label><input id="url" type="url" placeholder="https://example.com/article" required></div>
@@ -630,8 +626,6 @@ async function requireUser() {
 }
 
 async function render() {
-  if (state.abort) state.abort.abort();
-  state.abort = new AbortController();
   state.pendingRoutes += 1;
   document.body.classList.add("is-routing");
   const route = routes.find(routeMatches);
