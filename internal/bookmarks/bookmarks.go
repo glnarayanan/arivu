@@ -254,6 +254,7 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 	defer rows.Close()
 	type citation struct {
 		ID      string `json:"id"`
+		Type    string `json:"type"`
 		Title   string `json:"title"`
 		URL     string `json:"url"`
 		Domain  string `json:"domain"`
@@ -264,7 +265,34 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		var id, title, rawURL, domain, description, text string
 		_ = rows.Scan(&id, &title, &rawURL, &domain, &description, &text)
 		snippet := searchSnippet(q, firstNonEmpty(text, description, title))
-		citations = append(citations, citation{ID: id, Title: fallback(title, rawURL), URL: rawURL, Domain: domain, Snippet: snippet})
+		citations = append(citations, citation{ID: id, Type: "bookmark", Title: fallback(title, rawURL), URL: rawURL, Domain: domain, Snippet: snippet})
+	}
+	if standaloneNotesMatchFilters(values) {
+		like := "%" + q + "%"
+		noteWhere := `WHERE user_id=? AND NOT EXISTS (SELECT 1 FROM bookmark_notes WHERE note_id=notes.id AND user_id=notes.user_id) AND (title LIKE ? OR body LIKE ?)`
+		noteArgs := []any{user.ID, like, like}
+		if from := strings.TrimSpace(values.Get("date_from")); from != "" {
+			noteWhere += " AND created_at>=?"
+			noteArgs = append(noteArgs, from)
+		}
+		if to := strings.TrimSpace(values.Get("date_to")); to != "" {
+			noteWhere += " AND created_at<=?"
+			noteArgs = append(noteArgs, to)
+		}
+		noteRows, err := s.db.QueryContext(r.Context(), `SELECT id,title,body,source FROM notes `+noteWhere+` ORDER BY updated_at DESC LIMIT 8`, noteArgs...)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not answer search")
+			return
+		}
+		defer noteRows.Close()
+		for noteRows.Next() {
+			if len(citations) >= 8 {
+				break
+			}
+			var id, title, body, source string
+			_ = noteRows.Scan(&id, &title, &body, &source)
+			citations = append(citations, citation{ID: id, Type: "note", Title: fallback(title, "Untitled note"), Domain: source, Snippet: searchSnippet(q, firstNonEmpty(body, title))})
+		}
 	}
 	if len(citations) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"answer": "No saved items matched this query.", "citations": []any{}})
@@ -276,6 +304,13 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 	}
 	answer += " that mention this query. Use the citations below to inspect the original saved context."
 	writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "citations": citations})
+}
+
+func standaloneNotesMatchFilters(values url.Values) bool {
+	return strings.TrimSpace(values.Get("tag")) == "" &&
+		strings.TrimSpace(values.Get("domain")) == "" &&
+		strings.TrimSpace(values.Get("source")) == "" &&
+		strings.TrimSpace(values.Get("read_status")) == ""
 }
 
 func (s *Service) Related(w http.ResponseWriter, r *http.Request, user auth.User) {

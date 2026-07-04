@@ -39,6 +39,7 @@ All notable changes to this project will be documented in this file.
 - Bookmark saves now accept quick notes, selected quotes, and manual tags, and return a `job_id` so the UI can show enrichment progress.
 - Extension selected-text saves now persist as quote annotations, with a backend compatibility alias for the older `annotation` payload field.
 - Bookmark list and search now support normalized tag, domain, source, read-status, and created-date filters, and text search includes linked annotations and notes.
+- Cited answer mode now includes standalone notes when bookmark-only filters are not active.
 - Bookmark import now accepts safe URLs from JSON arrays, object-wrapped exports, browser/Netscape HTML, and newline URL lists while recording source hints for inserted bookmarks.
 - Imported bookmarks now create summary placeholders before processing and use safer duplicate counting for import reports.
 - Imported bookmark processing now updates the visible import job counters for fetched, AI-processed, and failed items.

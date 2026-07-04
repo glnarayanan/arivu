@@ -242,6 +242,33 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	deleteStandalone.Body.Close()
 
+	searchNoteResp := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Recall field note","body":"Standalone recall idea for later synthesis."}`, accessCookie, csrfCookie)
+	if searchNoteResp.StatusCode != http.StatusOK {
+		t.Fatalf("create searchable standalone note status = %d body=%s", searchNoteResp.StatusCode, readBody(searchNoteResp))
+	}
+	var searchNoteBody struct {
+		Note map[string]any `json:"note"`
+	}
+	_ = json.NewDecoder(searchNoteResp.Body).Decode(&searchNoteBody)
+	searchNoteResp.Body.Close()
+	searchNoteID, _ := searchNoteBody.Note["id"].(string)
+	if searchNoteID == "" {
+		t.Fatalf("searchable note missing id: %#v", searchNoteBody)
+	}
+	otherNoteResp := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Other recall note","body":"Standalone recall idea from another user."}`, otherAccess, otherCSRF)
+	if otherNoteResp.StatusCode != http.StatusOK {
+		t.Fatalf("create other note status = %d body=%s", otherNoteResp.StatusCode, readBody(otherNoteResp))
+	}
+	var otherNoteBody struct {
+		Note map[string]any `json:"note"`
+	}
+	_ = json.NewDecoder(otherNoteResp.Body).Decode(&otherNoteBody)
+	otherNoteResp.Body.Close()
+	otherNoteID, _ := otherNoteBody.Note["id"].(string)
+	if otherNoteID == "" {
+		t.Fatalf("other note missing id: %#v", otherNoteBody)
+	}
+
 	annotationResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/capture/annotations", `{"quote":"Recall with evidence","note":"Promote this into review.","selector":{"type":"quote"},"tags":["Evidence","evidence"]}`, accessCookie, csrfCookie)
 	if annotationResp.StatusCode != http.StatusOK {
 		t.Fatalf("create annotation status = %d body=%s", annotationResp.StatusCode, readBody(annotationResp))
@@ -331,6 +358,28 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	answerResp.Body.Close()
 	if answerBody.Answer == "" || len(answerBody.Citations) != 1 || answerBody.Citations[0]["id"] != "capture" || answerBody.Citations[0]["snippet"] == "" {
 		t.Fatalf("answer mode missing cited capture: %#v", answerBody)
+	}
+
+	noteAnswerResp := adminRequest(t, handler, http.MethodGet, "/api/search/answer?q=recall", "", accessCookie, csrfCookie)
+	if noteAnswerResp.StatusCode != http.StatusOK {
+		t.Fatalf("note answer status = %d body=%s", noteAnswerResp.StatusCode, readBody(noteAnswerResp))
+	}
+	var noteAnswerBody struct {
+		Citations []map[string]any `json:"citations"`
+	}
+	_ = json.NewDecoder(noteAnswerResp.Body).Decode(&noteAnswerBody)
+	noteAnswerResp.Body.Close()
+	var sawNote bool
+	for _, citation := range noteAnswerBody.Citations {
+		if citation["id"] == searchNoteID && citation["type"] == "note" && citation["snippet"] != "" {
+			sawNote = true
+		}
+		if citation["id"] == otherNoteID {
+			t.Fatalf("answer mode leaked other user's note: %#v", noteAnswerBody)
+		}
+	}
+	if !sawNote {
+		t.Fatalf("answer mode missing standalone note citation: %#v", noteAnswerBody)
 	}
 
 	reviewResp := adminRequest(t, handler, http.MethodGet, "/api/review?limit=5", "", accessCookie, csrfCookie)

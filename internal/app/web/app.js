@@ -658,9 +658,9 @@ function answerPanel(answer) {
   return `<h2>Cited answer</h2>
     <p>${escapeHTML(answer.answer || "")}</p>
     <div class="stack">${citations.map((item, index) => `<article class="annotation">
-      <p><strong>[${index + 1}] ${escapeHTML(item.title || item.url)}</strong> <span class="meta">${escapeHTML(item.domain || "")}</span></p>
+      <p><strong>[${index + 1}] ${escapeHTML(item.title || item.url)}</strong> <span class="meta">${escapeHTML(item.type || "bookmark")} · ${escapeHTML(item.domain || "")}</span></p>
       <p>${escapeHTML(item.snippet || "")}</p>
-      <a class="text-link" href="/bookmark/${escapeHTML(item.id)}">Open citation</a>
+      <a class="text-link" href="${item.type === "note" ? "/notes" : `/bookmark/${escapeHTML(item.id)}`}">Open citation</a>
     </article>`).join("") || `<p class="meta">No citations found.</p>`}</div>`;
 }
 
