@@ -687,6 +687,17 @@ function splitTags(value) {
   return String(value || "").split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 20);
 }
 
+function selectedReaderText() {
+  const reader = document.querySelector(".reader-content");
+  const selection = window.getSelection ? window.getSelection() : null;
+  if (!reader || !selection || selection.rangeCount === 0) return "";
+  const range = selection.getRangeAt(0);
+  const start = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
+  const end = range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer : range.endContainer.parentElement;
+  if (!start || !end || !reader.contains(start) || !reader.contains(end)) return "";
+  return selection.toString().replace(/\s+/g, " ").trim().slice(0, 4000);
+}
+
 async function showJobStatus(jobID) {
   const status = document.querySelector("#job-status");
   if (!jobID || !status) return;
@@ -875,7 +886,10 @@ async function bookmarkPage() {
         <div class="field"><label for="annotation-note">Note</label><textarea id="annotation-note" rows="4" placeholder="Your interpretation, decision, or next action"></textarea></div>
         <div class="field"><label for="annotation-tags">Tags</label><input id="annotation-tags" type="text" placeholder="strategy, quote"></div>
         <p class="form-message" id="annotation-message" data-form-message hidden></p>
-        <button type="submit">Save annotation</button>
+        <div class="button-row">
+          <button type="button" class="secondary" id="use-selection">Use selected text</button>
+          <button type="submit">Save annotation</button>
+        </div>
       </form>
       <section class="panel">
         <h2>Annotations</h2>
@@ -925,6 +939,15 @@ async function bookmarkPage() {
     }
   });
   const annotationForm = document.querySelector("#annotation-form");
+  document.querySelector("#use-selection").addEventListener("click", () => {
+    const quote = selectedReaderText();
+    if (!quote) {
+      setFormMessage(annotationForm, "Select text inside the reader first.");
+      return;
+    }
+    document.querySelector("#annotation-quote").value = quote;
+    setFormMessage(annotationForm, "Selected text copied into the quote field.", "success");
+  });
   annotationForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Saving annotation");

@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 - Added deterministic bookmark enrichment for summaries, bullets, highlight quotes, suggested tags, graph entities, and graph concepts when provider AI is not configured.
 - Added real embedded UI routes for review, daily memory, duplicate detection/merge, knowledge graph exploration, bookmark annotations, linked notes, read state, related items, and processing status.
 - Added an installable PWA manifest with a mobile/browser share target that pre-fills dashboard capture.
+- Added a reader control for copying selected archived text into a new quote annotation.
 
 ### Changed
 
