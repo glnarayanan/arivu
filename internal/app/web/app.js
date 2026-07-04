@@ -960,12 +960,18 @@ function renderImportJobs(jobs) {
 
 async function reviewPage() {
   await requireUser();
-  const queue = await api("/review?limit=12");
+  const [queue, memory] = await Promise.all([
+    api("/review?limit=12"),
+    api("/memory-jogger").catch(() => ({ has_memory: false })),
+  ]);
   setRoot(shell("Review", `
-    <section class="panel">
-      <span class="meta">Daily memory</span>
-      <h2>Revisit what is ready to become useful</h2>
-      <p>Review keeps saved pages from becoming a pile. Complete what is useful, snooze what needs time.</p>
+    <section class="split">
+      ${memoryCard(memory)}
+      <section class="panel">
+        <span class="meta">Daily review</span>
+        <h2>Keep saved pages from becoming a pile</h2>
+        <p>Complete what is useful, snooze what needs time, archive what should stop resurfacing.</p>
+      </section>
     </section>
     <section class="grid" aria-label="Review queue">
       ${(queue.items || []).map(reviewCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No review items due</h2><p>Arivu will bring older or high-signal saves back when they are ready.</p></div>`}
@@ -977,6 +983,30 @@ async function reviewPage() {
   document.querySelectorAll("[data-review-snooze]").forEach((button) => {
     button.addEventListener("click", () => reviewAction(button, "snooze"));
   });
+  document.querySelectorAll("[data-review-archive]").forEach((button) => {
+    button.addEventListener("click", () => reviewAction(button, "archive"));
+  });
+}
+
+function memoryCard(memory) {
+  if (!memory.has_memory || !memory.bookmark) {
+    return `<section class="panel empty-state"><span class="meta">Daily memory</span><h2>No memory due</h2><p>${escapeHTML(memory.message || "Older, high-signal saves will appear here.")}</p></section>`;
+  }
+  const item = memory.bookmark;
+  const context = memory.context || {};
+  const id = `bookmark:${item.id}`;
+  return `<section class="panel">
+    <span class="meta">Daily memory · ${escapeHTML(context.reason || item.domain || "review")}</span>
+    <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
+    <p>${escapeHTML(item.ai_summary?.one_sentence || item.description || "")}</p>
+    <p class="meta">${Number(context.days_since_accessed || 0)} days since last review</p>
+    <p class="button-row">
+      <a class="button secondary" href="/bookmark/${escapeHTML(item.id)}">Open</a>
+      <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
+      <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
+      <button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>
+    </p>
+  </section>`;
 }
 
 function reviewCard(item) {
@@ -989,16 +1019,24 @@ function reviewCard(item) {
       <a class="button secondary" href="/bookmark/${escapeHTML(item.id)}">Open</a>
       <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
+      <button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>
     </p>
   </article>`;
 }
 
 async function reviewAction(button, action) {
   const item = button.dataset.reviewComplete || button.dataset.reviewSnooze;
-  const done = setButtonBusy(button, action === "complete" ? "Completing" : "Snoozing");
+  const archiveItem = button.dataset.reviewArchive;
+  const target = item || archiveItem;
+  const done = setButtonBusy(button, action === "complete" ? "Completing" : action === "archive" ? "Archiving" : "Snoozing");
   try {
-    await api(`/review/${item}/${action}`, { method: "POST", body: action === "snooze" ? JSON.stringify({ days: 7 }) : "{}" });
-    ui.toast(action === "complete" ? "Review completed" : "Review snoozed", "success");
+    if (action === "archive") {
+      const [, bookmarkID] = String(target).split(":");
+      await api(`/resurfacing/${bookmarkID}/archive`, { method: "POST", body: "{}" });
+    } else {
+      await api(`/review/${target}/${action}`, { method: "POST", body: action === "snooze" ? JSON.stringify({ days: 7 }) : "{}" });
+    }
+    ui.toast(action === "complete" ? "Review completed" : action === "archive" ? "Archived from review" : "Review snoozed", "success");
     render();
   } catch (err) {
     ui.toast(err.message, "error");

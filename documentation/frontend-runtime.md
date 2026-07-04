@@ -52,6 +52,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - Bookmark detail is now the reader/research surface: sanitized archived HTML,
   summaries, tags, related items, read state, review completion, annotations,
   and linked notes all render in one flow.
+- `/review` includes the daily memory card from `/api/memory-jogger`, the due
+  review queue from `/api/review`, and complete, snooze, and archive actions
+  using the existing review/resurfacing APIs.
 - `/review`, `/duplicates`, `/knowledge-graph`, and `/analytics` are real
   product routes, not placeholders.
 - Custom dialogs use `role="dialog"`, `aria-modal`, focus restoration, Escape
