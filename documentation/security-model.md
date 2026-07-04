@@ -41,8 +41,11 @@
 
 - Import URLs are validated through `internal/safefetch` before persistence or
   background fetch scheduling.
+- Import source hints are recorded as per-user bookmark metadata only after the
+  bookmark insert succeeds.
 - CSV export cells are trimmed and formula-prefixed values are neutralized so
   spreadsheet imports do not execute user-controlled formulas.
+- Markdown export escapes bracket text and closing parentheses in URLs.
 
 ## Operational Limits
 

@@ -92,6 +92,9 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 		if rows == 0 {
 			continue
 		}
+		if item.Source != "" {
+			_, _ = s.db.ExecContext(r.Context(), `INSERT INTO import_sources(id,user_id,bookmark_id,source_type,source_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, item.Source, item.URL, "{}", now)
+		}
 		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
 		payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL})
 		_ = s.jobs.Enqueue(r.Context(), user.ID, "bookmark.process", string(payload))
@@ -142,6 +145,22 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 			_, _ = fmt.Fprintf(w, "<DT><A HREF=\"%s\">%s</A>\n", html.EscapeString(it.URL), html.EscapeString(it.Title))
 		}
 		_, _ = fmt.Fprintln(w, "</DL><p>")
+	case "md", "markdown", "obsidian":
+		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="arivu-bookmarks.md"`)
+		_, _ = fmt.Fprintln(w, "# Arivu Bookmarks")
+		_, _ = fmt.Fprintln(w)
+		for _, it := range items {
+			title := fallback(markdownText(it.Title), markdownText(it.URL))
+			_, _ = fmt.Fprintf(w, "- [%s](%s)", title, markdownURL(it.URL))
+			if strings.TrimSpace(it.Description) != "" {
+				_, _ = fmt.Fprintf(w, " - %s", markdownText(it.Description))
+			}
+			if strings.TrimSpace(it.CreatedAt) != "" {
+				_, _ = fmt.Fprintf(w, " <!-- saved:%s -->", markdownText(it.CreatedAt))
+			}
+			_, _ = fmt.Fprintln(w)
+		}
 	default:
 		writeJSON(w, http.StatusOK, items)
 	}
@@ -176,38 +195,93 @@ func (s *Service) ImportJob(w http.ResponseWriter, r *http.Request, user auth.Us
 }
 
 type importURL struct {
-	URL   string
-	Title string
+	URL    string
+	Title  string
+	Source string
 }
 
 func extractImportURLs(raw string) []importURL {
+	source := detectImportSource(raw)
 	var jsonItems []map[string]any
 	if err := json.Unmarshal([]byte(raw), &jsonItems); err == nil {
 		var result []importURL
 		for _, item := range jsonItems {
-			link := firstString(item, "url", "href", "link")
+			link := firstString(item, "url", "href", "link", "uri")
 			if validImportURL(link) {
-				result = append(result, importURL{URL: link, Title: firstString(item, "title", "name")})
+				result = append(result, importURL{URL: link, Title: firstString(item, "title", "name"), Source: source})
 			}
 		}
 		return result
+	}
+	var jsonObject map[string]any
+	if err := json.Unmarshal([]byte(raw), &jsonObject); err == nil {
+		for _, key := range []string{"items", "bookmarks", "results", "links"} {
+			if items, ok := jsonObject[key].([]any); ok {
+				var result []importURL
+				for _, value := range items {
+					item, ok := value.(map[string]any)
+					if !ok {
+						continue
+					}
+					link := firstString(item, "url", "href", "link", "uri")
+					if validImportURL(link) {
+						result = append(result, importURL{URL: link, Title: firstString(item, "title", "name"), Source: source})
+					}
+				}
+				return result
+			}
+		}
 	}
 	matches := hrefPattern.FindAllStringSubmatch(raw, -1)
 	var result []importURL
 	for _, match := range matches {
 		if len(match) > 1 && validImportURL(match[1]) {
-			result = append(result, importURL{URL: match[1]})
+			result = append(result, importURL{URL: match[1], Title: htmlTitleForHref(raw, match[1]), Source: source})
 		}
 	}
 	if len(result) == 0 {
 		for _, line := range strings.Split(raw, "\n") {
 			line = strings.TrimSpace(line)
 			if validImportURL(line) {
-				result = append(result, importURL{URL: line})
+				result = append(result, importURL{URL: line, Source: source})
 			}
 		}
 	}
 	return result
+}
+
+func detectImportSource(raw string) string {
+	lower := strings.ToLower(raw)
+	switch {
+	case strings.Contains(lower, "pocket"):
+		return "pocket"
+	case strings.Contains(lower, "raindrop"):
+		return "raindrop"
+	case strings.Contains(lower, "linkwarden"):
+		return "linkwarden"
+	case strings.Contains(lower, "linkding"):
+		return "linkding"
+	case strings.Contains(lower, "karakeep"), strings.Contains(lower, "hoarder"):
+		return "karakeep"
+	case strings.Contains(lower, "netscape-bookmark-file"):
+		return "browser"
+	default:
+		return "import"
+	}
+}
+
+func htmlTitleForHref(raw, href string) string {
+	idx := strings.Index(raw, href)
+	if idx < 0 {
+		return ""
+	}
+	rest := raw[idx+len(href):]
+	start := strings.Index(rest, ">")
+	end := strings.Index(rest, "</A>")
+	if start < 0 || end < 0 || end <= start {
+		return ""
+	}
+	return strings.TrimSpace(html.UnescapeString(rest[start+1 : end]))
 }
 
 func firstString(item map[string]any, keys ...string) string {
@@ -234,6 +308,17 @@ func csvCell(value string) string {
 	default:
 		return value
 	}
+}
+
+func markdownText(value string) string {
+	value = strings.Join(strings.Fields(value), " ")
+	value = strings.ReplaceAll(value, "[", "\\[")
+	value = strings.ReplaceAll(value, "]", "\\]")
+	return value
+}
+
+func markdownURL(value string) string {
+	return strings.ReplaceAll(strings.TrimSpace(value), ")", "%29")
 }
 
 func scanImportJob(row scanner) map[string]any {

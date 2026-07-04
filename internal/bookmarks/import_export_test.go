@@ -29,8 +29,15 @@ func TestExtractImportURLsFromJSON(t *testing.T) {
 }
 
 func TestExtractImportURLsFromHTML(t *testing.T) {
-	got := extractImportURLs(`<DT><A HREF="https://example.com/article">Article</A><A HREF="javascript:alert(1)">bad</A>`)
-	if len(got) != 1 || got[0].URL != "https://example.com/article" {
+	got := extractImportURLs(`<!doctype NETSCAPE-Bookmark-file-1><DT><A HREF="https://example.com/article">Article</A><A HREF="javascript:alert(1)">bad</A>`)
+	if len(got) != 1 || got[0].URL != "https://example.com/article" || got[0].Title != "Article" || got[0].Source != "browser" {
+		t.Fatalf("unexpected URLs: %#v", got)
+	}
+}
+
+func TestExtractImportURLsFromWrappedExports(t *testing.T) {
+	got := extractImportURLs(`{"source":"raindrop","items":[{"link":"https://example.com/a","name":"A"},{"uri":"https://example.com/b","title":"B"}]}`)
+	if len(got) != 2 || got[0].Title != "A" || got[1].URL != "https://example.com/b" || got[0].Source != "raindrop" {
 		t.Fatalf("unexpected URLs: %#v", got)
 	}
 }
@@ -50,6 +57,15 @@ func TestCSVCellNeutralizesSpreadsheetFormulas(t *testing.T) {
 	}
 	if got := csvCell(" ordinary "); got != "ordinary" {
 		t.Fatalf("csvCell trimmed ordinary value to %q", got)
+	}
+}
+
+func TestMarkdownHelpersEscapeTitlesAndURLs(t *testing.T) {
+	if got := markdownText("A [bracketed] title"); got != `A \[bracketed\] title` {
+		t.Fatalf("markdownText escaped to %q", got)
+	}
+	if got := markdownURL("https://example.com/a)b"); got != "https://example.com/a%29b" {
+		t.Fatalf("markdownURL escaped to %q", got)
 	}
 }
 

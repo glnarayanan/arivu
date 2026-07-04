@@ -38,6 +38,17 @@ Second-brain v1 adds user-authored context around bookmarks:
   saved bookmarks instead of producing uncited claims.
 - Job status is visible per user, which makes background import/enrichment progress inspectable without exposing server errors.
 
+## User Imports And Exports
+
+- `/api/bookmarks/import` accepts safe URLs from common bookmark export shapes:
+  JSON arrays, object-wrapped lists (`items`, `bookmarks`, `results`, or
+  `links`), browser/Netscape HTML, and newline URL lists.
+- Imported bookmarks keep source hints such as browser, Pocket, Raindrop,
+  Linkwarden, Linkding, and Karakeep/Hoarder when the export content identifies
+  them.
+- `/api/bookmarks/export` supports JSON, CSV, browser HTML, and
+  Markdown/Obsidian-style links.
+
 ---
 
 ## Integrations & Direct-HTTP API Providers

@@ -895,9 +895,67 @@ async function settingsPage() {
     <div class="tab-list" role="tablist" aria-label="Settings sections">
       ${tabs.map(([id, label]) => `<button type="button" role="tab" id="tab-${id}" aria-controls="panel-${id}" aria-selected="${id === active}">${label}</button>`).join("")}
     </div>
-    ${tabs.map(([id, label, copy]) => `<div role="tabpanel" id="panel-${id}" aria-labelledby="tab-${id}"><h2>${label}</h2><p>${copy}</p></div>`).join("")}
+    ${tabs.map(([id, label, copy]) => `<div role="tabpanel" id="panel-${id}" aria-labelledby="tab-${id}"><h2>${label}</h2><p>${copy}</p>${id === "import" ? importPanel() : ""}</div>`).join("")}
   </section>`));
   ui.tabs(document.querySelector("#settings-tabs"));
+  bindImportPanel();
+}
+
+function importPanel() {
+  return `<section class="split">
+    <form class="panel form" id="import-form">
+      <h3>Paste export</h3>
+      <div class="field"><label for="import-content">Export content</label><textarea id="import-content" rows="9" placeholder="Paste browser HTML, Pocket/Raindrop/Linkwarden JSON, or one URL per line"></textarea></div>
+      <p class="form-message" id="import-message" data-form-message hidden></p>
+      <button type="submit">Start import</button>
+    </form>
+    <section class="panel">
+      <h3>Export</h3>
+      <div class="button-row">
+        <a class="button secondary" href="/api/bookmarks/export?format=json">JSON</a>
+        <a class="button secondary" href="/api/bookmarks/export?format=csv">CSV</a>
+        <a class="button secondary" href="/api/bookmarks/export?format=html">Browser HTML</a>
+        <a class="button secondary" href="/api/bookmarks/export?format=markdown">Markdown</a>
+      </div>
+      <div id="import-jobs" class="stack"></div>
+    </section>
+  </section>`;
+}
+
+async function bindImportPanel() {
+  const form = document.querySelector("#import-form");
+  if (!form) return;
+  const jobs = await api("/import-jobs").catch(() => []);
+  renderImportJobs(jobs);
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Importing");
+    setFormMessage(form);
+    try {
+      const result = await api("/bookmarks/import", {
+        method: "POST",
+        headers: { "Content-Type": "text/plain" },
+        body: document.querySelector("#import-content").value,
+      });
+      setFormMessage(form, `${result.count || 0} bookmarks queued.`, "success");
+      const latest = await api("/import-jobs").catch(() => []);
+      renderImportJobs(latest);
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+function renderImportJobs(jobs) {
+  const target = document.querySelector("#import-jobs");
+  if (!target) return;
+  target.innerHTML = (jobs || []).map((job) => `<article class="annotation">
+    <p><strong>${escapeHTML(job.status || "import")}</strong> <span class="meta">${Number(job.total_bookmarks || 0)} items</span></p>
+    <p class="meta">Fetched ${Number(job.content_fetched || 0)} · AI ${Number(job.ai_processed || 0)} · Failed ${Number(job.failed || 0)}</p>
+  </article>`).join("") || `<p class="meta">No imports yet.</p>`;
 }
 
 async function reviewPage() {
