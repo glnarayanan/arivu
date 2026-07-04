@@ -42,7 +42,7 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   and `url` query parameters. The URL field prefers the explicit `url`
   parameter, then falls back to the first URL found in shared text.
 - Dashboard retrieval supports query, tag, domain, source, read-status, and
-  saved-after date filters, saving the current search, replaying saved searches,
+  saved-date range filters, saving the current search, replaying saved searches,
   and a cited answer panel sourced only from matching saved items. Cited answers
   include standalone notes for unfiltered text queries; bookmark-only filters
   such as tag, domain, source, and read status keep results bookmark-scoped.
