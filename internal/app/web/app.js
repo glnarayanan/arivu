@@ -1675,12 +1675,34 @@ function insightList(items) {
 
 async function adminPage() {
   await requireUser();
-  const overview = await api("/admin/overview");
+  const [overview, audit] = await Promise.all([
+    api("/admin/overview"),
+    api("/admin/audit-events?limit=12").catch(() => ({ events: [] })),
+  ]);
   setRoot(shell("Admin", `<section class="grid">
     <div class="panel"><span class="meta">Users</span><h2>${overview.users?.total || 0}</h2></div>
     <div class="panel"><span class="meta">Bookmarks</span><h2>${overview.bookmarks?.total || 0}</h2></div>
     <div class="panel"><span class="meta">Database</span><h2>SQLite</h2></div>
+  </section>
+  <section class="panel">
+    <span class="meta">Security</span>
+    <h2>Audit log</h2>
+    <div class="stack">${auditEvents(audit.events || [])}</div>
   </section>`));
+}
+
+function auditEvents(events) {
+  if (!events.length) return `<p class="meta">No audit events recorded yet.</p>`;
+  return events.map((event) => `<article class="annotation">
+    <p><strong>${escapeHTML(event.action || "event")}</strong> <span class="meta">${escapeHTML(event.created_at || "")}</span></p>
+    <p class="meta">${escapeHTML(event.actor_email || event.actor_id || "system")} · ${escapeHTML(event.target_type || "target")}${event.target_id ? `:${escapeHTML(event.target_id)}` : ""}</p>
+    ${auditMetadata(event.metadata)}
+  </article>`).join("");
+}
+
+function auditMetadata(metadata) {
+  if (!metadata || !Object.keys(metadata).length) return "";
+  return `<p class="meta">${escapeHTML(JSON.stringify(metadata))}</p>`;
 }
 
 function simplePage(title, copy) {

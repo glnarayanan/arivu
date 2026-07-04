@@ -22,6 +22,7 @@ All notable changes to this project will be documented in this file.
 - Added Settings tag management for canonical tags and aliases.
 - Added Settings profile and API key panels backed by the existing profile, password-change, and admin key routes.
 - Added Settings connection controls for X status, connect, sync, and disconnect using the existing X routes.
+- Added an admin audit log API and Admin page panel for recent sensitive account, settings, and auth events.
 - Added a standalone Notes screen for creating, editing, and deleting freeform notes.
 - Added deterministic bookmark enrichment for summaries, bullets, highlight quotes, suggested tags, graph entities, and graph concepts when provider AI is not configured.
 - Added real embedded UI routes for review, daily memory, duplicate detection/merge, knowledge graph exploration, bookmark annotations, linked notes, read state, related items, and processing status.

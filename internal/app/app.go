@@ -156,6 +156,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/users/{id}", a.withAdmin(a.adminDeleteUser))
 	mux.HandleFunc("GET /api/admin/api-keys", a.withAdmin(a.adminAPIKeys))
 	mux.HandleFunc("PUT /api/admin/api-keys", a.withAdmin(a.adminUpdateAPIKeys))
+	mux.HandleFunc("GET /api/admin/audit-events", a.withAdmin(a.adminAuditEvents))
 
 	mux.HandleFunc("GET /api/auth/x/enabled", a.xEnabled)
 	mux.HandleFunc("GET /api/auth/x/status", a.withUser(a.xStatus))

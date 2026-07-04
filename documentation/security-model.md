@@ -15,6 +15,9 @@
   audit metadata records changed key names without storing secret values.
 - Successful admin user mutations, provider setting updates, password changes,
   and password resets write `audit_events` rows.
+- Admins can inspect recent audit events through a bounded newest-first
+  `/api/admin/audit-events` route and the Admin page. The route is admin-only
+  and returns changed provider setting names rather than secret values.
 - Second-brain routes use the same web-audience boundary as bookmarks. Notes,
   annotations, tags, saved searches, review actions, and job status are all
   scoped by `user_id`.

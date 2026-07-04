@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -190,6 +191,110 @@ func (a *App) adminUpdateAPIKeys(w http.ResponseWriter, r *http.Request, user au
 		a.auditEvent(r.Context(), user.ID, "admin.settings.update", "settings", "", map[string]any{"keys": changed})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "updated"})
+}
+
+func (a *App) adminAuditEvents(w http.ResponseWriter, r *http.Request, user auth.User) {
+	limit := 50
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = parsed
+	}
+	rows, err := a.db.QueryContext(r.Context(), `SELECT e.id,e.actor_user_id,COALESCE(u.email,''),e.action,e.target_type,e.target_id,e.metadata_json,e.created_at FROM audit_events e LEFT JOIN users u ON u.id=e.actor_user_id ORDER BY e.created_at DESC, e.id DESC LIMIT ?`, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load audit events")
+		return
+	}
+	defer rows.Close()
+	events := []map[string]any{}
+	for rows.Next() {
+		var id, action, targetType, targetID, metadataRaw, created string
+		var actorID, actorEmail sql.NullString
+		if err := rows.Scan(&id, &actorID, &actorEmail, &action, &targetType, &targetID, &metadataRaw, &created); err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not load audit events")
+			return
+		}
+		metadata := map[string]any{}
+		if err := json.Unmarshal([]byte(metadataRaw), &metadata); err != nil {
+			metadata = map[string]any{}
+		}
+		metadata = sanitizeAuditMetadata(metadata)
+		events = append(events, map[string]any{
+			"id":          id,
+			"actor_id":    actorID.String,
+			"actor_email": actorEmail.String,
+			"action":      action,
+			"target_type": targetType,
+			"target_id":   targetID,
+			"metadata":    metadata,
+			"created_at":  created,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load audit events")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"events": events})
+}
+
+func sanitizeAuditMetadata(metadata map[string]any) map[string]any {
+	sanitized := map[string]any{}
+	for key, value := range metadata {
+		key = strings.TrimSpace(key)
+		if key == "" || len([]rune(key)) > 64 {
+			continue
+		}
+		if sensitiveAuditMetadataKey(key) {
+			sanitized[key] = "[redacted]"
+			continue
+		}
+		sanitized[key] = sanitizeAuditMetadataValue(value)
+	}
+	raw, _ := json.Marshal(sanitized)
+	if len(raw) > 1200 {
+		return map[string]any{"truncated": true}
+	}
+	return sanitized
+}
+
+func sensitiveAuditMetadataKey(key string) bool {
+	lower := strings.ToLower(key)
+	if lower == "keys" {
+		return false
+	}
+	return strings.Contains(lower, "secret") ||
+		strings.Contains(lower, "token") ||
+		strings.Contains(lower, "password") ||
+		strings.Contains(lower, "api_key") ||
+		strings.HasSuffix(lower, "_key")
+}
+
+func sanitizeAuditMetadataValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return truncateRunes(typed, 160)
+	case float64, bool, nil:
+		return typed
+	case []any:
+		items := make([]any, 0, min(len(typed), 12))
+		for _, item := range typed[:min(len(typed), 12)] {
+			items = append(items, sanitizeAuditMetadataValue(item))
+		}
+		return items
+	default:
+		return "[object]"
+	}
+}
+
+func truncateRunes(value string, maxRunes int) string {
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
 }
 
 func allowedSettingKey(key string) bool {

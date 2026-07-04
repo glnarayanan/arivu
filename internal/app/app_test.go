@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -1207,6 +1208,54 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatal("api key update stored an unknown setting")
 	}
 	assertAuditAction(t, a, "admin.settings.update", "settings", "")
+	if _, err := a.db.ExecContext(context.Background(), `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, "audit-secret", userIDForEmail(t, a, "admin@example.com"), "admin.secret.test", "settings", "", `{"token":"do-not-leak","note":"visible"}`, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("seed secret audit event: %v", err)
+	}
+	audit := adminRequest(t, handler, http.MethodGet, "/api/admin/audit-events?limit=10", "", accessCookie, csrfCookie)
+	if audit.StatusCode != http.StatusOK {
+		t.Fatalf("audit events status = %d body=%s", audit.StatusCode, readBody(audit))
+	}
+	var auditBody struct {
+		Events []map[string]any `json:"events"`
+	}
+	_ = json.NewDecoder(audit.Body).Decode(&auditBody)
+	audit.Body.Close()
+	var sawSettingsAudit, sawRedactedAudit bool
+	for _, event := range auditBody.Events {
+		if event["action"] == "admin.settings.update" && event["actor_email"] == "admin@example.com" {
+			metadata, _ := event["metadata"].(map[string]any)
+			keys, _ := metadata["keys"].([]any)
+			if len(keys) == 2 && keys[0] == "gemini_api_key" && keys[1] == "x_redirect_uri" {
+				sawSettingsAudit = true
+			}
+			if strings.Contains(fmt.Sprint(metadata), "unexpected_setting") {
+				t.Fatalf("audit metadata included rejected setting: %#v", metadata)
+			}
+		}
+		if event["action"] == "admin.secret.test" {
+			metadata, _ := event["metadata"].(map[string]any)
+			if metadata["token"] == "[redacted]" && metadata["note"] == "visible" {
+				sawRedactedAudit = true
+			}
+			if strings.Contains(fmt.Sprint(metadata), "do-not-leak") {
+				t.Fatalf("audit metadata leaked sensitive value: %#v", metadata)
+			}
+		}
+	}
+	if !sawSettingsAudit || !sawRedactedAudit {
+		t.Fatalf("audit events missing settings update: %#v", auditBody)
+	}
+	badLimit := adminRequest(t, handler, http.MethodGet, "/api/admin/audit-events?limit=500", "", accessCookie, csrfCookie)
+	if badLimit.StatusCode != http.StatusBadRequest {
+		t.Fatalf("audit bad limit status = %d body=%s", badLimit.StatusCode, readBody(badLimit))
+	}
+	badLimit.Body.Close()
+	nonAdminAccess, _ := signupForCookies(t, handler, "viewer@example.com")
+	nonAdminAudit := adminRequest(t, handler, http.MethodGet, "/api/admin/audit-events", "", nonAdminAccess, csrfCookie)
+	if nonAdminAudit.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin audit status = %d body=%s", nonAdminAudit.StatusCode, readBody(nonAdminAudit))
+	}
+	nonAdminAudit.Body.Close()
 
 	reset := adminRequest(t, handler, http.MethodPost, "/api/admin/users/"+userID+"/reset-password", `{"new_password":"new-password-123"}`, accessCookie, csrfCookie)
 	if reset.StatusCode != http.StatusOK {
