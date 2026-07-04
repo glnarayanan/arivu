@@ -508,8 +508,9 @@ func TestImportQueuesJobsWithVisibleProgressID(t *testing.T) {
 		t.Fatalf("import status = %d body=%s", resp.StatusCode, readBody(resp))
 	}
 	var body struct {
-		Count       int    `json:"count"`
-		ImportJobID string `json:"import_job_id"`
+		Count        int              `json:"count"`
+		ImportJobID  string           `json:"import_job_id"`
+		SourceReport []map[string]any `json:"source_report"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatal(err)
@@ -517,6 +518,7 @@ func TestImportQueuesJobsWithVisibleProgressID(t *testing.T) {
 	if body.Count != 2 || body.ImportJobID == "" {
 		t.Fatalf("unexpected import body: %#v", body)
 	}
+	assertSourceReport(t, body.SourceReport, "browser", 2)
 	var total int
 	if err := a.db.QueryRow(`SELECT total_bookmarks FROM import_jobs WHERE id=?`, body.ImportJobID).Scan(&total); err != nil {
 		t.Fatalf("scan import job: %v", err)
@@ -530,6 +532,45 @@ func TestImportQueuesJobsWithVisibleProgressID(t *testing.T) {
 	}
 	if sources != 2 {
 		t.Fatalf("import source rows = %d, want 2", sources)
+	}
+	var bookmarkSources int
+	if err := a.db.QueryRow(`SELECT COUNT(*) FROM bookmarks WHERE source='browser'`).Scan(&bookmarkSources); err != nil {
+		t.Fatalf("count bookmark sources: %v", err)
+	}
+	if bookmarkSources != 2 {
+		t.Fatalf("browser bookmark sources = %d, want 2", bookmarkSources)
+	}
+	jobResp := adminRequest(t, handler, http.MethodGet, "/api/import-jobs/"+body.ImportJobID, "", accessCookie, csrfCookie)
+	if jobResp.StatusCode != http.StatusOK {
+		t.Fatalf("import job status = %d body=%s", jobResp.StatusCode, readBody(jobResp))
+	}
+	var jobBody struct {
+		SourceReport []map[string]any `json:"source_report"`
+		Items        []map[string]any `json:"items"`
+	}
+	_ = json.NewDecoder(jobResp.Body).Decode(&jobBody)
+	jobResp.Body.Close()
+	assertSourceReport(t, jobBody.SourceReport, "browser", 2)
+	if len(jobBody.Items) != 2 || jobBody.Items[0]["bookmark_id"] == "" || jobBody.Items[0]["url"] == "" {
+		t.Fatalf("unexpected import item provenance: %#v", jobBody.Items)
+	}
+
+	listResp := adminRequest(t, handler, http.MethodGet, "/api/import-jobs", "", accessCookie, csrfCookie)
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("import jobs status = %d body=%s", listResp.StatusCode, readBody(listResp))
+	}
+	var listBody []map[string]any
+	_ = json.NewDecoder(listResp.Body).Decode(&listBody)
+	listResp.Body.Close()
+	if len(listBody) != 1 {
+		t.Fatalf("import jobs length = %d, want 1", len(listBody))
+	}
+	report, _ := listBody[0]["source_report"].([]any)
+	if len(report) != 1 || report[0].(map[string]any)["source"] != "browser" || int(report[0].(map[string]any)["count"].(float64)) != 2 {
+		t.Fatalf("unexpected import jobs source report: %#v", listBody)
+	}
+	if listBody[0]["items"] != nil {
+		t.Fatalf("import job list should stay aggregate-only: %#v", listBody)
 	}
 	rows, err := a.db.Query(`SELECT payload_json FROM jobs WHERE type='bookmark.process' ORDER BY created_at`)
 	if err != nil {
@@ -557,6 +598,18 @@ func TestImportQueuesJobsWithVisibleProgressID(t *testing.T) {
 	if seen != 2 {
 		t.Fatalf("queued jobs = %d, want 2", seen)
 	}
+}
+
+func assertSourceReport(t *testing.T, report []map[string]any, source string, count int) {
+	t.Helper()
+	for _, item := range report {
+		gotSource, _ := item["source"].(string)
+		gotCount, _ := item["count"].(float64)
+		if gotSource == source && int(gotCount) == count {
+			return
+		}
+	}
+	t.Fatalf("source report missing %s=%d: %#v", source, count, report)
 }
 
 func TestBrowserFacingFirstRunContracts(t *testing.T) {

@@ -89,7 +89,8 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 		if item.Title == "" {
 			item.Title = parsed.Hostname()
 		}
-		result, err := s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, item.URL, item.Title, parsed.Hostname(), now, now)
+		source := fallback(item.Source, "import")
+		result, err := s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,domain,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, bookmarkID, user.ID, item.URL, item.Title, parsed.Hostname(), source, now, now)
 		if err != nil {
 			continue
 		}
@@ -99,7 +100,7 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 		}
 		if item.Source != "" {
 			metadata, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL})
-			_, _ = s.db.ExecContext(r.Context(), `INSERT INTO import_sources(id,user_id,import_job_id,source_type,source_name,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), user.ID, jobID, item.Source, item.Title, string(metadata), now)
+			_, _ = s.db.ExecContext(r.Context(), `INSERT INTO import_sources(id,user_id,import_job_id,source_type,source_name,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), user.ID, jobID, source, item.Title, string(metadata), now)
 		}
 		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
 		payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL, "import_job_id": jobID})
@@ -107,7 +108,7 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 		count++
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE import_jobs SET total_bookmarks=?, updated_at=? WHERE id=?`, count, time.Now().UTC().Format(time.RFC3339), jobID)
-	writeJSON(w, http.StatusOK, map[string]any{"message": "Import started", "count": count, "import_job_id": jobID})
+	writeJSON(w, http.StatusOK, map[string]any{"message": "Import started", "count": count, "import_job_id": jobID, "source_report": s.importSourceReport(r.Context(), user.ID, jobID)})
 }
 
 func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -200,10 +201,19 @@ func (s *Service) ImportJobs(w http.ResponseWriter, r *http.Request, user auth.U
 		writeError(w, http.StatusInternalServerError, "Could not load import jobs")
 		return
 	}
-	defer rows.Close()
 	var result []map[string]any
 	for rows.Next() {
 		result = append(result, scanImportJob(rows))
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load import jobs")
+		return
+	}
+	rows.Close()
+	for _, job := range result {
+		if id, _ := job["id"].(string); id != "" {
+			job["source_report"] = s.importSourceReport(r.Context(), user.ID, id)
+		}
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -215,7 +225,42 @@ func (s *Service) ImportJob(w http.ResponseWriter, r *http.Request, user auth.Us
 		writeError(w, http.StatusNotFound, "Import job not found")
 		return
 	}
+	job["source_report"] = s.importSourceReport(r.Context(), user.ID, r.PathValue("id"))
+	job["items"] = s.importSourceItems(r.Context(), user.ID, r.PathValue("id"))
 	writeJSON(w, http.StatusOK, job)
+}
+
+func (s *Service) importSourceReport(ctx context.Context, userID, importJobID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_type,COUNT(*) FROM import_sources WHERE user_id=? AND import_job_id=? GROUP BY source_type ORDER BY COUNT(*) DESC, source_type`, userID, importJobID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	var report []map[string]any
+	for rows.Next() {
+		var source string
+		var count int
+		_ = rows.Scan(&source, &count)
+		report = append(report, map[string]any{"source": source, "count": count})
+	}
+	return report
+}
+
+func (s *Service) importSourceItems(ctx context.Context, userID, importJobID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT source_type,source_name,metadata_json FROM import_sources WHERE user_id=? AND import_job_id=? ORDER BY created_at ASC LIMIT 100`, userID, importJobID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	var items []map[string]any
+	for rows.Next() {
+		var source, name, metadata string
+		_ = rows.Scan(&source, &name, &metadata)
+		meta := map[string]string{}
+		_ = json.Unmarshal([]byte(metadata), &meta)
+		items = append(items, map[string]any{"source": source, "title": name, "bookmark_id": meta["bookmark_id"], "url": meta["url"]})
+	}
+	return items
 }
 
 type importURL struct {

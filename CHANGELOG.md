@@ -44,6 +44,8 @@ All notable changes to this project will be documented in this file.
 - Bookmark import now accepts safe URLs from JSON arrays, object-wrapped exports, browser/Netscape HTML, and newline URL lists while recording source hints for inserted bookmarks.
 - Imported bookmarks now create summary placeholders before processing and use safer duplicate counting for import reports.
 - Imported bookmark processing now updates the visible import job counters for fetched, AI-processed, and failed items.
+- Import jobs now include source reports and bounded item provenance so migration status can show where imported items came from.
+- Imported bookmarks now persist their detected source for source filtering.
 
 ### Security
 

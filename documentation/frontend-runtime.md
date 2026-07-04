@@ -50,7 +50,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   a URL, including create, edit, and delete flows.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
-  AI-processed, failed, and completed status counters, and download JSON, CSV,
+  AI-processed, failed, completed status counters, source report chips, and
+  bounded item provenance for the import just submitted, and download JSON, CSV,
   browser HTML, or Markdown exports from existing routes.
 - Settings tags uses native forms to create canonical tags and add aliases to
   existing tags through the normalized tag APIs.

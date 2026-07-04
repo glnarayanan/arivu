@@ -18,7 +18,8 @@ with foreign keys.
 - `tags`, `tag_aliases`, and `bookmark_tags`: normalized per-user tags with aliases so provider suggestions and manual tags converge instead of creating synonym clutter.
 - `saved_searches`: named user searches with structured filter JSON.
 - `review_events`: review completion and snooze history for bookmarks and notes.
-- `import_sources`: source metadata for migration/import reports.
+- `import_sources`: source metadata for migration/import reports, grouped into
+  per-import source reports for the Settings import status view.
 - `import_jobs`: user-facing import progress with fetched, AI-processed,
   failed, and completed status counters.
 - `x_connections` and `oauth_states`: provider connection and PKCE state.

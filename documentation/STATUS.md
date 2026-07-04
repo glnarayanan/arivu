@@ -13,7 +13,7 @@
 - Backend-owned HTML sanitizer with strict allowlisted tags, attributes, and URL schemes.
 - Direct HTTP provider clients for Gemini, Resend, and X API calls without provider SDK dependencies.
 - Core bookmark, collection, search, analytics, admin, import/export, duplicate detection, semantic graph, resurfacing, memory jogger, and X sync behavior.
-- Import accepts safe URLs from JSON arrays, object-wrapped exports, browser/Netscape HTML, and newline URL lists; queued import processing updates fetched, AI-processed, failed, and completed status counters; export supports JSON, CSV, browser HTML, and Markdown/Obsidian-style links.
+- Import accepts safe URLs from JSON arrays, object-wrapped exports, browser/Netscape HTML, and newline URL lists; imported bookmarks keep their detected source; queued import processing updates fetched, AI-processed, failed, completed status counters, aggregate source reports, and bounded item provenance on import detail; export supports JSON, CSV, browser HTML, and Markdown/Obsidian-style links.
 - Second-brain APIs for notes, bookmark annotations, normalized tags, tag aliases, saved searches, review queue actions, and per-user job status.
 - New bookmark saves accept quick notes, selected quotes, and manual tags, return the processing job ID, and populate deterministic enrichment fields even without provider keys.
 - Extension selected-text saves create quote annotations through the extension audience route.
@@ -29,7 +29,7 @@ GOCACHE=/private/tmp/arivu-build-cache go test ./...
 GOCACHE=/private/tmp/arivu-build-cache go build -trimpath -ldflags="-s -w" -o /private/tmp/arivu-check ./cmd/arivu
 ```
 
-Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, import URL extraction, import source detection, import job payload/progress accounting, Markdown export escaping, migration unknown-field rejection, direct HTTP handler integration tests, second-brain route scoping and CSRF checks, tag/date filtering, cited answer mode with bookmark and standalone note citations, bookmark and standalone note review queues, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
+Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, import URL extraction, import source detection, imported bookmark source persistence, import job payload/progress/source-report/provenance accounting, Markdown export escaping, migration unknown-field rejection, direct HTTP handler integration tests, second-brain route scoping and CSRF checks, tag/date filtering, cited answer mode with bookmark and standalone note citations, bookmark and standalone note review queues, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
 
 Latest manual localhost smoke used a temporary SQLite database and verified:
 

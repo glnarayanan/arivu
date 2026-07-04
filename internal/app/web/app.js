@@ -1148,6 +1148,13 @@ async function bindImportPanel() {
       });
       setFormMessage(form, `${result.count || 0} bookmarks queued.`, "success");
       const latest = await api("/import-jobs").catch(() => []);
+      if (result.import_job_id) {
+        const detail = await api(`/import-jobs/${result.import_job_id}`).catch(() => null);
+        if (detail) {
+          const index = latest.findIndex((job) => job.id === result.import_job_id);
+          if (index >= 0) latest[index] = detail;
+        }
+      }
       renderImportJobs(latest);
     } catch (err) {
       setFormMessage(form, err.message);
@@ -1163,8 +1170,20 @@ function renderImportJobs(jobs) {
   if (!target) return;
   target.innerHTML = (jobs || []).map((job) => `<article class="annotation">
     <p><strong>${escapeHTML(job.status || "import")}</strong> <span class="meta">${Number(job.total_bookmarks || 0)} items</span></p>
+    ${importSourceReport(job.source_report || [])}
+    ${importSourceItems(job.items || [])}
     <p class="meta">Fetched ${Number(job.content_fetched || 0)} · AI ${Number(job.ai_processed || 0)} · Failed ${Number(job.failed || 0)}</p>
   </article>`).join("") || `<p class="meta">No imports yet.</p>`;
+}
+
+function importSourceReport(report) {
+  if (!report.length) return "";
+  return `<div class="chips">${report.map((item) => `<span>${escapeHTML(item.source || "import")} · ${Number(item.count || 0)}</span>`).join("")}</div>`;
+}
+
+function importSourceItems(items) {
+  if (!items.length) return "";
+  return `<div class="stack">${items.slice(0, 5).map((item) => `<p class="meta">${escapeHTML(item.source || "import")} · ${escapeHTML(item.title || item.url || "Imported item")}</p>`).join("")}</div>`;
 }
 
 async function reviewPage() {
