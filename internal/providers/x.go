@@ -130,14 +130,6 @@ func (c XClient) Profile(ctx context.Context, accessToken string) (XUser, error)
 	return decoded.Data, nil
 }
 
-func (c XClient) Bookmarks(ctx context.Context, userID string, paginationToken string, max int) ([]XBookmark, string, error) {
-	page, err := c.BookmarkPage(ctx, userID, paginationToken, max)
-	if err != nil {
-		return nil, "", err
-	}
-	return page.Bookmarks, page.NextToken, nil
-}
-
 func (c XClient) BookmarkPage(ctx context.Context, userID string, paginationToken string, max int) (XBookmarkPage, error) {
 	if c.AccessToken == "" {
 		return XBookmarkPage{}, ErrNotConfigured

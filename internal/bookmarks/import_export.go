@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"net/url"
@@ -125,7 +126,7 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 		w.Header().Set("Content-Disposition", `attachment; filename="arivu-bookmarks.html"`)
 		_, _ = fmt.Fprintln(w, "<!doctype NETSCAPE-Bookmark-file-1><META HTTP-EQUIV=\"Content-Type\" CONTENT=\"text/html; charset=UTF-8\"><TITLE>Bookmarks</TITLE><H1>Bookmarks</H1><DL><p>")
 		for _, it := range items {
-			_, _ = fmt.Fprintf(w, "<DT><A HREF=\"%s\">%s</A>\n", htmlAttr(it.URL), htmlAttr(it.Title))
+			_, _ = fmt.Fprintf(w, "<DT><A HREF=\"%s\">%s</A>\n", html.EscapeString(it.URL), html.EscapeString(it.Title))
 		}
 		_, _ = fmt.Fprintln(w, "</DL><p>")
 	default:
@@ -234,9 +235,4 @@ func oneSentence(text string) string {
 		return text[:280] + "..."
 	}
 	return text
-}
-
-func htmlAttr(value string) string {
-	replacer := strings.NewReplacer("&", "&amp;", `"`, "&quot;", "<", "&lt;", ">", "&gt;")
-	return replacer.Replace(value)
 }

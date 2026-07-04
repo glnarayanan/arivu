@@ -49,6 +49,13 @@ func TestValidateDocumentRejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
+func TestDiscoverMongoSchemaRequiresExportPath(t *testing.T) {
+	err := DiscoverMongoSchema(context.Background(), Options{DBName: "arivu_db", OutPath: filepath.Join(t.TempDir(), "manifest.json"), DryRun: true})
+	if err == nil || !strings.Contains(err.Error(), "export path") {
+		t.Fatalf("expected export path error, got %v", err)
+	}
+}
+
 func TestValidateExportFromCollectionObject(t *testing.T) {
 	manifest := baselineManifest(Options{DBName: "arivu_db", DryRun: true})
 	export := map[string]any{

@@ -38,7 +38,7 @@ discarded.
 
 ## JSON Export Shape
 
-The `--json-export`/`--mongo-export` path may be either:
+The `--json-export`/`--mongo-export` path is required and may be either:
 
 - A single JSON object keyed by collection name, where each value is an object
   or array of objects.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/config"
+	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
@@ -80,7 +82,7 @@ func (s *Service) Signup(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "Email and password are required"})
 		return
 	}
-	user := User{ID: newID(), Email: body.Email, Name: strings.TrimSpace(body.Name)}
+	user := User{ID: ids.New(), Email: body.Email, Name: strings.TrimSpace(body.Name)}
 	hash, err := hashArgon2id(body.Password)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "Could not create user"})
@@ -339,7 +341,7 @@ func (s *Service) createSession(ctx context.Context, user User, audience string,
 	csrf := randomToken()
 	now := time.Now().UTC()
 	_, err := s.db.ExecContext(ctx, `INSERT INTO sessions(id,user_id,audience,access_hash,refresh_hash,csrf_hash,user_agent,origin,access_expires_at,refresh_expires_at,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-		newID(), user.ID, audience, tokenHash(access), tokenHash(refresh), tokenHash(csrf), ua, origin, now.Add(s.cfg.SessionTTL).Format(time.RFC3339), now.Add(refreshTTL).Format(time.RFC3339), now.Format(time.RFC3339))
+		ids.New(), user.ID, audience, tokenHash(access), tokenHash(refresh), tokenHash(csrf), ua, origin, now.Add(s.cfg.SessionTTL).Format(time.RFC3339), now.Add(refreshTTL).Format(time.RFC3339), now.Format(time.RFC3339))
 	return tokenSet{AccessToken: access, RefreshToken: refresh, CSRFToken: csrf}, err
 }
 
@@ -401,21 +403,10 @@ func verifyPassword(password, scheme, stored string) bool {
 			return false
 		}
 		actual := argon2.IDKey([]byte(password), salt, 3, 64*1024, 2, 32)
-		return subtleEqual(actual, expected)
+		return subtle.ConstantTimeCompare(actual, expected) == 1
 	default:
 		return bcrypt.CompareHashAndPassword([]byte(stored), []byte(password)) == nil
 	}
-}
-
-func subtleEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	var result byte
-	for i := range a {
-		result |= a[i] ^ b[i]
-	}
-	return result == 0
 }
 
 func bearerToken(r *http.Request) string {
@@ -437,16 +428,6 @@ func randomToken() string {
 		panic(err)
 	}
 	return base64.RawURLEncoding.EncodeToString(buf)
-}
-
-func newID() string {
-	buf := make([]byte, 16)
-	if _, err := rand.Read(buf); err != nil {
-		panic(err)
-	}
-	buf[6] = (buf[6] & 0x0f) | 0x40
-	buf[8] = (buf[8] & 0x3f) | 0x80
-	return hex.EncodeToString(buf[0:4]) + "-" + hex.EncodeToString(buf[4:6]) + "-" + hex.EncodeToString(buf[6:8]) + "-" + hex.EncodeToString(buf[8:10]) + "-" + hex.EncodeToString(buf[10:])
 }
 
 func mutates(method string) bool {

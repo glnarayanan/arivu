@@ -15,7 +15,6 @@ import (
 )
 
 type Options struct {
-	MongoURI    string
 	ExportPath  string
 	DBName      string
 	OutPath     string
@@ -45,20 +44,16 @@ type Sample struct {
 }
 
 func DiscoverMongoSchema(ctx context.Context, opts Options) error {
-	if opts.MongoURI == "" && opts.ExportPath == "" {
-		return errors.New("mongo uri or mongo export path is required")
+	if opts.ExportPath == "" {
+		return errors.New("mongo export path is required")
 	}
 	manifest := baselineManifest(opts)
-	if opts.ExportPath != "" {
-		samples, err := ValidateExport(ctx, manifest, opts.ExportPath, opts.SampleLimit)
-		if err != nil {
-			return err
-		}
-		manifest.Samples = samples
-		manifest.Notes = append(manifest.Notes, "JSON export samples were validated against the field allowlist.")
-	} else {
-		manifest.Notes = append(manifest.Notes, "No JSON export path was provided; live Mongo sampling remains external to this binary.")
+	samples, err := ValidateExport(ctx, manifest, opts.ExportPath, opts.SampleLimit)
+	if err != nil {
+		return err
 	}
+	manifest.Samples = samples
+	manifest.Notes = append(manifest.Notes, "JSON export samples were validated against the field allowlist.")
 	raw, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err

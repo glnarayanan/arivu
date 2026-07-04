@@ -18,6 +18,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Removed the inert `arivu migrate --mongo-uri` discovery path; migration now
+  requires a dependency-free JSON export via `--json-export` or
+  `--mongo-export`.
 - Polished the embedded frontend with stronger interaction states, route loading feedback, semantic toasts, accessible search and navigation affordances, safer mobile layout behavior, and refined design tokens.
 - Resolved the frontend audit findings with explicit route access metadata, inline form errors, assertive error toasts, and a quieter OKLCH-based visual system.
 - Optimized embedded frontend asset delivery with content ETags, cache revalidation headers, zero-copy byte readers, and offscreen grid rendering containment.
