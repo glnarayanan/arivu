@@ -614,7 +614,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	_ = json.NewDecoder(answerResp.Body).Decode(&answerBody)
 	answerResp.Body.Close()
-	if answerBody.Answer == "" || len(answerBody.Citations) != 1 || answerBody.Citations[0]["id"] != "capture" || answerBody.Citations[0]["snippet"] == "" {
+	if !strings.Contains(answerBody.Answer, "The capture loop needs review.") || !strings.Contains(answerBody.Answer, "Recall with evidence") || len(answerBody.Citations) != 1 || answerBody.Citations[0]["id"] != "capture" || answerBody.Citations[0]["snippet"] == "" {
 		t.Fatalf("answer mode missing cited capture: %#v", answerBody)
 	}
 
@@ -623,6 +623,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("note answer status = %d body=%s", noteAnswerResp.StatusCode, readBody(noteAnswerResp))
 	}
 	var noteAnswerBody struct {
+		Answer    string           `json:"answer"`
 		Citations []map[string]any `json:"citations"`
 	}
 	_ = json.NewDecoder(noteAnswerResp.Body).Decode(&noteAnswerBody)
@@ -636,7 +637,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 			t.Fatalf("answer mode leaked other user's note: %#v", noteAnswerBody)
 		}
 	}
-	if !sawNote {
+	if !sawNote || !strings.Contains(noteAnswerBody.Answer, "Standalone recall idea for later synthesis.") {
 		t.Fatalf("answer mode missing standalone note citation: %#v", noteAnswerBody)
 	}
 

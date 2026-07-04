@@ -250,7 +250,7 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 	values.Set("search", q)
 	req.URL.RawQuery = values.Encode()
 	where, args := s.bookmarkFilter(req, user.ID)
-	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.title,b.url,b.domain,b.description,b.text_content FROM bookmarks b `+where+` ORDER BY b.updated_at DESC LIMIT 8`, args...)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.title,b.url,b.domain,b.description,b.text_content FROM bookmarks b `+where+` ORDER BY b.updated_at DESC, b.id ASC LIMIT 8`, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not answer search")
 		return
@@ -283,7 +283,7 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 			noteWhere += " AND created_at<=?"
 			noteArgs = append(noteArgs, to)
 		}
-		noteRows, err := s.db.QueryContext(r.Context(), `SELECT id,title,body,source FROM notes `+noteWhere+` ORDER BY updated_at DESC LIMIT 8`, noteArgs...)
+		noteRows, err := s.db.QueryContext(r.Context(), `SELECT id,title,body,source FROM notes `+noteWhere+` ORDER BY updated_at DESC, id ASC LIMIT 8`, noteArgs...)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Could not answer search")
 			return
@@ -302,11 +302,29 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		writeJSON(w, http.StatusOK, map[string]any{"answer": "No saved items matched this query.", "citations": []any{}})
 		return
 	}
+	seenAnswerParts := map[string]struct{}{}
+	var answerParts []string
+	for _, citation := range citations {
+		if len(answerParts) >= 8 {
+			break
+		}
+		if citation.Type == "bookmark" {
+			summary := s.summary(r.Context(), user.ID, citation.ID)
+			appendAnswerPart(&answerParts, seenAnswerParts, summary["one_sentence"], 8)
+			appendAnswerPart(&answerParts, seenAnswerParts, summary["highlights"], 8)
+			appendAnswerPart(&answerParts, seenAnswerParts, summary["bullet_points"], 8)
+		}
+		appendAnswerPart(&answerParts, seenAnswerParts, citation.Snippet, 8)
+	}
 	answer := "Found " + fmt.Sprint(len(citations)) + " saved item"
 	if len(citations) != 1 {
 		answer += "s"
 	}
-	answer += " that mention this query. Use the citations below to inspect the original saved context."
+	if len(answerParts) > 0 {
+		answer = "Answer from your saved context: " + strings.Join(answerParts, " ")
+	} else {
+		answer += " that mention this query. Use the citations below to inspect the original saved context."
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "citations": citations})
 }
 
@@ -1778,6 +1796,45 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func appendAnswerPart(parts *[]string, seen map[string]struct{}, value any, maxParts int) {
+	if len(*parts) >= maxParts {
+		return
+	}
+	switch typed := value.(type) {
+	case string:
+		appendAnswerString(parts, seen, typed)
+	case []any:
+		for _, item := range typed {
+			if len(*parts) >= maxParts {
+				return
+			}
+			appendAnswerPart(parts, seen, item, maxParts)
+		}
+	}
+}
+
+func appendAnswerString(parts *[]string, seen map[string]struct{}, value string) {
+	cleaned := strings.TrimSpace(strings.Join(strings.Fields(value), " "))
+	if len(cleaned) < 2 {
+		return
+	}
+	cleaned = truncateAnswerPart(cleaned, 240)
+	key := strings.ToLower(cleaned)
+	if _, ok := seen[key]; ok {
+		return
+	}
+	seen[key] = struct{}{}
+	*parts = append(*parts, cleaned)
+}
+
+func truncateAnswerPart(value string, maxRunes int) string {
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
 }
 
 func searchSnippet(query, text string) string {
