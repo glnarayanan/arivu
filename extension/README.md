@@ -4,7 +4,7 @@ Save bookmarks directly into Arivu from Chrome or Firefox.
 
 ## What It Does
 
-- Saves current tab URL to Arivu
+- Saves current tab URL to Arivu with optional quick note and tags
 - Saves from the page, link, or selected-text context menu without opening the popup
 - Sends selected text as a quote annotation
 - Lets users pick a target collection

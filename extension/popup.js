@@ -63,6 +63,14 @@ async function loadCollections() {
   }
 }
 
+function splitTags(value) {
+  return String(value || '')
+    .split(',')
+    .map(tag => tag.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+}
+
 document.getElementById('bookmarkForm').addEventListener('submit', async (e) => {
   e.preventDefault();
 
@@ -76,6 +84,11 @@ document.getElementById('bookmarkForm').addEventListener('submit', async (e) => 
   try {
     const url = document.getElementById('url').value;
     const collectionId = document.getElementById('collection').value || null;
+    const note = document.getElementById('note').value.trim();
+    const tags = splitTags(document.getElementById('tags').value);
+    const payload = { url, collection_id: collectionId };
+    if (note) payload.note = note;
+    if (tags.length) payload.tags = tags;
 
     const response = await fetch(`${apiUrl}/extension/bookmarks`, {
       method: 'POST',
@@ -83,7 +96,7 @@ document.getElementById('bookmarkForm').addEventListener('submit', async (e) => 
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${accessToken}`
       },
-      body: JSON.stringify({ url, collection_id: collectionId })
+      body: JSON.stringify(payload)
     });
 
     if (response.ok) {

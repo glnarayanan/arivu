@@ -73,7 +73,7 @@
       margin-bottom: 6px;
     }
 
-    input, select {
+    input, select, textarea {
       width: 100%;
       padding: 10px 12px;
       border: 2px solid #0F0F0F;
@@ -81,9 +81,10 @@
       font-family: 'DM Sans', sans-serif;
       background: white;
       color: #0F0F0F;
+      resize: vertical;
     }
 
-    input:focus, select:focus {
+    input:focus, select:focus, textarea:focus {
       outline: none;
       border-color: #F97316;
     }
@@ -261,6 +262,14 @@
         <select id="collection">
           <option value="">None</option>
         </select>
+      </div>
+      <div class="form-group">
+        <label>Quick note</label>
+        <textarea id="note" rows="3" placeholder="Why this matters"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Tags</label>
+        <input type="text" id="tags" placeholder="research, idea, later">
       </div>
       <button type="submit" class="btn" id="saveBtn">Save Bookmark</button>
       <div id="status" class="status" style="display:none;"></div>

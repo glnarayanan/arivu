@@ -62,6 +62,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   admin-required message for non-admin users.
 - Settings connections exposes X status, connect, sync, and disconnect controls
   through the existing X OAuth and sync routes.
+- Extension popup capture includes collection, quick note, and comma-separated
+  tag fields while context-menu capture keeps the selected-text quote path.
 - Bookmark save responses include `job_id`; the dashboard shows a short
   processing status before navigating to the saved bookmark.
 - Bookmark detail is now the reader/research surface: sanitized archived HTML,

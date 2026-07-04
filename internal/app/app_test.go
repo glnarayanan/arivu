@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -357,6 +358,28 @@ func TestAuthRateLimitsSensitiveEndpoints(t *testing.T) {
 	}
 	reset.Body.Close()
 	assertAuditAction(t, a, "auth.password.reset", "user", userID)
+}
+
+func TestExtensionPopupCapturesNoteAndTags(t *testing.T) {
+	html, err := os.ReadFile(filepath.Join("..", "..", "extension", "popup.html"))
+	if err != nil {
+		t.Fatalf("read popup html: %v", err)
+	}
+	script, err := os.ReadFile(filepath.Join("..", "..", "extension", "popup.js"))
+	if err != nil {
+		t.Fatalf("read popup js: %v", err)
+	}
+	for _, expected := range []string{`id="note"`, `id="tags"`} {
+		if !strings.Contains(string(html), expected) {
+			t.Fatalf("extension popup missing %s", expected)
+		}
+	}
+	source := string(script)
+	for _, expected := range []string{"function splitTags", "payload.note = note", "payload.tags = tags"} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("extension popup script missing %s", expected)
+		}
+	}
 }
 
 func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
