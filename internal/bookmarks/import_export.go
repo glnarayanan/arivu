@@ -75,6 +75,14 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 		writeError(w, http.StatusBadRequest, "No import content provided")
 		return
 	}
+	if result, ok, err := s.restoreFullExport(r.Context(), user.ID, raw); ok {
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, result)
+		return
+	}
 	urls := extractImportURLs(string(raw))
 	if len(urls) > 1000 {
 		urls = urls[:1000]
@@ -109,6 +117,253 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE import_jobs SET total_bookmarks=?, updated_at=? WHERE id=?`, count, time.Now().UTC().Format(time.RFC3339), jobID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Import started", "count": count, "import_job_id": jobID, "source_report": s.importSourceReport(r.Context(), user.ID, jobID)})
+}
+
+func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []byte) (map[string]any, bool, error) {
+	var backup map[string]any
+	if err := json.Unmarshal(raw, &backup); err != nil {
+		return nil, false, nil
+	}
+	bookmarksRaw, ok := backup["bookmarks"].([]any)
+	if !ok {
+		return nil, false, nil
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	jobID := ids.New()
+	oldBookmarks := map[string]string{}
+	oldNotes := map[string]string{}
+	restored := 0
+	_, _ = s.db.ExecContext(ctx, `INSERT INTO import_jobs(id,user_id,total_bookmarks,content_fetched,ai_processed,failed,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, jobID, userID, len(bookmarksRaw), 0, 0, 0, "processing", now, now)
+	for _, rawBookmark := range bookmarksRaw {
+		bookmark, ok := rawBookmark.(map[string]any)
+		if !ok {
+			continue
+		}
+		rawURL := stringValue(bookmark["url"])
+		if err := safefetch.ValidateURL(rawURL); err != nil {
+			continue
+		}
+		oldID := stringValue(bookmark["id"])
+		newID := fallback(oldID, ids.New())
+		parsed, _ := url.Parse(rawURL)
+		inserted, err := s.insertRestoredBookmark(ctx, userID, newID, rawURL, bookmark, parsed.Hostname(), now)
+		if err != nil {
+			continue
+		}
+		if !inserted {
+			var existing string
+			if err := s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE user_id=? AND url=?`, userID, rawURL).Scan(&existing); err == nil {
+				newID = existing
+			} else if err == sql.ErrNoRows && oldID != "" {
+				newID = ids.New()
+				if retryInserted, retryErr := s.insertRestoredBookmark(ctx, userID, newID, rawURL, bookmark, parsed.Hostname(), now); retryErr != nil || !retryInserted {
+					continue
+				}
+				restored++
+			} else {
+				continue
+			}
+		} else {
+			restored++
+		}
+		if oldID != "" {
+			oldBookmarks[oldID] = newID
+		}
+		s.restoreBookmarkChildren(ctx, userID, newID, bookmark, oldNotes, now)
+	}
+	s.restoreStandaloneNotes(ctx, userID, backup["notes"], oldNotes, now)
+	s.restoreTags(ctx, userID, backup["tags"], now)
+	s.restoreSavedSearches(ctx, userID, backup["saved_searches"], now)
+	s.restoreReviewEvents(ctx, userID, backup["review_events"], oldBookmarks, oldNotes, now)
+	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
+	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
+	return map[string]any{"message": "Backup restored", "count": restored, "import_job_id": jobID, "source_report": s.importSourceReport(ctx, userID, jobID)}, true, nil
+}
+
+func (s *Service) insertRestoredBookmark(ctx context.Context, userID, id, rawURL string, bookmark map[string]any, domainFallback, now string) (bool, error) {
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,description,domain,favicon,thumbnail,sanitized_html,text_content,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, userID, rawURL, stringValue(bookmark["title"]), stringValue(bookmark["description"]), fallback(stringValue(bookmark["domain"]), domainFallback), nullableStringValue(stringValue(bookmark["favicon"])), nullableStringValue(stringValue(bookmark["thumbnail"])), sanitize.HTML(stringValue(bookmark["html_content"])), stringValue(bookmark["text_content"]), intValue(bookmark["reading_time"]), boolValue(bookmark["read_status"]), fallback(stringValue(bookmark["source"]), "restore"), fallback(stringValue(bookmark["created_at"]), now), fallback(stringValue(bookmark["updated_at"]), now), nullableStringValue(stringValue(bookmark["last_accessed"])), intValue(bookmark["view_count"]), intValueDefault(bookmark["version"], 1))
+	if err != nil {
+		return false, err
+	}
+	rows, _ := res.RowsAffected()
+	return rows > 0, nil
+}
+
+func (s *Service) restoreBookmarkChildren(ctx context.Context, userID, bookmarkID string, bookmark map[string]any, oldNotes map[string]string, now string) {
+	if summary, ok := bookmark["ai_summary"].(map[string]any); ok {
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET one_sentence=excluded.one_sentence,bullet_points_json=excluded.bullet_points_json,long_form=excluded.long_form,highlights_json=excluded.highlights_json,suggested_tags_json=excluded.suggested_tags_json,processing_status=excluded.processing_status,updated_at=excluded.updated_at`,
+			ids.New(), bookmarkID, userID, stringValue(summary["one_sentence"]), jsonListString(summary["bullet_points"]), stringValue(summary["long_form"]), jsonListString(summary["highlights"]), jsonListString(summary["suggested_tags"]), fallback(stringValue(summary["processing_status"]), "completed"), now, now)
+	}
+	for _, rawTag := range listValue(bookmark["tags"]) {
+		if tag, ok := rawTag.(map[string]any); ok {
+			_ = s.attachTag(ctx, userID, bookmarkID, stringValue(tag["name"]), fallback(stringValue(tag["source"]), "restore"))
+		}
+	}
+	for _, rawAnnotation := range listValue(bookmark["annotations"]) {
+		if annotation, ok := rawAnnotation.(map[string]any); ok {
+			tags := stringSlice(annotation["tags"])
+			tagJSON, _ := json.Marshal(tags)
+			selector := jsonString(annotation["selector"])
+			if selector == "" {
+				selector = "{}"
+			}
+			annotationID := fallback(stringValue(annotation["id"]), ids.New())
+			inserted := s.insertRestoredAnnotation(ctx, userID, bookmarkID, annotationID, annotation, selector, string(tagJSON), now)
+			if !inserted && stringValue(annotation["id"]) != "" {
+				_ = s.insertRestoredAnnotation(ctx, userID, bookmarkID, ids.New(), annotation, selector, string(tagJSON), now)
+			}
+			for _, tag := range tags {
+				_ = s.attachTag(ctx, userID, bookmarkID, tag, "restore")
+			}
+		}
+	}
+	for _, rawNote := range listValue(bookmark["notes"]) {
+		if note, ok := rawNote.(map[string]any); ok {
+			oldID := stringValue(note["id"])
+			noteID := oldNotes[oldID]
+			if noteID == "" {
+				noteID = s.restoreNote(ctx, userID, note, now)
+			}
+			if noteID != "" {
+				oldNotes[oldID] = noteID
+				_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_notes(bookmark_id,note_id,user_id,created_at) VALUES(?,?,?,?)`, bookmarkID, noteID, userID, now)
+			}
+		}
+	}
+}
+
+func (s *Service) insertRestoredAnnotation(ctx context.Context, userID, bookmarkID, annotationID string, annotation map[string]any, selector, tagJSON, now string) bool {
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, annotationID, userID, bookmarkID, strings.TrimSpace(stringValue(annotation["quote"])), strings.TrimSpace(stringValue(annotation["note"])), selector, tagJSON, fallback(stringValue(annotation["created_at"]), now), fallback(stringValue(annotation["updated_at"]), now))
+	if err != nil {
+		return false
+	}
+	rows, _ := res.RowsAffected()
+	return rows > 0
+}
+
+func (s *Service) restoreStandaloneNotes(ctx context.Context, userID string, raw any, oldNotes map[string]string, now string) {
+	for _, rawNote := range listValue(raw) {
+		if note, ok := rawNote.(map[string]any); ok {
+			oldID := stringValue(note["id"])
+			if oldNotes[oldID] != "" {
+				continue
+			}
+			if noteID := s.restoreNote(ctx, userID, note, now); noteID != "" {
+				oldNotes[oldID] = noteID
+			}
+		}
+	}
+}
+
+func (s *Service) restoreNote(ctx context.Context, userID string, note map[string]any, now string) string {
+	if strings.TrimSpace(stringValue(note["title"])+stringValue(note["body"])) == "" {
+		return ""
+	}
+	id := fallback(stringValue(note["id"]), ids.New())
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notes(id,user_id,title,body,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, userID, strings.TrimSpace(stringValue(note["title"])), strings.TrimSpace(stringValue(note["body"])), fallback(stringValue(note["source"]), "restore"), fallback(stringValue(note["created_at"]), now), fallback(stringValue(note["updated_at"]), now))
+	if err != nil {
+		return ""
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		if stringValue(note["id"]) == "" {
+			return ""
+		}
+		id = ids.New()
+		res, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notes(id,user_id,title,body,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, userID, strings.TrimSpace(stringValue(note["title"])), strings.TrimSpace(stringValue(note["body"])), fallback(stringValue(note["source"]), "restore"), fallback(stringValue(note["created_at"]), now), fallback(stringValue(note["updated_at"]), now))
+		if err != nil {
+			return ""
+		}
+		if rows, _ := res.RowsAffected(); rows == 0 {
+			return ""
+		}
+	}
+	return id
+}
+
+func (s *Service) restoreTags(ctx context.Context, userID string, raw any, now string) {
+	for _, rawTag := range listValue(raw) {
+		tag, ok := rawTag.(map[string]any)
+		if !ok {
+			continue
+		}
+		restored, err := s.upsertTag(ctx, userID, stringValue(tag["name"]), fallback(stringValue(tag["source"]), "restore"))
+		if err != nil {
+			continue
+		}
+		tagID, _ := restored["id"].(string)
+		for _, rawAlias := range listValue(tag["aliases"]) {
+			if alias, ok := rawAlias.(map[string]any); ok {
+				name := strings.TrimSpace(stringValue(alias["alias"]))
+				if name != "" {
+					_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO tag_aliases(id,user_id,tag_id,alias,alias_slug,created_at) VALUES(?,?,?,?,?,?)`, ids.New(), userID, tagID, name, tagSlug(name), fallback(stringValue(alias["created_at"]), now))
+				}
+			}
+		}
+	}
+}
+
+func (s *Service) restoreSavedSearches(ctx context.Context, userID string, raw any, now string) {
+	for _, rawSearch := range listValue(raw) {
+		search, ok := rawSearch.(map[string]any)
+		if !ok || strings.TrimSpace(stringValue(search["name"])) == "" {
+			continue
+		}
+		searchID := fallback(stringValue(search["id"]), ids.New())
+		inserted := s.insertRestoredSavedSearch(ctx, userID, searchID, search, now)
+		if !inserted && stringValue(search["id"]) != "" {
+			_ = s.insertRestoredSavedSearch(ctx, userID, ids.New(), search, now)
+		}
+	}
+}
+
+func (s *Service) insertRestoredSavedSearch(ctx context.Context, userID, searchID string, search map[string]any, now string) bool {
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO saved_searches(id,user_id,name,query,filters_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, searchID, userID, strings.TrimSpace(stringValue(search["name"])), strings.TrimSpace(stringValue(search["query"])), jsonString(search["filters"]), fallback(stringValue(search["created_at"]), now), fallback(stringValue(search["updated_at"]), now))
+	if err != nil {
+		return false
+	}
+	rows, _ := res.RowsAffected()
+	return rows > 0
+}
+
+func (s *Service) restoreReviewEvents(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawEvent := range listValue(raw) {
+		event, ok := rawEvent.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(event["item_type"])
+		itemID := stringValue(event["item_id"])
+		if itemType == "bookmark" {
+			itemID = oldBookmarks[itemID]
+		} else if itemType == "note" {
+			itemID = oldNotes[itemID]
+		}
+		if itemID == "" || (itemType != "bookmark" && itemType != "note") {
+			continue
+		}
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO review_events(id,user_id,item_type,item_id,action,snoozed_until,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), userID, itemType, itemID, fallback(stringValue(event["action"]), "completed"), nullableStringValue(stringValue(event["snoozed_until"])), fallback(stringValue(event["created_at"]), now))
+	}
+}
+
+func (s *Service) restoreImportSources(ctx context.Context, userID, jobID string, raw any, oldBookmarks map[string]string, now string) {
+	for _, rawSource := range listValue(raw) {
+		source, ok := rawSource.(map[string]any)
+		if !ok {
+			continue
+		}
+		metadata := map[string]any{}
+		if meta, ok := source["metadata"].(map[string]any); ok {
+			for key, value := range meta {
+				metadata[key] = value
+			}
+			if old, _ := meta["bookmark_id"].(string); oldBookmarks[old] != "" {
+				metadata["bookmark_id"] = oldBookmarks[old]
+			}
+		}
+		metaJSON, _ := json.Marshal(metadata)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO import_sources(id,user_id,import_job_id,source_type,source_name,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), userID, jobID, fallback(stringValue(source["source"]), "restore"), stringValue(source["title"]), string(metaJSON), fallback(stringValue(source["created_at"]), now))
+	}
 }
 
 func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -520,6 +775,74 @@ func firstString(item map[string]any, keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func intValue(value any) int {
+	switch raw := value.(type) {
+	case int:
+		return raw
+	case int64:
+		return int(raw)
+	case float64:
+		return int(raw)
+	case json.Number:
+		parsed, _ := raw.Int64()
+		return int(parsed)
+	default:
+		return 0
+	}
+}
+
+func intValueDefault(value any, fallback int) int {
+	if value == nil {
+		return fallback
+	}
+	if parsed := intValue(value); parsed != 0 {
+		return parsed
+	}
+	return fallback
+}
+
+func boolValue(value any) bool {
+	raw, _ := value.(bool)
+	return raw
+}
+
+func listValue(value any) []any {
+	raw, _ := value.([]any)
+	return raw
+}
+
+func stringSlice(value any) []string {
+	values := []string{}
+	for _, item := range listValue(value) {
+		if text := strings.TrimSpace(stringValue(item)); text != "" {
+			values = append(values, text)
+		}
+	}
+	return values
+}
+
+func jsonString(value any) string {
+	if value == nil {
+		return "{}"
+	}
+	raw, err := json.Marshal(value)
+	if err != nil || len(raw) > 20000 {
+		return "{}"
+	}
+	return string(raw)
+}
+
+func jsonListString(value any) string {
+	if value == nil {
+		return "[]"
+	}
+	raw, err := json.Marshal(value)
+	if err != nil || len(raw) > 20000 {
+		return "[]"
+	}
+	return string(raw)
 }
 
 func validImportURL(raw string) bool {

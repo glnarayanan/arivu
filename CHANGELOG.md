@@ -48,6 +48,7 @@ All notable changes to this project will be documented in this file.
 - Import jobs now include source reports and bounded item provenance so migration status can show where imported items came from.
 - Imported bookmarks now persist their detected source for source filtering.
 - JSON export now includes second-brain backup data: bookmark details, summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, import jobs, and import provenance.
+- Full JSON backups can now be restored through bookmark import, remapping IDs under the authenticated user while preserving summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, and import provenance.
 
 ### Security
 
@@ -59,5 +60,6 @@ All notable changes to this project will be documented in this file.
 - Derived new encrypted provider-secret keys with HKDF before AES-256-GCM sealing.
 - Made web access and refresh cookie setters explicitly HttpOnly while keeping the CSRF double-submit cookie readable.
 - Validated imported URLs with the same SSRF-aware safe-fetch policy used for normal saves.
+- Full JSON backup restore writes every restored row with the authenticated user ID and remaps cross-references instead of trusting exported ownership.
 - Escaped formula-like CSV export cells to reduce spreadsheet injection risk.
 - Covered new second-brain routes with CSRF, audience isolation, and cross-user isolation tests.

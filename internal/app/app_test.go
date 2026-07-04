@@ -191,7 +191,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	userID := userIDForEmail(t, a, "second-brain@example.com")
 	now := time.Now().UTC()
 	insertBookmarkForTest(t, a, userID, "capture", "Capture Loop", now.AddDate(0, 0, -21), now.AddDate(0, 0, -14), 0, 5)
-	_, _ = a.db.ExecContext(context.Background(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,bullet_summary_json,highlight_quotes_json,suggested_tags_json,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, "summary-capture", "capture", userID, "The capture loop needs review.", `["Save with context","Recall with evidence"]`, `["Recall with evidence"]`, `["Second Brain"]`, "completed", now.Format(time.RFC3339), now.Format(time.RFC3339))
+	if _, err := a.db.ExecContext(context.Background(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,bullet_points_json,highlights_json,suggested_tags_json,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, "summary-capture", "capture", userID, "The capture loop needs review.", `["Save with context","Recall with evidence"]`, `["Recall with evidence"]`, `["Second Brain"]`, "completed", now.Format(time.RFC3339), now.Format(time.RFC3339)); err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
 
 	missingCSRF := httptest.NewRequest(http.MethodPost, "/api/notes", strings.NewReader(`{"title":"No CSRF"}`))
 	missingCSRF.Header.Set("Content-Type", "application/json")
@@ -496,6 +498,10 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if exportResp.StatusCode != http.StatusOK {
 		t.Fatalf("export status = %d body=%s", exportResp.StatusCode, readBody(exportResp))
 	}
+	exportRaw, err := io.ReadAll(exportResp.Body)
+	if err != nil {
+		t.Fatalf("read export: %v", err)
+	}
 	var exportBody struct {
 		Bookmarks     []map[string]any `json:"bookmarks"`
 		Notes         []map[string]any `json:"notes"`
@@ -503,7 +509,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		SavedSearches []map[string]any `json:"saved_searches"`
 		ReviewEvents  []map[string]any `json:"review_events"`
 	}
-	_ = json.NewDecoder(exportResp.Body).Decode(&exportBody)
+	_ = json.Unmarshal(exportRaw, &exportBody)
 	exportResp.Body.Close()
 	if len(exportBody.Bookmarks) != 1 || len(exportBody.Notes) == 0 || len(exportBody.ReviewEvents) == 0 {
 		t.Fatalf("export missing second-brain sections: %#v", exportBody)
@@ -537,6 +543,64 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if !sawAlias {
 		t.Fatalf("export missing tag alias: %#v", exportBody.Tags)
+	}
+
+	restoreAccess, restoreCSRF := signupForCookies(t, handler, "restore@example.com")
+	restoreResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(exportRaw), restoreAccess, restoreCSRF)
+	if restoreResp.StatusCode != http.StatusOK {
+		t.Fatalf("restore import status = %d body=%s", restoreResp.StatusCode, readBody(restoreResp))
+	}
+	var restoreBody struct {
+		Message     string `json:"message"`
+		Count       int    `json:"count"`
+		ImportJobID string `json:"import_job_id"`
+	}
+	_ = json.NewDecoder(restoreResp.Body).Decode(&restoreBody)
+	restoreResp.Body.Close()
+	if restoreBody.Message != "Backup restored" || restoreBody.Count != 1 || restoreBody.ImportJobID == "" {
+		t.Fatalf("unexpected restore body: %#v", restoreBody)
+	}
+	restoreExportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", restoreAccess, restoreCSRF)
+	if restoreExportResp.StatusCode != http.StatusOK {
+		t.Fatalf("restored export status = %d body=%s", restoreExportResp.StatusCode, readBody(restoreExportResp))
+	}
+	var restoredExport struct {
+		Bookmarks     []map[string]any `json:"bookmarks"`
+		Notes         []map[string]any `json:"notes"`
+		Tags          []map[string]any `json:"tags"`
+		SavedSearches []map[string]any `json:"saved_searches"`
+		ReviewEvents  []map[string]any `json:"review_events"`
+	}
+	_ = json.NewDecoder(restoreExportResp.Body).Decode(&restoredExport)
+	restoreExportResp.Body.Close()
+	if len(restoredExport.Bookmarks) != 1 || len(restoredExport.Notes) == 0 || len(restoredExport.SavedSearches) == 0 || len(restoredExport.ReviewEvents) == 0 {
+		t.Fatalf("restored export missing backup sections: %#v", restoredExport)
+	}
+	restoredBookmark := restoredExport.Bookmarks[0]
+	if restoredBookmark["id"] == "capture" || len(restoredBookmark["annotations"].([]any)) == 0 || len(restoredBookmark["notes"].([]any)) == 0 || len(restoredBookmark["tags"].([]any)) == 0 {
+		t.Fatalf("restored bookmark missing remapped linked data: %#v", restoredBookmark)
+	}
+	if summary, _ := restoredBookmark["ai_summary"].(map[string]any); summary["one_sentence"] != "The capture loop needs review." {
+		t.Fatalf("restored bookmark missing summary: %#v", restoredBookmark)
+	}
+	var restoredStandalone, restoredAlias bool
+	for _, note := range restoredExport.Notes {
+		if note["id"] == searchNoteID || note["id"] == otherNoteID {
+			t.Fatalf("restore reused or leaked original note ids: %#v", restoredExport.Notes)
+		}
+		if note["title"] == "Recall field note" {
+			restoredStandalone = true
+		}
+	}
+	for _, tag := range restoredExport.Tags {
+		for _, alias := range tag["aliases"].([]any) {
+			if alias.(map[string]any)["alias"] == "PKM" {
+				restoredAlias = true
+			}
+		}
+	}
+	if !restoredStandalone || !restoredAlias {
+		t.Fatalf("restore missing standalone note or alias: %#v", restoredExport)
 	}
 
 	for _, tc := range []struct {
