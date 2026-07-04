@@ -17,7 +17,7 @@
 - Second-brain APIs for notes, bookmark annotations, normalized tags, tag aliases, saved searches, review queue actions, and per-user job status.
 - New bookmark saves accept quick notes, selected quotes, and manual tags, return the processing job ID, and populate deterministic enrichment fields even without provider keys.
 - Extension selected-text saves create quote annotations through the extension audience route.
-- The embedded UI now exposes graph, duplicates, daily memory, review queue actions, summaries, related items, tags, annotations, linked notes, saved searches, cited answer mode, read state, review completion, analytics signals, and visible processing status.
+- The embedded UI now exposes graph, duplicates, daily memory, review queue actions, summaries, related items, tags, tag alias management, annotations, linked notes, saved searches, cited answer mode, read state, review completion, analytics signals, and visible processing status.
 - The embedded frontend includes a PWA manifest with a GET share target that pre-fills dashboard capture from shared title, text, and URL parameters.
 - Legacy JSON export migration validation and SQLite import executor with secret re-encryption, relationship checks, archived HTML sanitization, embedding validation, and intentional legacy session invalidation.
 - Production packaging with Dockerfile, Compose sample, hardened systemd unit, and environment template.

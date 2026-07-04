@@ -19,6 +19,7 @@ All notable changes to this project will be documented in this file.
 - Added web APIs for notes, bookmark annotations, tags, tag aliases, saved searches, review completion/snoozing, and per-user background job status.
 - Added cited local answer mode for saved-item search, with citations back to matching bookmarks.
 - Added Markdown/Obsidian-style bookmark export and a real Settings import/export panel.
+- Added Settings tag management for canonical tags and aliases.
 - Added deterministic bookmark enrichment for summaries, bullets, highlight quotes, suggested tags, graph entities, and graph concepts when provider AI is not configured.
 - Added real embedded UI routes for review, daily memory, duplicate detection/merge, knowledge graph exploration, bookmark annotations, linked notes, read state, related items, and processing status.
 - Added an installable PWA manifest with a mobile/browser share target that pre-fills dashboard capture.

@@ -887,6 +887,7 @@ async function settingsPage() {
   const tabs = [
     ["profile", "Profile", "Manage your profile and account access."],
     ["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."],
+    ["tags", "Tags", "Normalize your vocabulary and map aliases to canonical tags."],
     ["connections", "Connections", "Connect provider accounts and sync saved items."],
     ["api-keys", "API Keys", "Configure provider keys for enrichment and delivery."],
   ];
@@ -895,10 +896,92 @@ async function settingsPage() {
     <div class="tab-list" role="tablist" aria-label="Settings sections">
       ${tabs.map(([id, label]) => `<button type="button" role="tab" id="tab-${id}" aria-controls="panel-${id}" aria-selected="${id === active}">${label}</button>`).join("")}
     </div>
-    ${tabs.map(([id, label, copy]) => `<div role="tabpanel" id="panel-${id}" aria-labelledby="tab-${id}"><h2>${label}</h2><p>${copy}</p>${id === "import" ? importPanel() : ""}</div>`).join("")}
+    ${tabs.map(([id, label, copy]) => `<div role="tabpanel" id="panel-${id}" aria-labelledby="tab-${id}"><h2>${label}</h2><p>${copy}</p>${id === "import" ? importPanel() : ""}${id === "tags" ? tagSettingsPanel() : ""}</div>`).join("")}
   </section>`));
   ui.tabs(document.querySelector("#settings-tabs"));
   bindImportPanel();
+  bindTagSettingsPanel();
+}
+
+function tagSettingsPanel() {
+  return `<section class="split">
+    <form class="panel form" id="tag-form">
+      <h3>Canonical tag</h3>
+      <div class="field"><label for="tag-name">Name</label><input id="tag-name" type="text" placeholder="Research"></div>
+      <p class="form-message" id="tag-message" data-form-message hidden></p>
+      <button type="submit">Create tag</button>
+    </form>
+    <form class="panel form" id="tag-alias-form">
+      <h3>Alias</h3>
+      <div class="field"><label for="alias-tag">Canonical tag</label><select id="alias-tag"></select></div>
+      <div class="field"><label for="alias-name">Alias</label><input id="alias-name" type="text" placeholder="PKM"></div>
+      <p class="form-message" id="tag-alias-message" data-form-message hidden></p>
+      <button type="submit">Add alias</button>
+    </form>
+    <section class="panel">
+      <h3>Current tags</h3>
+      <div id="tag-list" class="stack"></div>
+    </section>
+  </section>`;
+}
+
+async function bindTagSettingsPanel() {
+  const tagForm = document.querySelector("#tag-form");
+  const aliasForm = document.querySelector("#tag-alias-form");
+  if (!tagForm || !aliasForm) return;
+  await refreshTagSettings();
+  tagForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Creating");
+    setFormMessage(tagForm);
+    try {
+      await api("/tags", { method: "POST", body: JSON.stringify({ name: document.querySelector("#tag-name").value }) });
+      document.querySelector("#tag-name").value = "";
+      await refreshTagSettings();
+      ui.toast("Tag saved", "success");
+    } catch (err) {
+      setFormMessage(tagForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  aliasForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Adding alias");
+    setFormMessage(aliasForm);
+    try {
+      await api("/tags/aliases", {
+        method: "POST",
+        body: JSON.stringify({
+          tag_id: document.querySelector("#alias-tag").value,
+          alias: document.querySelector("#alias-name").value,
+        }),
+      });
+      document.querySelector("#alias-name").value = "";
+      ui.toast("Alias saved", "success");
+    } catch (err) {
+      setFormMessage(aliasForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+async function refreshTagSettings() {
+  const result = await api("/tags").catch(() => ({ tags: [] }));
+  const tags = result.tags || [];
+  const list = document.querySelector("#tag-list");
+  const select = document.querySelector("#alias-tag");
+  if (list) {
+    list.innerHTML = tags.map((tag) => `<article class="annotation">
+      <p><strong>${escapeHTML(tag.name)}</strong> <span class="meta">${escapeHTML(tag.slug)} · ${Number(tag.bookmark_count || 0)} saves</span></p>
+    </article>`).join("") || `<p class="meta">No tags yet.</p>`;
+  }
+  if (select) {
+    select.innerHTML = tags.map((tag) => `<option value="${escapeHTML(tag.id)}">${escapeHTML(tag.name)}</option>`).join("");
+  }
 }
 
 function importPanel() {
