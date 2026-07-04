@@ -22,7 +22,7 @@
 - The embedded frontend includes a PWA manifest with a GET share target that pre-fills dashboard capture from shared title, text, and URL parameters.
 - Legacy JSON export migration validation and SQLite import executor with secret re-encryption, relationship checks, archived HTML sanitization, embedding validation, and intentional legacy session invalidation.
 - Production packaging with Dockerfile, Compose sample, hardened systemd unit, and environment template.
-- CI verifies Go module checksums, runs pinned `govulncheck`, and Dependabot monitors Go modules and GitHub Actions.
+- CI verifies Go module checksums, runs pinned `govulncheck`, uploads release build evidence with module inventory and SHA-256 checksums, and Dependabot monitors Go modules and GitHub Actions.
 
 ## Verification
 

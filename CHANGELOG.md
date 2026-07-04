@@ -61,6 +61,7 @@ All notable changes to this project will be documented in this file.
 - Login, forgot-password, and reset-password endpoints now use the existing SQLite `rate_limits` table to throttle repeated auth attempts.
 - Sensitive admin/account mutations now write `audit_events` rows, and provider setting updates are restricted to known keys.
 - CI now verifies module checksums, runs pinned `govulncheck`, and enables Dependabot for Go modules and GitHub Actions.
+- CI now uploads a short-lived release evidence bundle with the Linux build, Go build info, module inventory, and SHA-256 checksums.
 - Updated the Go baseline to 1.25 and upgraded `golang.org/x/net` to a release that fixes reachable HTML parser vulnerabilities in the sanitizer path.
 - Server-side URL fetching pins connections to vetted IPs and blocks private/reserved targets.
 - Archived HTML is sanitized by the backend before storage/display.

@@ -20,6 +20,10 @@ called through narrow direct HTTP clients.
 - CI runs `go mod verify` before tests to check downloaded module checksums.
 - CI runs `go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...` with a pinned
   scanner version.
+- CI uploads a short-lived release evidence bundle containing the Linux build,
+  `go version -m` build info, `go list -m -json all` module inventory, and
+  SHA-256 checksums. This keeps artifact provenance inspectable without adding
+  a production dependency or a separate SBOM generator.
 - Dependabot monitors Go modules and GitHub Actions weekly.
 
 ## Frontend Dependencies

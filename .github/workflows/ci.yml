@@ -20,4 +20,19 @@ jobs:
       - run: go mod verify
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
       - run: go test ./...
-      - run: go build -trimpath -ldflags="-s -w" -o /tmp/arivu ./cmd/arivu
+      - name: Build release artifact
+        run: |
+          mkdir -p /tmp/arivu-artifacts
+          go build -trimpath -ldflags="-s -w" -o /tmp/arivu-artifacts/arivu ./cmd/arivu
+          go version -m /tmp/arivu-artifacts/arivu > /tmp/arivu-artifacts/buildinfo.txt
+          go list -m -json all > /tmp/arivu-artifacts/go-modules.inventory.jsonl
+          (cd /tmp/arivu-artifacts && sha256sum arivu buildinfo.txt go-modules.inventory.jsonl > SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arivu-linux-amd64-supply-chain
+          path: |
+            /tmp/arivu-artifacts/arivu
+            /tmp/arivu-artifacts/buildinfo.txt
+            /tmp/arivu-artifacts/go-modules.inventory.jsonl
+            /tmp/arivu-artifacts/SHA256SUMS
+          retention-days: 14
