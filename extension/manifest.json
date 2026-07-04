@@ -5,6 +5,7 @@
   "description": "Save and organize web pages with AI-powered summaries",
   "permissions": [
     "activeTab",
+    "contextMenus",
     "storage"
   ],
   "host_permissions": [
