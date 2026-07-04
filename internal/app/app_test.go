@@ -370,16 +370,30 @@ func TestExtensionPopupCapturesNoteAndTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read popup js: %v", err)
 	}
-	for _, expected := range []string{`id="note"`, `id="tags"`} {
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "extension", "manifest.json"))
+	if err != nil {
+		t.Fatalf("read extension manifest: %v", err)
+	}
+	background, err := os.ReadFile(filepath.Join("..", "..", "extension", "background.js"))
+	if err != nil {
+		t.Fatalf("read extension background: %v", err)
+	}
+	for _, expected := range []string{`id="note"`, `id="tags"`, `id="settingsStatus"`, `src="url-utils.js"`} {
 		if !strings.Contains(string(html), expected) {
 			t.Fatalf("extension popup missing %s", expected)
 		}
 	}
 	source := string(script)
-	for _, expected := range []string{"function splitTags", "payload.note = note", "payload.tags = tags"} {
+	for _, expected := range []string{"function splitTags", "payload.note = note", "payload.tags = tags", "ensureApiPermission", "configureApiOrigin", "ArivuExtensionURL.normalizeApiUrl"} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("extension popup script missing %s", expected)
 		}
+	}
+	if !strings.Contains(string(manifest), `"optional_host_permissions"`) || !strings.Contains(string(manifest), `"scripting"`) {
+		t.Fatal("extension manifest missing self-hosted permission support")
+	}
+	if !strings.Contains(string(background), "registerCustomApiContentScript") || !strings.Contains(string(background), "ArivuExtensionURL.senderOriginAllowed") {
+		t.Fatal("extension background missing dynamic content script registration")
 	}
 }
 

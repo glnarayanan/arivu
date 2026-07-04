@@ -27,39 +27,23 @@ Save bookmarks directly into Arivu from Chrome or Firefox.
 ## Default Endpoints
 
 - Default API URL in popup: `https://arivu.app/api`
-- Local host permission included: `http://localhost:8001/*`
+- Built-in host permissions: `https://arivu.app/*` and `http://localhost/*`
+- Self-hosted origins are requested from the browser when the API URL is saved
 
 ## Self-Hosted Setup
 
-### 1. Update Host Permissions
-
-Edit `extension/manifest.json` and add your domain:
-
-```json
-"host_permissions": [
-  "https://your-domain.example/*",
-  "http://localhost:8001/*"
-],
-"content_scripts": [
-  {
-    "matches": ["https://your-domain.example/*", "http://localhost/*"],
-    "js": ["content.js"],
-    "run_at": "document_idle"
-  }
-]
-```
-
-Reload the extension after saving.
-
-### 2. Set API URL in Popup
+### 1. Set API URL in Popup
 
 1. Open the extension popup
 2. Click `Settings`
 3. Set API URL to `https://your-domain.example/api`
+4. Approve the browser permission prompt for that Arivu origin
 
-This value is stored in `chrome.storage.local` as `apiUrl`.
+This value is stored in `chrome.storage.local` as `apiUrl`. The extension then
+registers the token content script for that origin without requiring a manifest
+edit.
 
-### 3. Authenticate
+### 2. Authenticate
 
 1. Log into your self-hosted Arivu web app
 2. Visit the app in the same browser
@@ -81,9 +65,9 @@ This value is stored in `chrome.storage.local` as `apiUrl`.
 
 ### Save fails on self-hosted domain
 
-- Confirm domain is listed in `host_permissions`
+- Reopen popup settings and confirm the API URL is saved
+- Confirm the browser permission prompt was approved for your Arivu origin
 - Confirm API URL ends with `/api`
-- Reload the extension after `manifest.json` updates
 
 ### Context menu save fails
 

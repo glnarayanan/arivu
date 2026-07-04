@@ -10,6 +10,29 @@ async function getApiUrl() {
   return result.apiUrl || DEFAULT_API_URL;
 }
 
+async function ensureApiPermission(value) {
+  const pattern = ArivuExtensionURL.apiOriginPattern(value);
+  if (ArivuExtensionURL.builtInApiOrigin(pattern) || !chrome.permissions?.request) return;
+
+  const allowed = await chrome.permissions.contains({ origins: [pattern] });
+  if (allowed) return;
+
+  const granted = await chrome.permissions.request({ origins: [pattern] });
+  if (!granted) throw new Error('Permission denied for that Arivu origin');
+}
+
+async function configureApiOrigin(value) {
+  await chrome.runtime.sendMessage({ action: 'configureApiOrigin', apiUrl: value }).catch(() => {});
+}
+
+function showSettingsStatus(message, kind) {
+  const target = document.getElementById('settingsStatus');
+  if (!target) return;
+  target.className = `status ${kind}`;
+  target.textContent = message;
+  target.style.display = 'block';
+}
+
 async function init() {
   apiUrl = await getApiUrl();
 
@@ -140,20 +163,24 @@ apiUrlInput.addEventListener('change', async () => {
   const value = apiUrlInput.value.trim();
   if (value) {
     try {
-      const parsed = new URL(value);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
-        const normalized = parsed.toString();
-        await chrome.storage.local.set({ apiUrl: normalized });
-        apiUrl = normalized;
-        return;
-      }
-    } catch {
-      // Invalid URL; fall through to reset to default.
+      const normalized = ArivuExtensionURL.normalizeApiUrl(value);
+      await ensureApiPermission(normalized);
+      await chrome.storage.local.set({ apiUrl: normalized });
+      await configureApiOrigin(normalized);
+      apiUrl = normalized;
+      apiUrlInput.value = normalized;
+      showSettingsStatus('API URL saved', 'success');
+      return;
+    } catch (error) {
+      showSettingsStatus(error.message || 'Could not use that API URL', 'error');
+      return;
     }
   }
 
   await chrome.storage.local.remove(['apiUrl']);
   apiUrl = DEFAULT_API_URL;
+  await configureApiOrigin(DEFAULT_API_URL);
+  showSettingsStatus('Using default Arivu API', 'success');
 });
 
 init();

@@ -1,3 +1,5 @@
+importScripts('url-utils.js');
+
 const DEFAULT_API_URL = 'https://arivu.app/api';
 const MENU_IDS = {
   page: 'arivu-save-page',
@@ -10,24 +12,35 @@ async function getApiUrl() {
   return result.apiUrl || DEFAULT_API_URL;
 }
 
+async function registerCustomApiContentScript(apiUrl) {
+  if (!chrome.scripting?.registerContentScripts) return;
+
+  await chrome.scripting.unregisterContentScripts({ ids: ['arivu-custom-api'] }).catch(() => {});
+
+  let pattern;
+  try {
+    pattern = ArivuExtensionURL.apiOriginPattern(apiUrl);
+  } catch {
+    return;
+  }
+
+  if (pattern === 'https://arivu.app/*' || pattern === 'http://localhost/*') return;
+
+  const allowed = await chrome.permissions.contains({ origins: [pattern] });
+  if (!allowed) return;
+
+  await chrome.scripting.registerContentScripts([{
+    id: 'arivu-custom-api',
+    matches: [pattern],
+    js: ['content.js'],
+    runAt: 'document_idle',
+  }]).catch(() => {});
+}
+
 async function tokenSenderAllowed(sender) {
   if (!sender.url) return false;
 
-  const allowedOrigins = new Set(['https://arivu.app', 'http://localhost']);
-
-  try {
-    const apiUrl = new URL(await getApiUrl());
-    allowedOrigins.add(apiUrl.origin);
-  } catch {
-    // Invalid custom URL should not block the built-in origins.
-  }
-
-  try {
-    const senderUrl = new URL(sender.url);
-    return senderUrl.hostname === 'localhost' || allowedOrigins.has(senderUrl.origin);
-  } catch {
-    return false;
-  }
+  return ArivuExtensionURL.senderOriginAllowed(sender.url, await getApiUrl());
 }
 
 function installContextMenus() {
@@ -119,7 +132,11 @@ async function saveFromTab(tab, selectionText) {
 }
 
 chrome.runtime.onInstalled.addListener(installContextMenus);
-chrome.runtime.onStartup.addListener(installContextMenus);
+chrome.runtime.onInstalled.addListener(() => getApiUrl().then(registerCustomApiContentScript));
+chrome.runtime.onStartup.addListener(() => {
+  installContextMenus();
+  getApiUrl().then(registerCustomApiContentScript);
+});
 
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   const url = info.linkUrl || info.pageUrl || tab?.url;
@@ -148,6 +165,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         refreshToken: request.refreshToken,
       });
       sendResponse({ success: true });
+    });
+  } else if (request.action === 'configureApiOrigin') {
+    registerCustomApiContentScript(request.apiUrl).then(() => {
+      sendResponse({ success: true });
+    }).catch(() => {
+      sendResponse({ success: false });
     });
   }
   return true;

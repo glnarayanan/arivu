@@ -19,6 +19,12 @@ jobs:
           go-version-file: go.mod
       - run: go mod verify
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
+      - run: node --check internal/app/web/app.js
+      - run: node --check extension/popup.js
+      - run: node --check extension/background.js
+      - run: node --check extension/content.js
+      - run: node --check extension/url-utils.js
+      - run: node extension/url-utils.test.mjs
       - run: go test ./...
       - name: Build release artifact
         run: |
