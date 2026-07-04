@@ -622,10 +622,6 @@ func (s *Service) Counts(ctx context.Context) CountsResult {
 	return CountsResult{Users: count(ctx, s.db, "users", ""), Bookmarks: count(ctx, s.db, "bookmarks", ""), Collections: count(ctx, s.db, "collections", ""), Summaries: count(ctx, s.db, "ai_summaries", "")}
 }
 
-func (s *Service) userCounts(ctx context.Context, userID string) CountsResult {
-	return CountsResult{Bookmarks: count(ctx, s.db, "bookmarks", userID), Collections: count(ctx, s.db, "collections", userID), Summaries: count(ctx, s.db, "bookmarks", userID)}
-}
-
 func (s *Service) getBookmark(ctx context.Context, userID, id string) (map[string]any, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content FROM bookmarks WHERE id=? AND user_id=?`, id, userID)
 	bm := scanBookmark(row)
@@ -1654,19 +1650,4 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{"detail": message})
-}
-
-func sortByScore(items []map[string]any) {
-	sort.Slice(items, func(i, j int) bool {
-		return items[i]["created_at"].(string) > items[j]["created_at"].(string)
-	})
-}
-
-func mapKeys(m map[string][]string) []string {
-	result := make([]string, 0, len(m))
-	for key := range m {
-		result = append(result, key)
-	}
-	sort.Strings(result)
-	return result
 }

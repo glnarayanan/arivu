@@ -261,14 +261,6 @@ func (s *Service) UpdateProfile(w http.ResponseWriter, r *http.Request, user Use
 	writeJSON(w, http.StatusOK, user)
 }
 
-func (s *Service) Authenticate(r *http.Request) (User, error) {
-	session, err := s.AuthenticateSession(r)
-	if err != nil {
-		return User{}, err
-	}
-	return session.User, nil
-}
-
 func (s *Service) AuthenticateSession(r *http.Request) (Session, error) {
 	token := bearerToken(r)
 	if token == "" {
