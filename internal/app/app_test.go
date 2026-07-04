@@ -859,6 +859,11 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
+	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `"source", "date_from"`} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("dashboard filters missing %s", expected)
+		}
+	}
 }
 
 func TestFrontendAssetsUseCacheValidation(t *testing.T) {

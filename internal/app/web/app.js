@@ -522,6 +522,8 @@ async function dashboardPage() {
       <input id="search" type="search" placeholder="Search bookmarks" value="${escapeHTML(params.get("search") || "")}">
       <input id="filter-tag" type="text" placeholder="Tag" value="${escapeHTML(params.get("tag") || "")}">
       <input id="filter-domain" type="text" placeholder="Domain" value="${escapeHTML(params.get("domain") || "")}">
+      <input id="filter-source" type="text" placeholder="Source" value="${escapeHTML(params.get("source") || "")}">
+      <input id="filter-date-from" type="date" aria-label="Saved after" value="${escapeHTML(params.get("date_from") || "")}">
       <select id="filter-read">
         <option value="">Any status</option>
         <option value="unread" ${params.get("read_status") === "unread" ? "selected" : ""}>Unread</option>
@@ -624,6 +626,8 @@ function dashboardFilters() {
   return {
     tag: document.querySelector("#filter-tag")?.value.trim() || "",
     domain: document.querySelector("#filter-domain")?.value.trim() || "",
+    source: document.querySelector("#filter-source")?.value.trim() || "",
+    date_from: document.querySelector("#filter-date-from")?.value || "",
     read_status: document.querySelector("#filter-read")?.value || "",
   };
 }
@@ -646,7 +650,7 @@ function savedSearchList(items) {
     const filters = item.filters || {};
     const params = new URLSearchParams();
     if (item.query) params.set("search", item.query);
-    for (const key of ["tag", "domain", "read_status"]) {
+    for (const key of ["tag", "domain", "source", "date_from", "read_status"]) {
       if (filters[key]) params.set(key, filters[key]);
     }
     return `<a class="text-link" href="/dashboard?${params.toString()}">${escapeHTML(item.name)}</a>`;
