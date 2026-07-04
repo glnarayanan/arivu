@@ -10,10 +10,11 @@ const routes = [
   { prefix: "/accept-invite", page: acceptInvitePage, access: "public" },
   { prefix: "/dashboard", page: dashboardPage, access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
-  { prefix: "/duplicates", page: simplePage("Duplicates", "Find repeated saves and merge them without losing notes, summaries, or reading history."), access: "protected" },
+  { prefix: "/review", page: reviewPage, access: "protected" },
+  { prefix: "/duplicates", page: duplicatesPage, access: "protected" },
   { prefix: "/settings", page: settingsPage, access: "protected" },
   { prefix: "/imports", page: () => navigate("/settings?section=import", true), access: "protected" },
-  { prefix: "/knowledge-graph", page: simplePage("Knowledge Graph", "Explore the ideas, sources, and connections that recur across your saved pages."), access: "protected" },
+  { prefix: "/knowledge-graph", page: graphPage, access: "protected" },
   { prefix: "/analytics", page: analyticsPage, access: "protected" },
   { prefix: "/admin", page: adminPage, access: "protected" },
 ];
@@ -311,6 +312,7 @@ function navigate(path, replace = false) {
 function shell(title, content) {
   const nav = [
     ["/dashboard", "Bookmarks"],
+    ["/review", "Review"],
     ["/knowledge-graph", "Graph"],
     ["/analytics", "Analytics"],
     ["/duplicates", "Duplicates"],
@@ -499,10 +501,14 @@ async function acceptInvitePage() {
 async function dashboardPage() {
   await requireUser();
   const bookmarks = await api(`/bookmarks${location.search}`) || [];
+  const shared = sharedCaptureParams();
   setRoot(shell("Saved knowledge", `
     <form class="panel form" id="save-form">
-      <div class="field"><label for="url">Save URL</label><input id="url" type="url" placeholder="https://example.com/article" required></div>
+      <div class="field"><label for="url">Save URL</label><input id="url" type="url" placeholder="https://example.com/article" value="${escapeHTML(shared.url)}" required></div>
+      <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea></div>
+      <div class="field"><label for="save-tags">Tags</label><input id="save-tags" type="text" placeholder="research, idea, later"></div>
       <button type="submit">Save bookmark</button>
+      <p class="meta" id="job-status" hidden></p>
     </form>
     <form class="toolbar" role="search" id="search-form">
       <label class="sr-only" for="search">Search bookmarks</label>
@@ -520,9 +526,17 @@ async function dashboardPage() {
     const done = setButtonBusy(event.submitter, "Saving bookmark");
     setFormMessage(saveForm);
     try {
-      await api("/bookmarks", { method: "POST", body: JSON.stringify({ url: document.querySelector("#url").value }) });
+      const result = await api("/bookmarks", {
+        method: "POST",
+        body: JSON.stringify({
+          url: document.querySelector("#url").value,
+          note: document.querySelector("#save-note").value,
+          tags: splitTags(document.querySelector("#save-tags").value),
+        }),
+      });
       ui.toast("Bookmark saved", "success");
-      render();
+      await showJobStatus(result.job_id);
+      navigate(`/bookmark/${result.bookmark.id}`, true);
     } catch (err) {
       setFormMessage(saveForm, err.message);
       ui.toast(err.message, "error");
@@ -537,6 +551,17 @@ async function dashboardPage() {
   });
 }
 
+function sharedCaptureParams() {
+  const params = new URLSearchParams(location.search);
+  const text = params.get("text") || "";
+  const title = params.get("title") || "";
+  const directURL = params.get("url") || "";
+  const match = text.match(/https?:\/\/\S+/i);
+  const url = directURL || (match ? match[0].replace(/[),.;]+$/, "") : "");
+  const note = [title, text.replace(url, "").trim()].filter(Boolean).join("\n\n");
+  return { url, note };
+}
+
 function bookmarkCard(b) {
   return html`<a class="panel bookmark" href="/bookmark/${b.id}">
     <span class="meta">${b.domain || "web"} · ${b.reading_time || 0} min</span>
@@ -545,17 +570,193 @@ function bookmarkCard(b) {
   </a>`;
 }
 
+function splitTags(value) {
+  return String(value || "").split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 20);
+}
+
+async function showJobStatus(jobID) {
+  const status = document.querySelector("#job-status");
+  if (!jobID || !status) return;
+  status.hidden = false;
+  status.textContent = "Processing saved page";
+  for (let i = 0; i < 4; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 650));
+    const job = await api(`/jobs/${jobID}`).catch(() => null);
+    if (!job) return;
+    status.textContent = `Processing status: ${job.status}`;
+    if (job.status === "completed" || job.status === "failed") return;
+  }
+}
+
+function tagList(tags) {
+  if (!tags.length) return "";
+  return `<div class="chips">${tags.map((tag) => `<span>${escapeHTML(tag.name || tag)}</span>`).join("")}</div>`;
+}
+
+function summaryPanel(summary) {
+  const bullets = Array.isArray(summary.bullet_points) ? summary.bullet_points : [];
+  const highlights = Array.isArray(summary.highlights) ? summary.highlights : [];
+  const tags = Array.isArray(summary.suggested_tags) ? summary.suggested_tags : [];
+  if (!summary.one_sentence && !bullets.length && !highlights.length && !tags.length) {
+    return `<section class="insight-strip"><span class="meta">Enrichment</span><p>${escapeHTML(summary.processing_status || "Queued")}</p></section>`;
+  }
+  return `<section class="insight-strip">
+    <span class="meta">Summary</span>
+    ${summary.one_sentence ? `<p>${escapeHTML(summary.one_sentence)}</p>` : ""}
+    ${bullets.length ? `<ul>${bullets.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
+    ${highlights.length ? `<p class="meta">Highlights</p><ul>${highlights.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
+    ${tags.length ? `<div class="chips">${tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}</div>` : ""}
+  </section>`;
+}
+
+function annotationList(items) {
+  if (!items.length) return `<p class="meta">No annotations yet.</p>`;
+  return `<div class="stack">${items.map((item) => `<article class="annotation">
+    ${item.quote ? `<blockquote>${escapeHTML(item.quote)}</blockquote>` : ""}
+    ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
+    ${tagList((item.tags || []).map((name) => ({ name })))}
+  </article>`).join("")}</div>`;
+}
+
+function noteList(items) {
+  if (!items.length) return `<p class="meta">No linked notes yet.</p>`;
+  return `<div class="stack">${items.map((item) => `<article class="annotation">
+    <h3>${escapeHTML(item.title || "Untitled note")}</h3>
+    <p>${escapeHTML(item.body || "")}</p>
+  </article>`).join("")}</div>`;
+}
+
+function relatedList(items) {
+  if (!items.length) return `<p class="meta">Related items appear after enrichment has enough semantic data.</p>`;
+  return `<div class="grid compact-grid">${items.map((item) => `<a class="panel bookmark" href="/bookmark/${escapeHTML(item.id)}">
+    <span class="meta">${escapeHTML(item.domain || "web")} · ${Number(item.similarity_score || 0).toFixed(2)}</span>
+    <h3>${escapeHTML(item.title || item.url)}</h3>
+    <p>${escapeHTML(item.description || "")}</p>
+  </a>`).join("")}</div>`;
+}
+
 async function bookmarkPage() {
   await requireUser();
   const id = location.pathname.split("/").pop();
   const bookmark = await api(`/bookmarks/${id}`);
+  const related = await api(`/bookmarks/${id}/related?limit=4`).catch(() => ({ related: [] }));
+  const summary = bookmark.ai_summary || {};
   setRoot(shell(bookmark.title || "Bookmark", `
     <article class="panel reader">
       <p class="meta">${bookmark.domain || ""} · ${bookmark.reading_time || 0} min</p>
-      <p class="button-row"><a class="button" href="${escapeHTML(bookmark.url)}" target="_blank" rel="noreferrer noopener">Open original</a><button type="button" class="danger" id="delete-bookmark">Delete</button></p>
+      <p class="button-row">
+        <a class="button" href="${escapeHTML(bookmark.url)}" target="_blank" rel="noreferrer noopener">Open original</a>
+        <button type="button" class="secondary" id="toggle-read">${bookmark.read_status ? "Mark unread" : "Mark read"}</button>
+        <button type="button" class="secondary" id="review-complete">Review done</button>
+        <button type="button" class="danger" id="delete-bookmark">Delete</button>
+      </p>
+      ${tagList(bookmark.tags || [])}
+      ${summaryPanel(summary)}
       <div class="reader-content">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
     </article>
+    <section class="split">
+      <form class="panel form" id="annotation-form">
+        <h2>Capture a note</h2>
+        <div class="field"><label for="annotation-quote">Quote</label><textarea id="annotation-quote" rows="3" placeholder="Paste the passage worth keeping"></textarea></div>
+        <div class="field"><label for="annotation-note">Note</label><textarea id="annotation-note" rows="4" placeholder="Your interpretation, decision, or next action"></textarea></div>
+        <div class="field"><label for="annotation-tags">Tags</label><input id="annotation-tags" type="text" placeholder="strategy, quote"></div>
+        <p class="form-message" id="annotation-message" data-form-message hidden></p>
+        <button type="submit">Save annotation</button>
+      </form>
+      <section class="panel">
+        <h2>Annotations</h2>
+        ${annotationList(bookmark.annotations || [])}
+      </section>
+    </section>
+    <section class="split">
+      <form class="panel form" id="note-form">
+        <h2>Linked note</h2>
+        <div class="field"><label for="note-title">Title</label><input id="note-title" type="text" placeholder="Working note"></div>
+        <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea></div>
+        <p class="form-message" id="note-message" data-form-message hidden></p>
+        <button type="submit">Save note</button>
+      </form>
+      <section class="panel">
+        <h2>Linked notes</h2>
+        ${noteList(bookmark.notes || [])}
+      </section>
+    </section>
+    <section class="panel">
+      <h2>Related</h2>
+      ${relatedList(related.related || [])}
+    </section>
   `));
+  document.querySelector("#toggle-read").addEventListener("click", async (event) => {
+    const done = setButtonBusy(event.currentTarget, bookmark.read_status ? "Marking unread" : "Marking read");
+    try {
+      await api(`/bookmarks/${id}/read-status`, { method: "PATCH", body: JSON.stringify({ read_status: !bookmark.read_status }) });
+      ui.toast("Read status updated", "success");
+      render();
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  document.querySelector("#review-complete").addEventListener("click", async (event) => {
+    const done = setButtonBusy(event.currentTarget, "Completing review");
+    try {
+      await api(`/review/bookmark:${id}/complete`, { method: "POST", body: "{}" });
+      ui.toast("Review completed", "success");
+      render();
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  const annotationForm = document.querySelector("#annotation-form");
+  annotationForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving annotation");
+    setFormMessage(annotationForm);
+    try {
+      await api(`/bookmarks/${id}/annotations`, {
+        method: "POST",
+        body: JSON.stringify({
+          quote: document.querySelector("#annotation-quote").value,
+          note: document.querySelector("#annotation-note").value,
+          tags: splitTags(document.querySelector("#annotation-tags").value),
+          selector: {},
+        }),
+      });
+      ui.toast("Annotation saved", "success");
+      render();
+    } catch (err) {
+      setFormMessage(annotationForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  const noteForm = document.querySelector("#note-form");
+  noteForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving note");
+    setFormMessage(noteForm);
+    try {
+      await api("/notes", {
+        method: "POST",
+        body: JSON.stringify({
+          bookmark_id: id,
+          title: document.querySelector("#note-title").value,
+          body: document.querySelector("#note-body").value,
+        }),
+      });
+      ui.toast("Note saved", "success");
+      render();
+    } catch (err) {
+      setFormMessage(noteForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;
@@ -588,13 +789,161 @@ async function settingsPage() {
   ui.tabs(document.querySelector("#settings-tabs"));
 }
 
+async function reviewPage() {
+  await requireUser();
+  const queue = await api("/review?limit=12");
+  setRoot(shell("Review", `
+    <section class="panel">
+      <span class="meta">Daily memory</span>
+      <h2>Revisit what is ready to become useful</h2>
+      <p>Review keeps saved pages from becoming a pile. Complete what is useful, snooze what needs time.</p>
+    </section>
+    <section class="grid" aria-label="Review queue">
+      ${(queue.items || []).map(reviewCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No review items due</h2><p>Arivu will bring older or high-signal saves back when they are ready.</p></div>`}
+    </section>
+  `));
+  document.querySelectorAll("[data-review-complete]").forEach((button) => {
+    button.addEventListener("click", () => reviewAction(button, "complete"));
+  });
+  document.querySelectorAll("[data-review-snooze]").forEach((button) => {
+    button.addEventListener("click", () => reviewAction(button, "snooze"));
+  });
+}
+
+function reviewCard(item) {
+  const id = `${item.item_type || "bookmark"}:${item.id}`;
+  return `<article class="panel bookmark">
+    <span class="meta">${escapeHTML(item.resurfacing_reason || item.domain || "review")}</span>
+    <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
+    <p>${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
+    <p class="button-row">
+      <a class="button secondary" href="/bookmark/${escapeHTML(item.id)}">Open</a>
+      <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
+      <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
+    </p>
+  </article>`;
+}
+
+async function reviewAction(button, action) {
+  const item = button.dataset.reviewComplete || button.dataset.reviewSnooze;
+  const done = setButtonBusy(button, action === "complete" ? "Completing" : "Snoozing");
+  try {
+    await api(`/review/${item}/${action}`, { method: "POST", body: action === "snooze" ? JSON.stringify({ days: 7 }) : "{}" });
+    ui.toast(action === "complete" ? "Review completed" : "Review snoozed", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+async function duplicatesPage() {
+  await requireUser();
+  const result = await api("/bookmarks/duplicates/detect");
+  const groups = result.duplicates || [];
+  setRoot(shell("Duplicates", `
+    <section class="panel">
+      <span class="meta">Library hygiene</span>
+      <h2>${groups.length} duplicate groups</h2>
+      <p>Merge repeated saves without losing collection links, summaries, or reading history.</p>
+    </section>
+    <section class="stack">
+      ${groups.map(duplicateGroup).join("") || `<div class="panel empty-state"><span class="meta">Clean</span><h2>No duplicates found</h2><p>Exact URL and high-similarity matches will appear here.</p></div>`}
+    </section>
+  `));
+  document.querySelectorAll("[data-merge]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const ids = button.dataset.merge.split(",");
+      const confirmed = await ui.confirmDestructive({ title: "Merge duplicates", body: "Arivu will keep the first item and move useful data from the rest.", confirm: "Merge", cancel: "Cancel" });
+      if (!confirmed) return;
+      const done = setButtonBusy(button, "Merging");
+      try {
+        await api("/bookmarks/merge", { method: "POST", body: JSON.stringify(ids) });
+        ui.toast("Bookmarks merged", "success");
+        render();
+      } catch (err) {
+        ui.toast(err.message, "error");
+      } finally {
+        done();
+      }
+    });
+  });
+}
+
+function duplicateGroup(group) {
+  const items = group.bookmarks || [];
+  const ids = items.map((item) => item.id).join(",");
+  return `<article class="panel">
+    <span class="meta">${escapeHTML(group.type || "duplicate")} · ${items.length} saves</span>
+    <div class="stack">${items.map((item) => `<a class="text-link" href="/bookmark/${escapeHTML(item.id)}">${escapeHTML(item.title || item.url)}</a>`).join("")}</div>
+    ${items.length > 1 ? `<p class="button-row"><button type="button" data-merge="${escapeHTML(ids)}">Merge group</button></p>` : ""}
+  </article>`;
+}
+
+async function graphPage() {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  const query = params.get("query") || "";
+  const graph = await api("/knowledge-graph/explore?limit=60");
+  const search = query ? await api(`/knowledge-graph/search?query=${encodeURIComponent(query)}&limit=12`).catch(() => ({ results: [] })) : null;
+  setRoot(shell("Knowledge graph", `
+    <form class="toolbar" role="search" id="graph-search">
+      <label class="sr-only" for="graph-query">Search graph</label>
+      <input id="graph-query" type="search" placeholder="Search concepts, entities, or meaning" value="${escapeHTML(query)}">
+      <button class="secondary" type="submit">Search</button>
+    </form>
+    <section class="grid">
+      <div class="panel"><span class="meta">Bookmarks</span><h2>${graph.total_bookmarks || 0}</h2></div>
+      <div class="panel"><span class="meta">Entities</span><h2>${graph.total_entities || 0}</h2></div>
+      <div class="panel"><span class="meta">Concepts</span><h2>${graph.total_concepts || 0}</h2></div>
+    </section>
+    <section class="split">
+      <div class="panel"><h2>Concepts</h2>${termCloud(graph.concepts || [])}</div>
+      <div class="panel"><h2>Entities</h2>${termCloud(graph.entities || [])}</div>
+    </section>
+    ${search ? `<section class="panel"><h2>Search results</h2>${relatedList(search.results || [])}</section>` : ""}
+    <section class="panel"><h2>Recent graph nodes</h2>${relatedList(graph.bookmarks || [])}</section>
+  `));
+  document.querySelector("#graph-search").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = document.querySelector("#graph-query").value.trim();
+    navigate(`/knowledge-graph${value ? `?query=${encodeURIComponent(value)}` : ""}`);
+  });
+}
+
+function termCloud(terms) {
+  if (!terms.length) return `<p class="meta">Terms appear after enrichment.</p>`;
+  return `<div class="chips term-cloud">${terms.slice(0, 30).map((term) => `<span>${escapeHTML(term)}</span>`).join("")}</div>`;
+}
+
 async function analyticsPage() {
   await requireUser();
-  const summary = await api("/analytics/summary");
+  const [summary, topics, insights] = await Promise.all([
+    api("/analytics/summary"),
+    api("/analytics/topics").catch(() => ({ topics: [] })),
+    api("/analytics/insights").catch(() => ({ insights: [] })),
+  ]);
   setRoot(shell("Analytics", `<section class="grid">
     <div class="panel"><span class="meta">Bookmarks</span><h2>${summary.total_bookmarks || 0}</h2></div>
     <div class="panel"><span class="meta">Collections</span><h2>${summary.total_collections || 0}</h2></div>
+    <div class="panel"><span class="meta">Unread</span><h2>${summary.unread_bookmarks || 0}</h2></div>
+    <div class="panel"><span class="meta">Read</span><h2>${summary.read_bookmarks || 0}</h2></div>
+  </section>
+  <section class="split">
+    <div class="panel"><h2>Top domains</h2>${topicList(topics.topics || [])}</div>
+    <div class="panel"><h2>Signals</h2>${insightList(insights.insights || [])}</div>
   </section>`));
+}
+
+function topicList(items) {
+  if (!items.length) return `<p class="meta">No domain patterns yet.</p>`;
+  return `<div class="stack">${items.map((item) => `<p><strong>${escapeHTML(item.topic)}</strong> <span class="meta">${item.count}</span></p>`).join("")}</div>`;
+}
+
+function insightList(items) {
+  if (!items.length) return `<p class="meta">Insights appear after you save and revisit pages.</p>`;
+  return `<div class="stack">${items.map((item) => `<p><span class="meta">${escapeHTML(item.severity || "info")}</span><br>${escapeHTML(item.message || "")}</p>`).join("")}</div>`;
 }
 
 async function adminPage() {

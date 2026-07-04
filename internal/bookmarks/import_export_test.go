@@ -35,6 +35,24 @@ func TestExtractImportURLsFromHTML(t *testing.T) {
 	}
 }
 
+func TestImportURLsUseSafeFetchValidation(t *testing.T) {
+	got := extractImportURLs("https://127.0.0.1/admin\nhttps://example.com/ok\nftp://example.com/file")
+	if len(got) != 1 || got[0].URL != "https://example.com/ok" {
+		t.Fatalf("unexpected URLs: %#v", got)
+	}
+}
+
+func TestCSVCellNeutralizesSpreadsheetFormulas(t *testing.T) {
+	for _, value := range []string{"=cmd()", "+SUM(A1:A2)", "-10", "@link"} {
+		if got := csvCell(value); got != "'"+value {
+			t.Fatalf("csvCell(%q) = %q", value, got)
+		}
+	}
+	if got := csvCell(" ordinary "); got != "ordinary" {
+		t.Fatalf("csvCell trimmed ordinary value to %q", got)
+	}
+}
+
 func TestAnalyticsInsightsIncludeStructuredLocalAndGeminiInsights(t *testing.T) {
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
 	if err != nil {

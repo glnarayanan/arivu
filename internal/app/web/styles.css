@@ -320,6 +320,76 @@ input::placeholder, textarea::placeholder {
   font: 600 .875rem/1.4 var(--font-ui);
   color: var(--muted);
 }
+.stack {
+  display: grid;
+  gap: var(--space-4);
+}
+.split {
+  display: grid;
+  grid-template-columns: minmax(0, 1.08fr) minmax(280px, .92fr);
+  gap: var(--space-5);
+  align-items: start;
+  margin-top: var(--space-5);
+}
+.compact-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.chips span {
+  border: 2px solid var(--ink);
+  background: color-mix(in oklch, var(--gold) 32%, var(--panel));
+  padding: var(--space-1) var(--space-2);
+  font: 700 .75rem/1.25 var(--font-ui);
+  text-transform: uppercase;
+}
+.term-cloud span:nth-child(3n + 1) {
+  background: color-mix(in oklch, var(--accent-2) 20%, var(--panel));
+}
+.term-cloud span:nth-child(3n + 2) {
+  background: color-mix(in oklch, var(--accent) 16%, var(--panel));
+}
+.insight-strip,
+.annotation {
+  border: 2px solid var(--ink);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow-sm);
+  padding: var(--space-4);
+}
+.insight-strip {
+  display: grid;
+  gap: var(--space-3);
+}
+.insight-strip ul {
+  margin: 0;
+  padding-left: 1.2rem;
+}
+.insight-strip li + li {
+  margin-top: var(--space-2);
+}
+.annotation {
+  display: grid;
+  gap: var(--space-3);
+}
+.annotation blockquote {
+  margin: 0;
+  border-left: 6px solid var(--accent);
+  padding-left: var(--space-3);
+  font-size: 1.125rem;
+  line-height: 1.45;
+}
+.annotation p {
+  margin: 0;
+}
+#job-status:not([hidden]) {
+  display: block;
+  border: 2px dashed var(--ink);
+  background: color-mix(in oklch, var(--accent-2) 12%, var(--panel));
+  padding: var(--space-3);
+}
 .empty-state {
   background: var(--panel-strong);
 }
@@ -471,6 +541,7 @@ input::placeholder, textarea::placeholder {
     flex: 1 1 9rem;
   }
   .headline { font-size: 3rem; }
+  .split { grid-template-columns: 1fr; }
   .menu { left: 0; right: auto; width: min(100%, 20rem); }
 }
 

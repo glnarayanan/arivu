@@ -17,6 +17,7 @@ import (
 
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/ids"
+	"github.com/glnarayanan/arivu/internal/safefetch"
 	"github.com/glnarayanan/arivu/internal/sanitize"
 )
 
@@ -39,6 +40,10 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 }
 
 func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL string) error {
+	userID, ok := s.bookmarkOwner(ctx, bookmarkID)
+	if !ok {
+		return errors.New("bookmark not found")
+	}
 	result, err := s.fetcher.Fetch(ctx, rawURL)
 	if err != nil {
 		return err
@@ -55,6 +60,7 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 		return err
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='completed', one_sentence=?, updated_at=? WHERE bookmark_id=?`, summary, now, bookmarkID)
+	s.storeEnrichment(ctx, bookmarkID, userID, s.enrichText(ctx, bookmarkID, userID, title, result.Description, result.Text))
 	return nil
 }
 
@@ -78,11 +84,18 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 		if item.Title == "" {
 			item.Title = parsed.Hostname()
 		}
-		if _, err := s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, item.URL, item.Title, parsed.Hostname(), now, now); err == nil {
-			payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL})
-			_ = s.jobs.Enqueue(r.Context(), user.ID, "bookmark.process", string(payload))
-			count++
+		result, err := s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, item.URL, item.Title, parsed.Hostname(), now, now)
+		if err != nil {
+			continue
 		}
+		rows, _ := result.RowsAffected()
+		if rows == 0 {
+			continue
+		}
+		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
+		payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL})
+		_ = s.jobs.Enqueue(r.Context(), user.ID, "bookmark.process", string(payload))
+		count++
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE import_jobs SET total_bookmarks=?, updated_at=? WHERE id=?`, count, time.Now().UTC().Format(time.RFC3339), jobID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Import started", "count": count, "import_job_id": jobID})
@@ -118,7 +131,7 @@ func (s *Service) Export(w http.ResponseWriter, r *http.Request, user auth.User)
 		writer := csv.NewWriter(w)
 		_ = writer.Write([]string{"url", "title", "description", "created_at"})
 		for _, it := range items {
-			_ = writer.Write([]string{it.URL, it.Title, it.Description, it.CreatedAt})
+			_ = writer.Write([]string{csvCell(it.URL), csvCell(it.Title), csvCell(it.Description), csvCell(it.CreatedAt)})
 		}
 		writer.Flush()
 	case "html":
@@ -207,8 +220,20 @@ func firstString(item map[string]any, keys ...string) string {
 }
 
 func validImportURL(raw string) bool {
-	parsed, err := url.Parse(raw)
-	return err == nil && (parsed.Scheme == "http" || parsed.Scheme == "https") && parsed.Hostname() != ""
+	return safefetch.ValidateURL(raw) == nil
+}
+
+func csvCell(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	switch value[0] {
+	case '=', '+', '-', '@':
+		return "'" + value
+	default:
+		return value
+	}
 }
 
 func scanImportJob(row scanner) map[string]any {

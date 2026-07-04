@@ -42,8 +42,11 @@ func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, gemini provide
 
 func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body struct {
-		URL          string `json:"url"`
-		CollectionID string `json:"collection_id"`
+		URL          string   `json:"url"`
+		CollectionID string   `json:"collection_id"`
+		Note         string   `json:"note"`
+		Quote        string   `json:"quote"`
+		Tags         []string `json:"tags"`
 	}
 	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.URL) == "" {
 		writeError(w, http.StatusBadRequest, "URL is required")
@@ -66,10 +69,18 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	if body.CollectionID != "" {
 		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, body.CollectionID, bookmarkID, user.ID, now)
 	}
+	for _, tag := range cleanStringList(body.Tags, 20) {
+		_ = s.attachTag(r.Context(), user.ID, bookmarkID, tag, "manual")
+	}
+	if strings.TrimSpace(body.Note) != "" || strings.TrimSpace(body.Quote) != "" {
+		selector, _ := jsonObject(nil)
+		tagJSON, _ := json.Marshal(cleanStringList(body.Tags, 20))
+		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(body.Quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
+	}
 	payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": body.URL})
-	_ = s.jobs.Enqueue(r.Context(), user.ID, "bookmark.process", string(payload))
+	jobID, _ := s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", string(payload))
 	bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
-	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "connections": []any{}, "connections_count": 0})
+	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
 }
 
 func (s *Service) Preview(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -139,6 +150,9 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	}
 	summary := s.summary(r.Context(), user.ID, r.PathValue("id"))
 	bm["ai_summary"] = summary
+	bm["tags"] = s.bookmarkTags(r.Context(), user.ID, r.PathValue("id"))
+	bm["annotations"] = s.bookmarkAnnotations(r.Context(), user.ID, r.PathValue("id"))
+	bm["notes"] = s.bookmarkNotes(r.Context(), user.ID, r.PathValue("id"))
 	writeJSON(w, http.StatusOK, bm)
 }
 

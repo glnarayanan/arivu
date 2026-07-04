@@ -24,9 +24,15 @@ func New(db *sql.DB) *Queue {
 }
 
 func (q *Queue) Enqueue(ctx context.Context, userID, jobType, payload string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := q.db.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,payload_json,run_after,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, ids.New(), nullable(userID), jobType, "queued", payload, now, now, now)
+	_, err := q.EnqueueWithID(ctx, userID, jobType, payload)
 	return err
+}
+
+func (q *Queue) EnqueueWithID(ctx context.Context, userID, jobType, payload string) (string, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	id := ids.New()
+	_, err := q.db.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,payload_json,run_after,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, nullable(userID), jobType, "queued", payload, now, now, now)
+	return id, err
 }
 
 func (q *Queue) Lease(ctx context.Context, leaseFor time.Duration) (Job, bool, error) {
