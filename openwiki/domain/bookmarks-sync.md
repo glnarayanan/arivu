@@ -32,6 +32,10 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Bookmark detail renders summaries, tags, related items, read state, annotations, linked notes, and review completion in one place.
 - The review queue is powered by resurfacing candidates and records completion or snooze events.
 - Tags are normalized and alias-aware so manual tags and provider suggestions converge.
+- Retrieval filters by query, tag, domain, source, read state, and dates. Query
+  matching includes bookmark text, annotations, and linked notes.
+- Cited answer mode summarizes the matching set and returns citations back to
+  saved bookmarks instead of producing uncited claims.
 - Job status is visible per user, which makes background import/enrichment progress inspectable without exposing server errors.
 
 ---

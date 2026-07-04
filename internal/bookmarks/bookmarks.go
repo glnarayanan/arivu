@@ -108,27 +108,7 @@ func (s *Service) Preview(w http.ResponseWriter, r *http.Request, user auth.User
 }
 
 func (s *Service) List(w http.ResponseWriter, r *http.Request, user auth.User) {
-	query := r.URL.Query()
-	search := strings.TrimSpace(query.Get("search"))
-	args := []any{user.ID}
-	where := "WHERE b.user_id=?"
-	if domain := query.Get("domain"); domain != "" {
-		where += " AND b.domain=?"
-		args = append(args, domain)
-	}
-	if source := query.Get("source"); source != "" {
-		where += " AND b.source=?"
-		args = append(args, source)
-	}
-	if status := query.Get("read_status"); status == "read" || status == "unread" {
-		where += " AND b.read_status=?"
-		args = append(args, status == "read")
-	}
-	if search != "" {
-		where += " AND (b.title LIKE ? OR b.description LIKE ? OR b.text_content LIKE ?)"
-		like := "%" + search + "%"
-		args = append(args, like, like, like)
-	}
+	where, args := s.bookmarkFilter(r, user.ID)
 	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.url,b.title,b.description,b.domain,b.favicon,b.thumbnail,b.reading_time,b.read_status,b.source,b.created_at,b.updated_at,b.last_accessed,b.view_count,b.version,b.sanitized_html,b.text_content FROM bookmarks b `+where+` ORDER BY b.created_at DESC LIMIT 200`, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not list bookmarks")
@@ -140,6 +120,56 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, user auth.User) {
 		result = append(result, scanBookmark(rows))
 	}
 	writeJSON(w, http.StatusOK, result)
+}
+
+func (s *Service) bookmarkFilter(r *http.Request, userID string) (string, []any) {
+	query := r.URL.Query()
+	search := strings.TrimSpace(query.Get("search"))
+	args := []any{userID}
+	where := "WHERE b.user_id=?"
+	if domain := strings.TrimSpace(query.Get("domain")); domain != "" {
+		where += " AND b.domain=?"
+		args = append(args, domain)
+	}
+	if source := strings.TrimSpace(query.Get("source")); source != "" {
+		where += " AND b.source=?"
+		args = append(args, source)
+	}
+	if status := query.Get("read_status"); status == "read" || status == "unread" {
+		where += " AND b.read_status=?"
+		args = append(args, status == "read")
+	}
+	if from := strings.TrimSpace(query.Get("date_from")); from != "" {
+		where += " AND b.created_at>=?"
+		args = append(args, from)
+	}
+	if to := strings.TrimSpace(query.Get("date_to")); to != "" {
+		where += " AND b.created_at<=?"
+		args = append(args, to)
+	}
+	if tag := tagSlug(query.Get("tag")); tag != "" {
+		where += ` AND EXISTS (
+			SELECT 1 FROM bookmark_tags bt
+			JOIN tags t ON t.id=bt.tag_id AND t.user_id=bt.user_id
+			LEFT JOIN tag_aliases ta ON ta.tag_id=t.id AND ta.user_id=t.user_id
+			WHERE bt.bookmark_id=b.id AND bt.user_id=b.user_id AND (t.slug=? OR ta.alias_slug=?)
+		)`
+		args = append(args, tag, tag)
+	}
+	if search != "" {
+		where += ` AND (
+			b.title LIKE ? OR b.description LIKE ? OR b.text_content LIKE ?
+			OR EXISTS (SELECT 1 FROM annotations a WHERE a.bookmark_id=b.id AND a.user_id=b.user_id AND (a.quote LIKE ? OR a.note LIKE ?))
+			OR EXISTS (
+				SELECT 1 FROM bookmark_notes bn
+				JOIN notes n ON n.id=bn.note_id AND n.user_id=bn.user_id
+				WHERE bn.bookmark_id=b.id AND bn.user_id=b.user_id AND (n.title LIKE ? OR n.body LIKE ?)
+			)
+		)`
+		like := "%" + search + "%"
+		args = append(args, like, like, like, like, like, like, like)
+	}
+	return where, args
 }
 
 func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -198,6 +228,52 @@ func (s *Service) Search(w http.ResponseWriter, r *http.Request, user auth.User)
 	values.Set("search", q)
 	req.URL.RawQuery = values.Encode()
 	s.List(w, req, user)
+}
+
+func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth.User) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		q = strings.TrimSpace(r.URL.Query().Get("query"))
+	}
+	if len(q) < 2 || len(q) > maxSearchLen {
+		writeError(w, http.StatusBadRequest, "query must be between 2 and 2000 characters")
+		return
+	}
+	req := r.Clone(r.Context())
+	values := req.URL.Query()
+	values.Set("search", q)
+	req.URL.RawQuery = values.Encode()
+	where, args := s.bookmarkFilter(req, user.ID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.title,b.url,b.domain,b.description,b.text_content FROM bookmarks b `+where+` ORDER BY b.updated_at DESC LIMIT 8`, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not answer search")
+		return
+	}
+	defer rows.Close()
+	type citation struct {
+		ID      string `json:"id"`
+		Title   string `json:"title"`
+		URL     string `json:"url"`
+		Domain  string `json:"domain"`
+		Snippet string `json:"snippet"`
+	}
+	var citations []citation
+	for rows.Next() {
+		var id, title, rawURL, domain, description, text string
+		_ = rows.Scan(&id, &title, &rawURL, &domain, &description, &text)
+		snippet := searchSnippet(q, firstNonEmpty(text, description, title))
+		citations = append(citations, citation{ID: id, Title: fallback(title, rawURL), URL: rawURL, Domain: domain, Snippet: snippet})
+	}
+	if len(citations) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"answer": "No saved items matched this query.", "citations": []any{}})
+		return
+	}
+	answer := "Found " + fmt.Sprint(len(citations)) + " saved item"
+	if len(citations) != 1 {
+		answer += "s"
+	}
+	answer += " that mention this query. Use the citations below to inspect the original saved context."
+	writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "citations": citations})
 }
 
 func (s *Service) Related(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -1638,6 +1714,49 @@ func fallback(value, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(value)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func searchSnippet(query, text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) <= 320 {
+		return text
+	}
+	lowerText := strings.ToLower(text)
+	start := 0
+	for _, term := range strings.Fields(strings.ToLower(query)) {
+		if len(term) < 2 {
+			continue
+		}
+		if idx := strings.Index(lowerText, term); idx >= 0 {
+			start = idx - 110
+			if start < 0 {
+				start = 0
+			}
+			break
+		}
+	}
+	end := start + 320
+	if end > len(text) {
+		end = len(text)
+	}
+	prefix := ""
+	if start > 0 {
+		prefix = "..."
+	}
+	suffix := ""
+	if end < len(text) {
+		suffix = "..."
+	}
+	return prefix + strings.TrimSpace(text[start:end]) + suffix
 }
 
 func readingTime(text string) int {

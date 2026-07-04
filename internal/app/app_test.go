@@ -274,6 +274,31 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("bookmark detail missing second-brain data: %#v", detail)
 	}
 
+	filteredResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks?tag=evidence&date_from="+url.QueryEscape(now.AddDate(0, 0, -30).Format(time.RFC3339)), "", accessCookie, csrfCookie)
+	if filteredResp.StatusCode != http.StatusOK {
+		t.Fatalf("filtered bookmarks status = %d body=%s", filteredResp.StatusCode, readBody(filteredResp))
+	}
+	var filtered []map[string]any
+	_ = json.NewDecoder(filteredResp.Body).Decode(&filtered)
+	filteredResp.Body.Close()
+	if len(filtered) != 1 || filtered[0]["id"] != "capture" {
+		t.Fatalf("tag/date filter did not return capture: %#v", filtered)
+	}
+
+	answerResp := adminRequest(t, handler, http.MethodGet, "/api/search/answer?q=recall&tag=evidence", "", accessCookie, csrfCookie)
+	if answerResp.StatusCode != http.StatusOK {
+		t.Fatalf("answer status = %d body=%s", answerResp.StatusCode, readBody(answerResp))
+	}
+	var answerBody struct {
+		Answer    string           `json:"answer"`
+		Citations []map[string]any `json:"citations"`
+	}
+	_ = json.NewDecoder(answerResp.Body).Decode(&answerBody)
+	answerResp.Body.Close()
+	if answerBody.Answer == "" || len(answerBody.Citations) != 1 || answerBody.Citations[0]["id"] != "capture" || answerBody.Citations[0]["snippet"] == "" {
+		t.Fatalf("answer mode missing cited capture: %#v", answerBody)
+	}
+
 	reviewResp := adminRequest(t, handler, http.MethodGet, "/api/review?limit=5", "", accessCookie, csrfCookie)
 	if reviewResp.StatusCode != http.StatusOK {
 		t.Fatalf("review status = %d body=%s", reviewResp.StatusCode, readBody(reviewResp))

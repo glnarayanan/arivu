@@ -36,6 +36,10 @@ with foreign keys.
   unique by normalized alias slug.
 - Annotation selectors and saved-search filters are stored as bounded JSON
   objects; arbitrary arrays or scalar JSON values are rejected at the API layer.
+- Bookmark list/search filters are user-scoped and support domain, source,
+  read status, created-date bounds, normalized tag names, and tag aliases.
+  Text search includes bookmark title/description/body plus linked annotations
+  and notes.
 - Imports use the same `safefetch` URL validation policy as normal saves before
   inserting any bookmark or queuing a fetch job.
 

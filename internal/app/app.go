@@ -107,6 +107,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/import-jobs/{id}", a.withUser(a.bookmarks.ImportJob))
 
 	mux.HandleFunc("GET /api/search", a.withUser(a.bookmarks.Search))
+	mux.HandleFunc("GET /api/search/answer", a.withUser(a.bookmarks.SearchAnswer))
 	mux.HandleFunc("GET /api/collections", a.withUser(a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/collections", a.withUser(a.bookmarks.CreateCollection))
 	mux.HandleFunc("POST /api/collections/{id}/add", a.withUser(a.bookmarks.AddToCollection))

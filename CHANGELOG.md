@@ -17,6 +17,7 @@ All notable changes to this project will be documented in this file.
 - Added a tiny embedded SVG favicon for the browser UI.
 - Added second-brain persistence for notes, bookmark-note links, annotations, normalized tags, tag aliases, saved searches, review events, and import source metadata.
 - Added web APIs for notes, bookmark annotations, tags, tag aliases, saved searches, review completion/snoozing, and per-user background job status.
+- Added cited local answer mode for saved-item search, with citations back to matching bookmarks.
 - Added deterministic bookmark enrichment for summaries, bullets, highlight quotes, suggested tags, graph entities, and graph concepts when provider AI is not configured.
 - Added real embedded UI routes for review, duplicate detection/merge, knowledge graph exploration, bookmark annotations, linked notes, read state, related items, and processing status.
 - Added an installable PWA manifest with a mobile/browser share target that pre-fills dashboard capture.
@@ -32,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - Resolved the frontend audit findings with explicit route access metadata, inline form errors, assertive error toasts, and a quieter OKLCH-based visual system.
 - Optimized embedded frontend asset delivery with content ETags, cache revalidation headers, zero-copy byte readers, and offscreen grid rendering containment.
 - Bookmark saves now accept quick notes, selected quotes, and manual tags, and return a `job_id` so the UI can show enrichment progress.
+- Bookmark list and search now support normalized tag, domain, source, read-status, and created-date filters, and text search includes linked annotations and notes.
 - Imported bookmarks now create summary placeholders before processing and use safer duplicate counting for import reports.
 
 ### Security

@@ -41,6 +41,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - `/dashboard` pre-fills the save form from PWA share-target `title`, `text`,
   and `url` query parameters. The URL field prefers the explicit `url`
   parameter, then falls back to the first URL found in shared text.
+- Dashboard retrieval supports query, tag, domain, and read-status filters,
+  saving the current search, replaying saved searches, and a cited answer panel
+  sourced only from matching saved items.
 - Bookmark save responses include `job_id`; the dashboard shows a short
   processing status before navigating to the saved bookmark.
 - Bookmark detail is now the reader/research surface: sanitized archived HTML,

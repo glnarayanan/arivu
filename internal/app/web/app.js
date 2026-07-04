@@ -500,7 +500,12 @@ async function acceptInvitePage() {
 
 async function dashboardPage() {
   await requireUser();
-  const bookmarks = await api(`/bookmarks${location.search}`) || [];
+  const [bookmarks, savedSearches] = await Promise.all([
+    api(`/bookmarks${location.search}`),
+    api("/saved-searches").catch(() => ({ saved_searches: [] })),
+  ]);
+  const bookmarkList = bookmarks || [];
+  const params = new URLSearchParams(location.search);
   const shared = sharedCaptureParams();
   setRoot(shell("Saved knowledge", `
     <form class="panel form" id="save-form">
@@ -512,11 +517,32 @@ async function dashboardPage() {
     </form>
     <form class="toolbar" role="search" id="search-form">
       <label class="sr-only" for="search">Search bookmarks</label>
-      <input id="search" type="search" placeholder="Search bookmarks" value="${escapeHTML(new URLSearchParams(location.search).get("search") || "")}">
+      <input id="search" type="search" placeholder="Search bookmarks" value="${escapeHTML(params.get("search") || "")}">
+      <input id="filter-tag" type="text" placeholder="Tag" value="${escapeHTML(params.get("tag") || "")}">
+      <input id="filter-domain" type="text" placeholder="Domain" value="${escapeHTML(params.get("domain") || "")}">
+      <select id="filter-read">
+        <option value="">Any status</option>
+        <option value="unread" ${params.get("read_status") === "unread" ? "selected" : ""}>Unread</option>
+        <option value="read" ${params.get("read_status") === "read" ? "selected" : ""}>Read</option>
+      </select>
       <button id="search-button" class="secondary" type="submit">Search</button>
+      <button id="answer-button" class="secondary" type="button">Answer</button>
     </form>
+    <section class="split">
+      <form class="panel form" id="saved-search-form">
+        <h2>Saved search</h2>
+        <div class="field"><label for="saved-search-name">Name</label><input id="saved-search-name" type="text" placeholder="Unread research"></div>
+        <p class="form-message" id="saved-search-message" data-form-message hidden></p>
+        <button type="submit">Save current search</button>
+      </form>
+      <section class="panel">
+        <h2>Saved searches</h2>
+        ${savedSearchList(savedSearches.saved_searches || [])}
+      </section>
+    </section>
+    <section class="panel" id="answer-panel" hidden></section>
     <section class="grid" aria-label="Bookmarks">
-      ${bookmarks.map(bookmarkCard).join("") || `<div class="panel empty-state"><span class="meta">First save</span><h2>No bookmarks yet</h2><p>Save a URL above to start building your searchable reading memory.</p></div>`}
+      ${bookmarkList.map(bookmarkCard).join("") || `<div class="panel empty-state"><span class="meta">First save</span><h2>No bookmarks yet</h2><p>Save a URL above to start building your searchable reading memory.</p></div>`}
     </section>
   `));
   const saveForm = document.querySelector("#save-form");
@@ -546,9 +572,94 @@ async function dashboardPage() {
   });
   document.querySelector("#search-form").addEventListener("submit", (event) => {
     event.preventDefault();
-    const value = document.querySelector("#search").value.trim();
-    navigate(`/dashboard${value ? `?search=${encodeURIComponent(value)}` : ""}`);
+    navigate(`/dashboard${dashboardQueryString()}`);
   });
+  document.querySelector("#answer-button").addEventListener("click", async (event) => {
+    const query = document.querySelector("#search").value.trim();
+    if (!query) {
+      ui.toast("Enter a search query first", "error");
+      return;
+    }
+    const done = setButtonBusy(event.currentTarget, "Answering");
+    const panel = document.querySelector("#answer-panel");
+    try {
+      const answer = await api(`/search/answer${dashboardQueryString("q")}`);
+      panel.hidden = false;
+      panel.innerHTML = answerPanel(answer);
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  const savedSearchForm = document.querySelector("#saved-search-form");
+  savedSearchForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving search");
+    setFormMessage(savedSearchForm);
+    try {
+      const query = document.querySelector("#search").value.trim();
+      await api("/saved-searches", {
+        method: "POST",
+        body: JSON.stringify({
+          name: document.querySelector("#saved-search-name").value,
+          query,
+          filters: dashboardFilters(),
+        }),
+      });
+      ui.toast("Search saved", "success");
+      render();
+    } catch (err) {
+      setFormMessage(savedSearchForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+function dashboardFilters() {
+  return {
+    tag: document.querySelector("#filter-tag")?.value.trim() || "",
+    domain: document.querySelector("#filter-domain")?.value.trim() || "",
+    read_status: document.querySelector("#filter-read")?.value || "",
+  };
+}
+
+function dashboardQueryString(searchKey = "search") {
+  const params = new URLSearchParams();
+  const query = document.querySelector("#search").value.trim();
+  if (query) params.set(searchKey, query);
+  const filters = dashboardFilters();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value) params.set(key, value);
+  }
+  const raw = params.toString();
+  return raw ? `?${raw}` : "";
+}
+
+function savedSearchList(items) {
+  if (!items.length) return `<p class="meta">No saved searches yet.</p>`;
+  return `<div class="stack">${items.map((item) => {
+    const filters = item.filters || {};
+    const params = new URLSearchParams();
+    if (item.query) params.set("search", item.query);
+    for (const key of ["tag", "domain", "read_status"]) {
+      if (filters[key]) params.set(key, filters[key]);
+    }
+    return `<a class="text-link" href="/dashboard?${params.toString()}">${escapeHTML(item.name)}</a>`;
+  }).join("")}</div>`;
+}
+
+function answerPanel(answer) {
+  const citations = answer.citations || [];
+  return `<h2>Cited answer</h2>
+    <p>${escapeHTML(answer.answer || "")}</p>
+    <div class="stack">${citations.map((item, index) => `<article class="annotation">
+      <p><strong>[${index + 1}] ${escapeHTML(item.title || item.url)}</strong> <span class="meta">${escapeHTML(item.domain || "")}</span></p>
+      <p>${escapeHTML(item.snippet || "")}</p>
+      <a class="text-link" href="/bookmark/${escapeHTML(item.id)}">Open citation</a>
+    </article>`).join("") || `<p class="meta">No citations found.</p>`}</div>`;
 }
 
 function sharedCaptureParams() {

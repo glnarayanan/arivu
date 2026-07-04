@@ -15,7 +15,7 @@
 - Core bookmark, collection, search, analytics, admin, import/export, duplicate detection, semantic graph, resurfacing, memory jogger, and X sync behavior.
 - Second-brain APIs for notes, bookmark annotations, normalized tags, tag aliases, saved searches, review queue actions, and per-user job status.
 - New bookmark saves accept quick notes, selected quotes, and manual tags, return the processing job ID, and populate deterministic enrichment fields even without provider keys.
-- The embedded UI now exposes graph, duplicates, review, summaries, related items, tags, annotations, linked notes, read state, review completion, analytics signals, and visible processing status.
+- The embedded UI now exposes graph, duplicates, review, summaries, related items, tags, annotations, linked notes, saved searches, cited answer mode, read state, review completion, analytics signals, and visible processing status.
 - The embedded frontend includes a PWA manifest with a GET share target that pre-fills dashboard capture from shared title, text, and URL parameters.
 - Legacy JSON export migration validation and SQLite import executor with secret re-encryption, relationship checks, archived HTML sanitization, embedding validation, and intentional legacy session invalidation.
 - Production packaging with Dockerfile, Compose sample, hardened systemd unit, and environment template.
@@ -27,7 +27,7 @@ GOCACHE=/private/tmp/arivu-build-cache go test ./...
 GOCACHE=/private/tmp/arivu-build-cache go build -trimpath -ldflags="-s -w" -o /private/tmp/arivu-check ./cmd/arivu
 ```
 
-Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, import URL extraction, migration unknown-field rejection, direct HTTP handler integration tests, second-brain route scoping and CSRF checks, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
+Current coverage includes schema initialization, sanitizer allowlist behavior, safe URL validation, import URL extraction, migration unknown-field rejection, direct HTTP handler integration tests, second-brain route scoping and CSRF checks, tag/date filtering, cited answer mode, browser-facing first-run and PWA manifest contracts, and golden parity fixtures.
 
 ## Follow-Up
 
