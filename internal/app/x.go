@@ -2,8 +2,6 @@ package app
 
 import (
 	"context"
-	"crypto/aes"
-	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
@@ -36,7 +34,7 @@ func (a *App) xConnect(w http.ResponseWriter, r *http.Request, user auth.User) {
 	state := randomURLToken(32)
 	challenge := pkceChallenge(verifier)
 	redirectURI := a.xRedirectURI()
-	verifierCipher, err := sealSecret(a.cfg.SecretKey, verifier)
+	verifierCipher, err := secrets.Seal(a.cfg.SecretKey, verifier)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not start X connection")
 		return
@@ -87,7 +85,7 @@ func (a *App) xCallback(w http.ResponseWriter, r *http.Request, user auth.User) 
 		return
 	}
 	_, _ = a.db.ExecContext(r.Context(), `DELETE FROM oauth_states WHERE state=?`, body.State)
-	verifier, err := openSecret(a.cfg.SecretKey, verifierCipher)
+	verifier, err := secrets.Open(a.cfg.SecretKey, verifierCipher)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid OAuth state")
 		return
@@ -103,14 +101,14 @@ func (a *App) xCallback(w http.ResponseWriter, r *http.Request, user auth.User) 
 		writeError(w, http.StatusBadGateway, "Failed to fetch X profile")
 		return
 	}
-	accessCipher, err := sealSecret(a.cfg.SecretKey, token.AccessToken)
+	accessCipher, err := secrets.Seal(a.cfg.SecretKey, token.AccessToken)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not store X connection")
 		return
 	}
 	refreshCipher := ""
 	if token.RefreshToken != "" {
-		refreshCipher, err = sealSecret(a.cfg.SecretKey, token.RefreshToken)
+		refreshCipher, err = secrets.Seal(a.cfg.SecretKey, token.RefreshToken)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "Could not store X connection")
 			return
@@ -168,7 +166,7 @@ func (a *App) xDisconnect(w http.ResponseWriter, r *http.Request, user auth.User
 		writeError(w, http.StatusInternalServerError, "Could not load X connection")
 		return
 	}
-	if access, err := openSecret(a.cfg.SecretKey, conn.AccessCipher); err == nil {
+	if access, err := secrets.Open(a.cfg.SecretKey, conn.AccessCipher); err == nil {
 		_ = a.xClient("").Revoke(r.Context(), access)
 	}
 	_, _ = a.db.ExecContext(r.Context(), `DELETE FROM x_connections WHERE user_id=?`, user.ID)
@@ -300,7 +298,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, bookmarkURL, title
 }
 
 func (a *App) xAccessToken(r *http.Request, conn xConnectionRow) (string, error) {
-	access, err := openSecret(a.cfg.SecretKey, conn.AccessCipher)
+	access, err := secrets.Open(a.cfg.SecretKey, conn.AccessCipher)
 	if err != nil {
 		return "", err
 	}
@@ -311,7 +309,7 @@ func (a *App) xAccessToken(r *http.Request, conn xConnectionRow) (string, error)
 	if err != nil || time.Now().UTC().Before(expiresAt.Add(-5*time.Minute)) {
 		return access, nil
 	}
-	refresh, err := openSecret(a.cfg.SecretKey, conn.RefreshCipher.String)
+	refresh, err := secrets.Open(a.cfg.SecretKey, conn.RefreshCipher.String)
 	if err != nil {
 		return "", err
 	}
@@ -319,13 +317,13 @@ func (a *App) xAccessToken(r *http.Request, conn xConnectionRow) (string, error)
 	if err != nil {
 		return "", err
 	}
-	accessCipher, err := sealSecret(a.cfg.SecretKey, token.AccessToken)
+	accessCipher, err := secrets.Seal(a.cfg.SecretKey, token.AccessToken)
 	if err != nil {
 		return "", err
 	}
 	refreshCipher := conn.RefreshCipher.String
 	if token.RefreshToken != "" {
-		refreshCipher, err = sealSecret(a.cfg.SecretKey, token.RefreshToken)
+		refreshCipher, err = secrets.Seal(a.cfg.SecretKey, token.RefreshToken)
 		if err != nil {
 			return "", err
 		}
@@ -411,56 +409,6 @@ func normalizeForDedup(raw string) string {
 	parsed.RawQuery = values.Encode()
 	parsed.Fragment = ""
 	return strings.ToLower(strings.TrimRight(parsed.String(), "/"))
-}
-
-func sealSecret(secretKey, plaintext string) (string, error) {
-	key, err := secrets.EncryptionKey(secretKey)
-	if err != nil {
-		return "", err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-	sealed := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
-	return base64.RawURLEncoding.EncodeToString(sealed), nil
-}
-
-func openSecret(secretKey, encoded string) (string, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return "", err
-	}
-	key, err := secrets.EncryptionKey(secretKey)
-	if err != nil {
-		return "", err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	if len(raw) < gcm.NonceSize() {
-		return "", fmt.Errorf("ciphertext too short")
-	}
-	nonce := raw[:gcm.NonceSize()]
-	ciphertext := raw[gcm.NonceSize():]
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-	if err != nil {
-		return "", err
-	}
-	return string(plaintext), nil
 }
 
 func pkceChallenge(verifier string) string {

@@ -6,7 +6,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
@@ -441,7 +440,7 @@ func insertSettings(ctx context.Context, tx *sql.Tx, docs []map[string]any, opts
 					return count, fmt.Errorf("setting %s: %w", key, err)
 				}
 			}
-			ciphertext, err := sealNewSecret(opts.NewSecretKey, raw)
+			ciphertext, err := secrets.Seal(opts.NewSecretKey, raw)
 			if err != nil {
 				return count, err
 			}
@@ -459,7 +458,7 @@ func migrateSecret(ciphertext string, opts ApplyOptions) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return sealNewSecret(opts.NewSecretKey, plaintext)
+	return secrets.Seal(opts.NewSecretKey, plaintext)
 }
 
 func decryptLegacySecret(token string, oldSecretKey string) (string, error) {
@@ -501,26 +500,6 @@ func decryptLegacySecret(token string, oldSecretKey string) (string, error) {
 		return "", err
 	}
 	return string(plaintext), nil
-}
-
-func sealNewSecret(secretKey, plaintext string) (string, error) {
-	key, err := secrets.EncryptionKey(secretKey)
-	if err != nil {
-		return "", err
-	}
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return "", err
-	}
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return "", err
-	}
-	nonce := make([]byte, gcm.NonceSize())
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(gcm.Seal(nonce, nonce, []byte(plaintext), nil)), nil
 }
 
 func unpadPKCS7(value []byte) ([]byte, error) {
