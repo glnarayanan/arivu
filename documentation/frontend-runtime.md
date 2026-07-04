@@ -63,7 +63,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   inside the sanitized reader content.
 - `/review` includes the daily memory card from `/api/memory-jogger`, the due
   review queue from `/api/review`, and complete, snooze, and archive actions
-  using the existing review/resurfacing APIs.
+  using the existing review/resurfacing APIs. Standalone notes appear in the
+  queue when they are due, support complete and snooze actions, open the Notes
+  screen, and do not expose bookmark-only archive controls.
 - `/review`, `/duplicates`, `/knowledge-graph`, and `/analytics` are real
   product routes, not placeholders.
 - Custom dialogs use `role="dialog"`, `aria-modal`, focus restoration, Escape

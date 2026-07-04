@@ -1220,15 +1220,16 @@ function memoryCard(memory) {
 
 function reviewCard(item) {
   const id = `${item.item_type || "bookmark"}:${item.id}`;
+  const isNote = item.item_type === "note";
   return `<article class="panel bookmark">
-    <span class="meta">${escapeHTML(item.resurfacing_reason || item.domain || "review")}</span>
+    <span class="meta">${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")}</span>
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
     <p>${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
     <p class="button-row">
-      <a class="button secondary" href="/bookmark/${escapeHTML(item.id)}">Open</a>
+      <a class="button secondary" href="${isNote ? "/notes" : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
       <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
-      <button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>
+      ${isNote ? "" : `<button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>`}
     </p>
   </article>`;
 }

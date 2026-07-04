@@ -326,7 +326,35 @@ func (s *Service) Review(w http.ResponseWriter, r *http.Request, user auth.User)
 		item["item_type"] = "bookmark"
 		items = append(items, item)
 	}
+	if len(items) < limit {
+		notes, err := s.reviewNotes(r.Context(), user.ID, limit-len(items))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not load review queue")
+			return
+		}
+		items = append(items, notes...)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Service) reviewNotes(ctx context.Context, userID string, limit int) ([]map[string]any, error) {
+	if limit <= 0 {
+		return []map[string]any{}, nil
+	}
+	now := time.Now().UTC()
+	cutoff := now.AddDate(0, 0, -1).Format(time.RFC3339)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,title,substr(body,1,500),source,created_at,updated_at FROM notes n WHERE user_id=? AND updated_at<=? AND NOT EXISTS (SELECT 1 FROM bookmark_notes bn WHERE bn.note_id=n.id AND bn.user_id=n.user_id) AND NOT EXISTS (SELECT 1 FROM review_events re WHERE re.user_id=n.user_id AND re.item_type='note' AND re.item_id=n.id AND (re.created_at>=? OR (re.action='snoozed' AND re.snoozed_until>?))) ORDER BY updated_at ASC LIMIT ?`, userID, cutoff, cutoff, now.Format(time.RFC3339), limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var notes []map[string]any
+	for rows.Next() {
+		var id, title, body, source, created, updated string
+		_ = rows.Scan(&id, &title, &body, &source, &created, &updated)
+		notes = append(notes, map[string]any{"id": id, "item_type": "note", "title": fallback(title, "Untitled note"), "description": body, "source": source, "created_at": created, "updated_at": updated, "resurfacing_reason": "Review note"})
+	}
+	return notes, rows.Err()
 }
 
 func (s *Service) CompleteReview(w http.ResponseWriter, r *http.Request, user auth.User) {

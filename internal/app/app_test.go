@@ -255,6 +255,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if searchNoteID == "" {
 		t.Fatalf("searchable note missing id: %#v", searchNoteBody)
 	}
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE notes SET created_at=?,updated_at=? WHERE id=?`, now.AddDate(0, 0, -3).Format(time.RFC3339), now.AddDate(0, 0, -3).Format(time.RFC3339), searchNoteID)
 	otherNoteResp := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Other recall note","body":"Standalone recall idea from another user."}`, otherAccess, otherCSRF)
 	if otherNoteResp.StatusCode != http.StatusOK {
 		t.Fatalf("create other note status = %d body=%s", otherNoteResp.StatusCode, readBody(otherNoteResp))
@@ -268,6 +269,20 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if otherNoteID == "" {
 		t.Fatalf("other note missing id: %#v", otherNoteBody)
 	}
+	snoozeNoteResp := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Snooze recall note","body":"Standalone recall idea to defer."}`, accessCookie, csrfCookie)
+	if snoozeNoteResp.StatusCode != http.StatusOK {
+		t.Fatalf("create snooze note status = %d body=%s", snoozeNoteResp.StatusCode, readBody(snoozeNoteResp))
+	}
+	var snoozeNoteBody struct {
+		Note map[string]any `json:"note"`
+	}
+	_ = json.NewDecoder(snoozeNoteResp.Body).Decode(&snoozeNoteBody)
+	snoozeNoteResp.Body.Close()
+	snoozeNoteID, _ := snoozeNoteBody.Note["id"].(string)
+	if snoozeNoteID == "" {
+		t.Fatalf("snooze note missing id: %#v", snoozeNoteBody)
+	}
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE notes SET created_at=?,updated_at=? WHERE id=?`, now.AddDate(0, 0, -4).Format(time.RFC3339), now.AddDate(0, 0, -4).Format(time.RFC3339), snoozeNoteID)
 
 	annotationResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/capture/annotations", `{"quote":"Recall with evidence","note":"Promote this into review.","selector":{"type":"quote"},"tags":["Evidence","evidence"]}`, accessCookie, csrfCookie)
 	if annotationResp.StatusCode != http.StatusOK {
@@ -391,8 +406,49 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	_ = json.NewDecoder(reviewResp.Body).Decode(&reviewBody)
 	reviewResp.Body.Close()
-	if len(reviewBody.Items) != 1 || reviewBody.Items[0]["id"] != "capture" {
+	var sawBookmarkReview, sawNoteReview, sawSnoozeNoteReview bool
+	for _, item := range reviewBody.Items {
+		if item["id"] == "capture" && item["item_type"] == "bookmark" {
+			sawBookmarkReview = true
+		}
+		if item["id"] == searchNoteID && item["item_type"] == "note" {
+			sawNoteReview = true
+		}
+		if item["id"] == snoozeNoteID && item["item_type"] == "note" {
+			sawSnoozeNoteReview = true
+		}
+		if item["id"] == otherNoteID {
+			t.Fatalf("review queue leaked other user's note: %#v", reviewBody)
+		}
+	}
+	if !sawBookmarkReview || !sawNoteReview || !sawSnoozeNoteReview {
 		t.Fatalf("unexpected review queue: %#v", reviewBody)
+	}
+
+	completeNoteResp := adminRequest(t, handler, http.MethodPost, "/api/review/note:"+searchNoteID+"/complete", `{}`, accessCookie, csrfCookie)
+	if completeNoteResp.StatusCode != http.StatusOK {
+		t.Fatalf("complete note review status = %d body=%s", completeNoteResp.StatusCode, readBody(completeNoteResp))
+	}
+	completeNoteResp.Body.Close()
+
+	snoozeNoteReviewResp := adminRequest(t, handler, http.MethodPost, "/api/review/note:"+snoozeNoteID+"/snooze", `{"days":7}`, accessCookie, csrfCookie)
+	if snoozeNoteReviewResp.StatusCode != http.StatusOK {
+		t.Fatalf("snooze note review status = %d body=%s", snoozeNoteReviewResp.StatusCode, readBody(snoozeNoteReviewResp))
+	}
+	snoozeNoteReviewResp.Body.Close()
+	afterNoteActionsResp := adminRequest(t, handler, http.MethodGet, "/api/review?limit=5", "", accessCookie, csrfCookie)
+	if afterNoteActionsResp.StatusCode != http.StatusOK {
+		t.Fatalf("review after note actions status = %d body=%s", afterNoteActionsResp.StatusCode, readBody(afterNoteActionsResp))
+	}
+	var afterNoteActionsBody struct {
+		Items []map[string]any `json:"items"`
+	}
+	_ = json.NewDecoder(afterNoteActionsResp.Body).Decode(&afterNoteActionsBody)
+	afterNoteActionsResp.Body.Close()
+	for _, item := range afterNoteActionsBody.Items {
+		if item["id"] == searchNoteID || item["id"] == snoozeNoteID {
+			t.Fatalf("completed or snoozed note still in review queue: %#v", afterNoteActionsBody)
+		}
 	}
 
 	completeResp := adminRequest(t, handler, http.MethodPost, "/api/review/bookmark:capture/complete", `{}`, accessCookie, csrfCookie)
@@ -415,6 +471,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		{"other cannot read note", http.MethodGet, "/api/notes/" + noteID, ""},
 		{"other cannot patch annotation", http.MethodPatch, "/api/annotations/" + annotationID, `{"quote":"x","selector":{}}`},
 		{"other cannot read job", http.MethodGet, "/api/jobs/" + jobID, ""},
+		{"other cannot complete note review", http.MethodPost, "/api/review/note:" + searchNoteID + "/complete", `{}`},
 		{"other cannot complete review", http.MethodPost, "/api/review/bookmark:capture/complete", `{}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
