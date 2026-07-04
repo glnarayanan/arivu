@@ -12,6 +12,8 @@
 - Second-brain routes use the same web-audience boundary as bookmarks. Notes,
   annotations, tags, saved searches, review actions, and job status are all
   scoped by `user_id`.
+- Collection membership writes verify both the collection and bookmark belong
+  to the authenticated user before inserting relationship rows.
 - Extension and CLI tokens cannot call web-audience second-brain routes.
 
 ## Fetching And Archived Content

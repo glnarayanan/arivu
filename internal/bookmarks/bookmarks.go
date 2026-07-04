@@ -58,6 +58,10 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 		return
 	}
 	parsed, _ := url.Parse(body.URL)
+	if body.CollectionID != "" && !s.ownsCollection(r.Context(), user.ID, body.CollectionID) {
+		writeError(w, http.StatusNotFound, "Collection not found")
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	bookmarkID := ids.New()
 	title := parsed.Hostname()
@@ -397,12 +401,26 @@ func (s *Service) AddToCollection(w http.ResponseWriter, r *http.Request, user a
 		writeError(w, http.StatusBadRequest, "bookmark_id is required")
 		return
 	}
+	if !s.ownsCollection(r.Context(), user.ID, r.PathValue("id")) || !s.ownsBookmark(r.Context(), user.ID, body.BookmarkID) {
+		writeError(w, http.StatusNotFound, "Collection or bookmark not found")
+		return
+	}
 	_, err := s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, r.PathValue("id"), body.BookmarkID, user.ID, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Could not add bookmark to collection")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark added"})
+}
+
+func (s *Service) ownsCollection(ctx context.Context, userID, collectionID string) bool {
+	var found string
+	return s.db.QueryRowContext(ctx, `SELECT id FROM collections WHERE id=? AND user_id=?`, collectionID, userID).Scan(&found) == nil
+}
+
+func (s *Service) ownsBookmark(ctx context.Context, userID, bookmarkID string) bool {
+	var found string
+	return s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE id=? AND user_id=?`, bookmarkID, userID).Scan(&found) == nil
 }
 
 func (s *Service) AnalyticsSummary(w http.ResponseWriter, r *http.Request, user auth.User) {

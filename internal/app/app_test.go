@@ -172,6 +172,76 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	}
 }
 
+func TestCollectionMembershipIsUserScoped(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	ownerAccess, ownerCSRF := signupForCookies(t, handler, "owner@example.com")
+	otherAccess, otherCSRF := signupForCookies(t, handler, "other-collections@example.com")
+	ownerID := userIDForEmail(t, a, "owner@example.com")
+	insertBookmarkForTest(t, a, ownerID, "owner-bookmark", "Owner Bookmark", time.Now().AddDate(0, 0, -1), time.Now().AddDate(0, 0, -1), 0, 1)
+
+	ownerCollectionResp := adminRequest(t, handler, http.MethodPost, "/api/collections", `{"name":"Owner collection"}`, ownerAccess, ownerCSRF)
+	if ownerCollectionResp.StatusCode != http.StatusOK {
+		t.Fatalf("owner collection status = %d body=%s", ownerCollectionResp.StatusCode, readBody(ownerCollectionResp))
+	}
+	var ownerCollection map[string]any
+	_ = json.NewDecoder(ownerCollectionResp.Body).Decode(&ownerCollection)
+	ownerCollectionResp.Body.Close()
+	ownerCollectionID, _ := ownerCollection["id"].(string)
+
+	createWithOtherCollection := adminRequest(t, handler, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com/cross-create","collection_id":"`+ownerCollectionID+`"}`, otherAccess, otherCSRF)
+	if createWithOtherCollection.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross collection create status = %d body=%s", createWithOtherCollection.StatusCode, readBody(createWithOtherCollection))
+	}
+	createWithOtherCollection.Body.Close()
+	var leakedBookmark int
+	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE url='https://example.com/cross-create'`).Scan(&leakedBookmark)
+	if leakedBookmark != 0 {
+		t.Fatal("rejected cross-collection create left a bookmark row")
+	}
+
+	otherCollectionResp := adminRequest(t, handler, http.MethodPost, "/api/collections", `{"name":"Other collection"}`, otherAccess, otherCSRF)
+	if otherCollectionResp.StatusCode != http.StatusOK {
+		t.Fatalf("other collection status = %d body=%s", otherCollectionResp.StatusCode, readBody(otherCollectionResp))
+	}
+	var otherCollection map[string]any
+	_ = json.NewDecoder(otherCollectionResp.Body).Decode(&otherCollection)
+	otherCollectionResp.Body.Close()
+	otherCollectionID, _ := otherCollection["id"].(string)
+
+	addOtherBookmark := adminRequest(t, handler, http.MethodPost, "/api/collections/"+otherCollectionID+"/add", `{"bookmark_id":"owner-bookmark"}`, otherAccess, otherCSRF)
+	if addOtherBookmark.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross bookmark add status = %d body=%s", addOtherBookmark.StatusCode, readBody(addOtherBookmark))
+	}
+	addOtherBookmark.Body.Close()
+
+	extensionResp := adminRequest(t, handler, http.MethodPost, "/api/auth/extension-token", "", otherAccess, otherCSRF)
+	if extensionResp.StatusCode != http.StatusOK {
+		t.Fatalf("extension token status = %d body=%s", extensionResp.StatusCode, readBody(extensionResp))
+	}
+	var extensionBody map[string]any
+	_ = json.NewDecoder(extensionResp.Body).Decode(&extensionBody)
+	extensionResp.Body.Close()
+	extensionToken, _ := extensionBody["access_token"].(string)
+	extensionCreate := bearerRequest(t, handler, http.MethodPost, "/api/extension/bookmarks", `{"url":"https://example.com/extension-cross","collection_id":"`+ownerCollectionID+`"}`, extensionToken)
+	if extensionCreate.StatusCode != http.StatusNotFound {
+		t.Fatalf("extension cross collection create status = %d body=%s", extensionCreate.StatusCode, readBody(extensionCreate))
+	}
+	extensionCreate.Body.Close()
+}
+
 func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
