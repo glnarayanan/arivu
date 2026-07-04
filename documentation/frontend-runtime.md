@@ -44,6 +44,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - Dashboard retrieval supports query, tag, domain, and read-status filters,
   saving the current search, replaying saved searches, and a cited answer panel
   sourced only from matching saved items.
+- `/notes` exposes standalone notes for ideas and snippets that are not tied to
+  a URL, including create, edit, and delete flows.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs, and download
   JSON, CSV, browser HTML, or Markdown exports from existing routes.

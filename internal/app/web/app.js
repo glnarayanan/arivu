@@ -10,6 +10,7 @@ const routes = [
   { prefix: "/accept-invite", page: acceptInvitePage, access: "public" },
   { prefix: "/dashboard", page: dashboardPage, access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
+  { prefix: "/notes", page: notesPage, access: "protected" },
   { prefix: "/review", page: reviewPage, access: "protected" },
   { prefix: "/duplicates", page: duplicatesPage, access: "protected" },
   { prefix: "/settings", page: settingsPage, access: "protected" },
@@ -312,6 +313,7 @@ function navigate(path, replace = false) {
 function shell(title, content) {
   const nav = [
     ["/dashboard", "Bookmarks"],
+    ["/notes", "Notes"],
     ["/review", "Review"],
     ["/knowledge-graph", "Graph"],
     ["/analytics", "Analytics"],
@@ -744,6 +746,107 @@ function relatedList(items) {
     <h3>${escapeHTML(item.title || item.url)}</h3>
     <p>${escapeHTML(item.description || "")}</p>
   </a>`).join("")}</div>`;
+}
+
+async function notesPage() {
+  await requireUser();
+  const result = await api("/notes");
+  const notes = result.notes || [];
+  setRoot(shell("Notes", `
+    <section class="split">
+      <form class="panel form" id="standalone-note-form">
+        <h2>New note</h2>
+        <div class="field"><label for="standalone-note-title">Title</label><input id="standalone-note-title" type="text" placeholder="Idea, decision, or snippet"></div>
+        <div class="field"><label for="standalone-note-body">Body</label><textarea id="standalone-note-body" rows="6" placeholder="Write the thought before it disappears"></textarea></div>
+        <p class="form-message" id="standalone-note-message" data-form-message hidden></p>
+        <button type="submit">Save note</button>
+      </form>
+      <section class="panel">
+        <span class="meta">Standalone memory</span>
+        <h2>${notes.length} notes</h2>
+        <p>Use notes for ideas, snippets, and context that should be searchable even when it is not tied to a URL.</p>
+      </section>
+    </section>
+    <section class="stack">
+      ${notes.map(standaloneNoteCard).join("") || `<div class="panel empty-state"><span class="meta">No notes</span><h2>Start with one thought</h2><p>Standalone notes can be linked to bookmarks later through the reader workflow.</p></div>`}
+    </section>
+  `));
+  const form = document.querySelector("#standalone-note-form");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving note");
+    setFormMessage(form);
+    try {
+      await api("/notes", {
+        method: "POST",
+        body: JSON.stringify({
+          title: document.querySelector("#standalone-note-title").value,
+          body: document.querySelector("#standalone-note-body").value,
+        }),
+      });
+      ui.toast("Note saved", "success");
+      render();
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  document.querySelectorAll("[data-note-save]").forEach((button) => {
+    button.addEventListener("click", () => updateStandaloneNote(button));
+  });
+  document.querySelectorAll("[data-note-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteStandaloneNote(button));
+  });
+}
+
+function standaloneNoteCard(note) {
+  return `<article class="panel form" data-note="${escapeHTML(note.id)}">
+    <div class="field"><label for="note-title-${escapeHTML(note.id)}">Title</label><input id="note-title-${escapeHTML(note.id)}" data-note-title value="${escapeHTML(note.title || "")}"></div>
+    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="5">${escapeHTML(note.body || "")}</textarea></div>
+    <p class="meta">${note.bookmark_id ? `Linked to bookmark ${escapeHTML(note.bookmark_id)}` : "Standalone"} · ${escapeHTML(note.updated_at || "")}</p>
+    <p class="button-row">
+      ${note.bookmark_id ? `<a class="button secondary" href="/bookmark/${escapeHTML(note.bookmark_id)}">Open bookmark</a>` : ""}
+      <button type="button" data-note-save="${escapeHTML(note.id)}">Save changes</button>
+      <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete</button>
+    </p>
+  </article>`;
+}
+
+async function updateStandaloneNote(button) {
+  const card = button.closest("[data-note]");
+  const done = setButtonBusy(button, "Saving");
+  try {
+    await api(`/notes/${button.dataset.noteSave}`, {
+      method: "PATCH",
+      body: JSON.stringify({
+        title: card.querySelector("[data-note-title]").value,
+        body: card.querySelector("[data-note-body]").value,
+      }),
+    });
+    ui.toast("Note updated", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+async function deleteStandaloneNote(button) {
+  const confirmed = await ui.confirmDestructive({ title: "Delete note", body: "This removes the note and any bookmark link to it.", confirm: "Delete", cancel: "Keep note" });
+  if (!confirmed) return;
+  const done = setButtonBusy(button, "Deleting");
+  try {
+    await api(`/notes/${button.dataset.noteDelete}`, { method: "DELETE" });
+    ui.toast("Note deleted", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 async function bookmarkPage() {

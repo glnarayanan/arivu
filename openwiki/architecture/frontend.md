@@ -19,6 +19,7 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 
 - `/dashboard`: bookmark list, search, URL capture, quick note, manual tags, PWA share-target prefill, and visible processing status.
 - `/bookmark/:id`: sanitized reader view, summaries, read state, tags, related items, annotations, linked notes, and review actions.
+- `/notes`: standalone notes for ideas and snippets that are not tied to a URL.
 - `/review`: resurfacing-backed daily review queue with complete and snooze actions.
 - `/duplicates`: duplicate groups and merge workflow.
 - `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.

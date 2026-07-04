@@ -218,6 +218,30 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("unexpected note body: %#v", noteBody)
 	}
 
+	standaloneResp := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Standalone","body":"Loose idea"}`, accessCookie, csrfCookie)
+	if standaloneResp.StatusCode != http.StatusOK {
+		t.Fatalf("create standalone note status = %d body=%s", standaloneResp.StatusCode, readBody(standaloneResp))
+	}
+	var standaloneBody struct {
+		Note map[string]any `json:"note"`
+	}
+	_ = json.NewDecoder(standaloneResp.Body).Decode(&standaloneBody)
+	standaloneResp.Body.Close()
+	standaloneID, _ := standaloneBody.Note["id"].(string)
+	if standaloneID == "" || standaloneBody.Note["bookmark_id"] != nil {
+		t.Fatalf("unexpected standalone note: %#v", standaloneBody)
+	}
+	updateStandalone := adminRequest(t, handler, http.MethodPatch, "/api/notes/"+standaloneID, `{"title":"Updated standalone","body":"Sharper idea"}`, accessCookie, csrfCookie)
+	if updateStandalone.StatusCode != http.StatusOK {
+		t.Fatalf("update standalone note status = %d body=%s", updateStandalone.StatusCode, readBody(updateStandalone))
+	}
+	updateStandalone.Body.Close()
+	deleteStandalone := adminRequest(t, handler, http.MethodDelete, "/api/notes/"+standaloneID, "", accessCookie, csrfCookie)
+	if deleteStandalone.StatusCode != http.StatusOK {
+		t.Fatalf("delete standalone note status = %d body=%s", deleteStandalone.StatusCode, readBody(deleteStandalone))
+	}
+	deleteStandalone.Body.Close()
+
 	annotationResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/capture/annotations", `{"quote":"Recall with evidence","note":"Promote this into review.","selector":{"type":"quote"},"tags":["Evidence","evidence"]}`, accessCookie, csrfCookie)
 	if annotationResp.StatusCode != http.StatusOK {
 		t.Fatalf("create annotation status = %d body=%s", annotationResp.StatusCode, readBody(annotationResp))
