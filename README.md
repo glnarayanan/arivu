@@ -67,13 +67,10 @@ Use `arivu migrate` with a validated legacy JSON export. See `documentation/migr
 
 ## Documentation
 
-- Architecture: `documentation/architecture.md`
+- Codebase guide: `openwiki/quickstart.md`
+- Durable docs index: `documentation/README.md`
 - Deployment: `documentation/deployment.md`
-- Security model: `documentation/security-model.md`
-- Dependency policy: `documentation/dependency-policy.md`
-- SQLite schema: `documentation/sqlite-schema.md`
 - Migration guide: `documentation/migration-guide.md`
-- Browser workflow checks: `documentation/browser-workflow-checks.md`
 
 ## Legacy Repository
 

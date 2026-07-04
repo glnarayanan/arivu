@@ -2,19 +2,11 @@
 
 Keep this file lean. Load focused docs under `documentation/` when needed.
 
-## Canonical Docs
+## Documentation
 
-- Project overview: `README.md`
-- Design context: `documentation/design-context.md`
-- Architecture: `documentation/architecture.md`
-- Deployment: `documentation/deployment.md`
-- Security model: `documentation/security-model.md`
-- Dependency policy: `documentation/dependency-policy.md`
-- SQLite schema: `documentation/sqlite-schema.md`
-- Migration guide: `documentation/migration-guide.md`
-- Contribution guide: `CONTRIBUTING.md`
-- Security policy: `SECURITY.md`
-- Changelog: `CHANGELOG.md`
+Start with [OpenWiki quickstart](openwiki/quickstart.md) for codebase orientation.
+Use [documentation index](documentation/README.md) for durable runbooks, policy,
+design, migration, and status docs.
 
 ## Working Rules
 

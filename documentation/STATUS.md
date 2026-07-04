@@ -7,7 +7,7 @@
 - Go module and `arivu` command with `serve`, `migrate`, `version`, `login`, `save`, `list`, and `search` commands.
 - `net/http` server with explicit timeouts, request body limits, panic recovery, request logging, and security headers.
 - Embedded dependency-free frontend assets served from the Go binary.
-- SQLite schema for users, sessions, bookmarks, summaries, collections, normalized relationships, import jobs, X connections, OAuth state, runtime settings, rate limits, audit events, and durable jobs.
+- SQLite schema for users, sessions, bookmarks, `ai_summaries`, collections, normalized relationships, import jobs, X connections, OAuth states, runtime settings, rate limits, audit events, and jobs.
 - Opaque token auth with `web`, `cli`, and `extension` audiences, hashed token storage, refresh rotation, HTTP-only cookies, CSRF token checks, and bcrypt-to-Argon2id rehash on login.
 - SSRF-aware safe fetch client with custom dialer, no proxy environment use, redirect validation, blocked private/reserved targets, content-type validation, and response-size limits.
 - Backend-owned HTML sanitizer with strict allowlisted tags, attributes, and URL schemes.
