@@ -1081,6 +1081,7 @@ async function settingsPage() {
   bindProfilePanel();
   bindImportPanel();
   bindTagSettingsPanel();
+  bindConnectionsPanel();
   bindAPIKeysPanel();
 }
 
@@ -1088,8 +1089,9 @@ function settingsPanel(id) {
   if (id === "profile") return profilePanel();
   if (id === "import") return importPanel();
   if (id === "tags") return tagSettingsPanel();
+  if (id === "connections") return connectionsPanel();
   if (id === "api-keys") return apiKeysPanel();
-  return `<section class="panel"><p class="meta">No connection controls yet.</p></section>`;
+  return "";
 }
 
 function profilePanel() {
@@ -1238,6 +1240,91 @@ async function refreshTagSettings() {
   if (select) {
     select.innerHTML = tags.map((tag) => `<option value="${escapeHTML(tag.id)}">${escapeHTML(tag.name)}</option>`).join("");
   }
+}
+
+function connectionsPanel() {
+  return `<section class="split">
+    <section class="panel">
+      <h3>X</h3>
+      <div id="x-status" class="stack"><p class="meta">Loading X status.</p></div>
+      <div class="button-row">
+        <button type="button" class="secondary" id="x-connect">Connect X</button>
+        <button type="button" class="secondary" id="x-sync">Sync bookmarks</button>
+        <button type="button" class="danger" id="x-disconnect">Disconnect</button>
+      </div>
+    </section>
+  </section>`;
+}
+
+async function bindConnectionsPanel() {
+  const status = document.querySelector("#x-status");
+  if (!status) return;
+  const connect = document.querySelector("#x-connect");
+  const sync = document.querySelector("#x-sync");
+  const disconnect = document.querySelector("#x-disconnect");
+  const refresh = async () => {
+    try {
+      const enabled = await api("/auth/x/enabled");
+      if (!enabled.enabled) {
+        status.innerHTML = `<p class="meta">X integration is not enabled on this server.</p>`;
+        connect.disabled = true;
+        sync.disabled = true;
+        disconnect.disabled = true;
+        return;
+      }
+      const current = await api("/auth/x/status");
+      status.innerHTML = xConnectionStatus(current);
+      connect.hidden = current.connected;
+      sync.disabled = !current.connected;
+      disconnect.disabled = !current.connected;
+    } catch (err) {
+      status.innerHTML = `<p class="meta">${escapeHTML(err.message)}</p>`;
+    }
+  };
+  connect.addEventListener("click", async (event) => {
+    const done = setButtonBusy(event.currentTarget, "Opening");
+    try {
+      const result = await api("/auth/x/connect");
+      if (result.auth_url) window.location.href = result.auth_url;
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  sync.addEventListener("click", async (event) => {
+    const done = setButtonBusy(event.currentTarget, "Syncing");
+    try {
+      const result = await api("/auth/x/sync", { method: "POST", body: "{}" });
+      ui.toast(`Synced ${Number(result.new_bookmarks || 0)} new bookmarks`, "success");
+      await refresh();
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  disconnect.addEventListener("click", async (event) => {
+    const confirmed = await ui.confirmDestructive({ title: "Disconnect X", body: "This removes Arivu's stored X tokens. Saved bookmarks stay in Arivu.", confirm: "Disconnect", cancel: "Keep connected" });
+    if (!confirmed) return;
+    const done = setButtonBusy(event.currentTarget, "Disconnecting");
+    try {
+      await api("/auth/x/disconnect", { method: "POST", body: "{}" });
+      ui.toast("X disconnected", "success");
+      await refresh();
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  await refresh();
+}
+
+function xConnectionStatus(status) {
+  if (!status.connected) return `<p class="meta">No X account connected.</p>`;
+  return `<p><strong>@${escapeHTML(status.x_username || "x")}</strong> <span class="meta">${escapeHTML(status.x_name || "")}</span></p>
+    <p class="meta">Status: ${escapeHTML(status.sync_status || "idle")} · Synced: ${Number(status.total_synced || 0)}${status.last_sync_at ? ` · Last sync: ${escapeHTML(status.last_sync_at)}` : ""}</p>`;
 }
 
 function apiKeysPanel() {

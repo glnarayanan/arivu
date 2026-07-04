@@ -60,6 +60,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - Settings profile uses the existing profile and password-change routes; Settings
   API keys uses the existing admin key status/update routes and shows an
   admin-required message for non-admin users.
+- Settings connections exposes X status, connect, sync, and disconnect controls
+  through the existing X OAuth and sync routes.
 - Bookmark save responses include `job_id`; the dashboard shows a short
   processing status before navigating to the saved bookmark.
 - Bookmark detail is now the reader/research surface: sanitized archived HTML,
