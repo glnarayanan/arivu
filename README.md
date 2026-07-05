@@ -12,6 +12,9 @@ Arivu is a self-hosted bookmarking app with an embedded browser UI, SQLite persi
 - Opaque web, CLI, and extension sessions with audience isolation and CSRF protection for web mutations.
 - SSRF-safe outbound fetching, backend-owned HTML sanitization, and direct HTTP clients for Gemini, Resend, and X.
 - Browser extension support through extension-scoped API routes.
+- Second-brain workflow surfaces for Inbox triage, Focus tasks/reminders,
+  Review, standalone notes, explicit links, annotations, cited answers, and
+  Obsidian-ready exports.
 
 ## Quick Start
 
@@ -67,9 +70,10 @@ Use `arivu migrate` with a validated legacy JSON export. See `openwiki/domain/mi
 
 ## Documentation
 
-Start with `openwiki/quickstart.md`. OpenWiki contains the codebase guide,
-deployment notes, dependency policy, security model, schema reference, and
-legacy migration guide.
+Start with `openwiki/user-guide.md` if you are running Arivu, or
+`openwiki/quickstart.md` if you are changing the codebase. OpenWiki contains the
+user guide, codebase guide, deployment notes, dependency policy, security model,
+schema reference, GitHub Wiki publishing notes, and legacy migration guide.
 
 ## Legacy Repository
 
