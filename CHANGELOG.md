@@ -42,6 +42,9 @@ All notable changes to this project will be documented in this file.
 - Added timezone-aware recurring reminders with custom day intervals, notification channels, edit and snooze APIs, due-state response metadata, and idempotent scheduled Resend email jobs.
 - Added an Assistant planning endpoint and guided UI that generate inert, reviewable drafts from Inbox, Review, search, or a specific saved item before queueing any proposal.
 - Added a `/notes/:id` note workspace, note-to-bookmark links, Inbox bulk triage, keyboard Inbox stage shortcuts, Review reason labels, and Focus views for pending, overdue, today, upcoming, and completed open loops.
+- Added a slim `/api/link-targets` route for bookmark/note link pickers so
+  detail pages can populate relationship selectors without fetching note bodies
+  or bookmark archive text.
 
 ### Changed
 
@@ -87,6 +90,15 @@ All notable changes to this project will be documented in this file.
 - Full JSON backups can now be restored through bookmark import, remapping IDs under the authenticated user while preserving summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, and import provenance.
 - Added an Obsidian ZIP export that writes bookmark and standalone note Markdown files into vault-ready folders without adding production dependencies.
 - Direct `/notes/:id` URLs now route to the full note workspace instead of the dashboard fallback.
+- The embedded frontend now restores focus and announces route changes after
+  SPA navigation, labels dense dashboard filters for assistive technology,
+  clarifies destructive/assistant/import copy, and uses slimmer link-target
+  reads on bookmark and note detail pages.
+- Assistant proposal UI now uses pending/execution language instead of approval
+  ledger wording, and Settings tag copy now describes primary tags and aliases
+  in user-facing terms.
+- Trimmed dead bookmark helper code while preserving the compatibility
+  `/api/bookmarks/aged` route and runtime clock override.
 
 ### Security
 

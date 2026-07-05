@@ -40,7 +40,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Bookmark detail renders summaries, tags, related items, read state, annotations, linked notes, and review completion in one place.
 - Explicit links connect bookmarks and notes with user-authored labels. Link
   reads return outgoing and incoming relationships so a saved item can show both
-  what it points to and what points back to it.
+  what it points to and what points back to it. Link picker target reads use
+  `/api/link-targets`, returning only slim bookmark/note metadata for the
+  authenticated user.
 - Reminders attach due times, local timezone, recurrence, notification channel,
   and reminder notes to bookmarks or notes. Reminder reads decorate each row
   with the item title, due state, and completion/notification timestamps while
@@ -57,8 +59,8 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Assistant suggestions generate inert drafts from an item, search query, Inbox
   stage, or Review queue. Drafts are limited to bounded second-brain mutations:
   item state updates, explicit links, reminders, and action items. Queueing a
-  draft creates a normal proposal in the Assistant ledger; nothing executes
-  until a user approves it.
+  draft creates a normal pending proposal; nothing executes until a user
+  explicitly runs it.
 - The review queue is powered by resurfacing candidates plus open-loop signals:
   processed/processing stage, high importance, next action, due reminders, stale
   action items, and older unreviewed notes. API responses include

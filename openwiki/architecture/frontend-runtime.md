@@ -31,6 +31,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - A single refresh retry is attempted after a protected API route returns 401.
 - Interactive controls are native elements unless custom behavior is required.
 - Route changes expose a top progress marker while async page work is pending.
+- Route changes update the document title, announce the active route, and move
+  focus to the main content after internal navigation or browser history
+  navigation.
 - Form actions disable the initiating button and swap to specific busy labels.
 - Form failures render inline messages linked to the affected fields with
   `aria-describedby`.
@@ -49,8 +52,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   as tag, domain, source, and read status keep results bookmark-scoped.
 - `/notes` is the compact standalone-note list. `/notes/:id` is the full note
   workspace for editing, action items, reminders, explicit links, backlinks,
-  note-to-note links, and note-to-bookmark links. `/notes?note=<id>` redirects
-  to `/notes/:id` for compatibility.
+  note-to-note links, and note-to-bookmark links. Link selectors call
+  `/api/link-targets` for slim id/title target rows instead of loading full note
+  bodies or bookmark archive content. `/notes?note=<id>` redirects to
+  `/notes/:id` for compatibility.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
   AI-processed, failed, completed status counters, source report chips, and
@@ -59,7 +64,7 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   Markdown bookmark interchange exports. Obsidian ZIP export downloads
   vault-ready bookmark and note folders with explicit graph links as wikilinks
   from the same export route.
-- Settings tags uses native forms to create canonical tags and add aliases to
+- Settings tags uses native forms to create primary tags and add aliases to
   existing tags through the normalized tag APIs.
 - Settings profile uses the existing profile and password-change routes; Settings
   API keys uses the existing admin key status/update routes and shows an

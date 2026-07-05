@@ -24,16 +24,16 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 - `/focus`: daily work surface combining action items and reminders with links
   back to their source items plus quick reminder completion, snooze, and delete
   actions. Views include pending, overdue, today, upcoming, and completed.
-- `/assistant`: guided planner for inert assistant drafts plus an approval ledger
-  for allowlisted action proposals, with payload/result inspection and
-  approve/reject controls. Draft cards expose the source item and JSON payload
-  before they can be queued as proposals.
-- `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions. Reminder controls include timezone-aware due times, recurrence, in-app/email channel selection, inline edits, snooze, completion, and deletion.
+- `/assistant`: guided planner for inert assistant drafts plus pending
+  proposals for allowlisted actions, with payload/result inspection and
+  explicit execute/reject controls. Draft cards expose the source item and JSON
+  payload before they can be queued as proposals.
+- `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions. Reminder controls include timezone-aware due times, recurrence, in-app/email channel selection, inline edits, snooze, completion, and deletion. Link selectors use slim `/api/link-targets` reads rather than full archive rows.
 - `/notes`: compact standalone-note list. `/notes/:id` is the full note
   workspace for editing, action items, reminders, explicit links, backlinks,
   note-to-note links, and note-to-bookmark links. Reminder controls match
-  bookmark reminder controls. `/notes?note=<id>` redirects to `/notes/:id` for
-  compatibility.
+  bookmark reminder controls. Note link selectors also use `/api/link-targets`.
+  `/notes?note=<id>` redirects to `/notes/:id` for compatibility.
 - `/review`: resurfacing-backed daily review queue with complete and snooze
   actions, reason labels, priority metadata, and inline task/reminder controls.
 - `/duplicates`: duplicate groups and merge workflow.
