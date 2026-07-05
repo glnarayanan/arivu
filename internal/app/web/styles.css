@@ -7,6 +7,7 @@
   --muted: oklch(43% .026 72);
   --placeholder: oklch(38% .028 72);
   --line: oklch(22% .025 68);
+  --line-soft: oklch(22% .025 68 / .28);
   --accent: oklch(45% .105 35);
   --accent-ink: oklch(97% .018 84);
   --accent-2: oklch(42% .07 176);
@@ -46,12 +47,9 @@ body {
   min-height: 100%;
   color: var(--ink);
   background:
-    linear-gradient(90deg, oklch(22% .025 68 / .03) 1px, transparent 1px),
-    linear-gradient(oklch(22% .025 68 / .025) 1px, transparent 1px),
-    radial-gradient(circle at top right, oklch(45% .105 35 / .12), transparent 35rem),
-    radial-gradient(circle at bottom left, oklch(42% .07 176 / .08), transparent 32rem),
+    radial-gradient(circle at top right, oklch(45% .105 35 / .08), transparent 35rem),
+    radial-gradient(circle at bottom left, oklch(42% .07 176 / .055), transparent 32rem),
     var(--paper);
-  background-size: 28px 28px, 28px 28px, auto, auto;
   font-family: var(--font-body);
   font-kerning: normal;
   text-rendering: optimizeLegibility;
@@ -412,8 +410,9 @@ input::placeholder, textarea::placeholder {
 }
 .annotation blockquote {
   margin: 0;
-  border-left: 6px solid var(--accent);
-  padding-left: var(--space-3);
+  border: 2px solid var(--line-soft);
+  background: color-mix(in oklch, var(--gold) 10%, var(--panel));
+  padding: var(--space-3);
   font-size: 1.125rem;
   line-height: 1.45;
 }
@@ -490,10 +489,24 @@ input::placeholder, textarea::placeholder {
   box-shadow: var(--shadow-sm);
   padding: var(--space-3);
   font: 700 .875rem/1.25 var(--font-ui);
+  position: relative;
+  overflow: hidden;
 }
 .toast-success {
   background: var(--accent-2);
   color: var(--accent-ink);
+}
+.toast-earned::after {
+  content: "";
+  position: absolute;
+  right: var(--space-3);
+  bottom: var(--space-2);
+  width: 2.25rem;
+  height: .35rem;
+  border-top: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  opacity: .55;
+  transform: rotate(-7deg);
 }
 .toast-error {
   background: var(--danger);
@@ -598,6 +611,7 @@ input::placeholder, textarea::placeholder {
     box-shadow: 1px 1px 0 oklch(22% .025 68 / .92);
   }
   .panel, .bookmark, .menu, .dialog, .toast { animation: hardReveal .22s var(--ease-out-quart) both; }
+  .toast-earned::after { animation: receiptMark .42s var(--ease-out-quart) both; }
   body.is-routing #route-progress { animation: routeSweep .9s var(--ease-out-quart) infinite; }
   @media (hover: hover) {
     button:hover:not(:disabled), .button:hover, .bookmark:hover {
@@ -616,6 +630,10 @@ input::placeholder, textarea::placeholder {
     0% { transform: scaleX(.08); }
     55% { transform: scaleX(.74); }
     100% { transform: scaleX(.96); }
+  }
+  @keyframes receiptMark {
+    from { opacity: 0; transform: translateX(.75rem) rotate(-7deg); }
+    to { opacity: .55; transform: translateX(0) rotate(-7deg); }
   }
 }
 

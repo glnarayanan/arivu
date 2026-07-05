@@ -42,6 +42,14 @@ All notable changes to this project will be documented in this file.
   status, and per-setting override removal.
 - The Admin page now exposes overview, API usage, users, system, activity,
   collections, and audit sections backed by SQLite-native admin endpoints.
+- Admin password reset now uses the same Argon2id password storage as user
+  password reset and change-password flows.
+- The embedded frontend admin reset flow now uses the existing accessible dialog
+  system instead of a native browser prompt.
+- The browser extension token bootstrap now sends the web session CSRF token
+  when requesting extension-audience tokens.
+- The embedded frontend visual system is quieter on dense app surfaces, with
+  reduced decorative background patterning and no side-accent blockquote border.
 - Consolidated public project documentation under `openwiki/` and removed the
   duplicate `documentation/` tree.
 - Consolidated v2 provider-secret sealing/opening in `internal/secrets` and
@@ -79,6 +87,8 @@ All notable changes to this project will be documented in this file.
 - GitHub Actions CI now declares least-privilege `contents: read` token permissions.
 - Updated vulnerable Go modules to patched `golang.org/x/crypto` and `golang.org/x/net` releases.
 - Derived new encrypted provider-secret keys with HKDF before AES-256-GCM sealing.
+- Audit metadata is redacted before storage so token-, password-, secret-, and
+  API-key-like values are not persisted in audit rows.
 - Made web access and refresh cookie setters explicitly HttpOnly while keeping the CSRF double-submit cookie readable.
 - Validated imported URLs with the same SSRF-aware safe-fetch policy used for normal saves.
 - Full JSON backup restore writes every restored row with the authenticated user ID and remaps cross-references instead of trusting exported ownership.

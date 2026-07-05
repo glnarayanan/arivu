@@ -69,12 +69,16 @@ function toast(message, tone = "info") {
   const region = document.querySelector("#toast-region");
   const item = document.createElement("div");
   const safeTone = tone === "success" || tone === "error" ? tone : "info";
-  item.className = `toast toast-${safeTone}`;
+  item.className = `toast toast-${safeTone}${isEarnedSuccessToast(message, safeTone) ? " toast-earned" : ""}`;
   item.setAttribute("role", safeTone === "error" ? "alert" : "status");
   item.setAttribute("aria-live", safeTone === "error" ? "assertive" : "polite");
   item.textContent = message;
   region.append(item);
   setTimeout(() => item.remove(), 3200);
+}
+
+function isEarnedSuccessToast(message, tone) {
+  return tone === "success" && /\b(saved|review|import|queued)\b/i.test(message);
 }
 
 function setFormMessage(form, message = "", tone = "error") {
@@ -148,7 +152,10 @@ const ui = {
       button.type = "button";
       button.textContent = action.label;
       button.className = action.kind === "secondary" ? "secondary" : action.kind === "danger" ? "danger" : "";
-      button.addEventListener("click", () => close(action.value));
+      button.addEventListener("click", () => {
+        if (action.beforeClose?.() === false) return;
+        close(action.value);
+      });
       actionBar.append(button);
     });
     const closeButton = backdrop.querySelector("[data-dialog-close]");
@@ -1466,6 +1473,7 @@ async function bindImportPanel() {
         body: document.querySelector("#import-content").value,
       });
       setFormMessage(form, `${result.count || 0} bookmarks queued.`, "success");
+      ui.toast(`${result.count || 0} bookmarks queued`, "success");
       const latest = await api("/import-jobs").catch(() => []);
       if (result.import_job_id) {
         const detail = await api(`/import-jobs/${result.import_job_id}`).catch(() => null);
@@ -1892,7 +1900,7 @@ async function runAdminUserAction(button) {
   }
   let body = "{}";
   if (action === "reset-password") {
-    const password = prompt("New password");
+    const password = await requestAdminResetPassword();
     if (!password) return;
     body = JSON.stringify({ new_password: password });
   }
@@ -1908,6 +1916,27 @@ async function runAdminUserAction(button) {
   } finally {
     done();
   }
+}
+
+async function requestAdminResetPassword() {
+  const body = document.createElement("div");
+  body.className = "form";
+  body.innerHTML = `
+    <p class="meta">Set a temporary password for this account. Share it through a private channel.</p>
+    <div class="field">
+      <label for="admin-reset-password">New password</label>
+      <input id="admin-reset-password" type="password" autocomplete="new-password" minlength="8" required>
+    </div>
+  `;
+  const ok = await ui.dialog({
+    title: "Reset password",
+    body,
+    actions: [
+      { label: "Cancel", value: false, kind: "secondary" },
+      { label: "Reset password", value: true, kind: "danger", beforeClose: () => body.querySelector("#admin-reset-password").reportValidity() },
+    ],
+  });
+  return ok ? body.querySelector("#admin-reset-password")?.value.trim() || "" : "";
 }
 
 function formatCount(value) {
