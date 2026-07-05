@@ -48,7 +48,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   while keeping citations back to the source items. Bookmark-only filters such
   as tag, domain, source, and read status keep results bookmark-scoped.
 - `/notes` exposes standalone notes for ideas and snippets that are not tied to
-  a URL, including create, edit, delete, action item, and reminder flows.
+  a URL, including create, edit, delete, action item, reminder, and note-to-note
+  link flows.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
   AI-processed, failed, completed status counters, source report chips, and

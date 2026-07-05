@@ -39,10 +39,7 @@ func (s *Service) Notes(w http.ResponseWriter, r *http.Request, user auth.User) 
 		return
 	}
 	for _, note := range notes {
-		id := stringValue(note["id"])
-		note["item_state"] = s.itemState(r.Context(), user.ID, "note", id)
-		note["action_items"] = s.itemActionItems(r.Context(), user.ID, "note", id)
-		note["reminders"] = s.itemReminders(r.Context(), user.ID, "note", id)
+		s.decorateNote(r.Context(), user.ID, note)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"notes": notes})
 }
@@ -82,6 +79,7 @@ func (s *Service) CreateNote(w http.ResponseWriter, r *http.Request, user auth.U
 		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO bookmark_notes(bookmark_id,note_id,user_id,created_at) VALUES(?,?,?,?)`, body.BookmarkID, id, user.ID, now)
 	}
 	note, _ := s.note(r.Context(), user.ID, id)
+	s.decorateNote(r.Context(), user.ID, note)
 	writeJSON(w, http.StatusOK, map[string]any{"note": note})
 }
 
@@ -91,6 +89,7 @@ func (s *Service) GetNote(w http.ResponseWriter, r *http.Request, user auth.User
 		writeError(w, http.StatusNotFound, "Note not found")
 		return
 	}
+	s.decorateNote(r.Context(), user.ID, note)
 	writeJSON(w, http.StatusOK, note)
 }
 
@@ -113,7 +112,19 @@ func (s *Service) UpdateNote(w http.ResponseWriter, r *http.Request, user auth.U
 		return
 	}
 	note, _ := s.note(r.Context(), user.ID, r.PathValue("id"))
+	s.decorateNote(r.Context(), user.ID, note)
 	writeJSON(w, http.StatusOK, map[string]any{"note": note})
+}
+
+func (s *Service) decorateNote(ctx context.Context, userID string, note map[string]any) {
+	id := stringValue(note["id"])
+	if id == "" {
+		return
+	}
+	note["item_state"] = s.itemState(ctx, userID, "note", id)
+	note["action_items"] = s.itemActionItems(ctx, userID, "note", id)
+	note["reminders"] = s.itemReminders(ctx, userID, "note", id)
+	note["links"] = s.itemLinks(ctx, userID, "note", id)
 }
 
 func (s *Service) DeleteNote(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -123,6 +134,10 @@ func (s *Service) DeleteNote(w http.ResponseWriter, r *http.Request, user auth.U
 		return
 	}
 	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM reminders WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM item_states WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM review_events WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM item_links WHERE user_id=? AND ((from_type='note' AND from_id=?) OR (to_type='note' AND to_id=?))`, user.ID, r.PathValue("id"), r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Note deleted"})
 }
 

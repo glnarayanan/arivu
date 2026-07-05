@@ -1135,7 +1135,7 @@ async function notesPage() {
       </section>
     </section>
     <section class="stack">
-      ${notes.map(standaloneNoteCard).join("") || `<div class="panel empty-state"><span class="meta">No notes</span><h2>Start with one thought</h2><p>Standalone notes can be linked to bookmarks later through the reader workflow.</p></div>`}
+      ${notes.map((note) => standaloneNoteCard(note, notes)).join("") || `<div class="panel empty-state"><span class="meta">No notes</span><h2>Start with one thought</h2><p>Standalone notes can be linked to bookmarks later through the reader workflow.</p></div>`}
     </section>
   `));
   const form = document.querySelector("#standalone-note-form");
@@ -1166,12 +1166,14 @@ async function notesPage() {
   document.querySelectorAll("[data-note-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteStandaloneNote(button));
   });
+  bindNoteLinkForms();
+  bindLinkDeleteControls();
   bindActionItemControls();
   bindReminderControls();
   focusNoteFromQuery();
 }
 
-function standaloneNoteCard(note) {
+function standaloneNoteCard(note, notes) {
   return `<article class="panel form" data-note="${escapeHTML(note.id)}">
     <div class="field"><label for="note-title-${escapeHTML(note.id)}">Title</label><input id="note-title-${escapeHTML(note.id)}" data-note-title value="${escapeHTML(note.title || "")}"></div>
     <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="5">${escapeHTML(note.body || "")}</textarea></div>
@@ -1189,6 +1191,11 @@ function standaloneNoteCard(note) {
       <h3>Reminder</h3>
       ${reminderForm("note", note.id)}
       ${reminderList(note.reminders || [])}
+    </section>
+    <section>
+      <h3>Links</h3>
+      ${noteLinkForm(note, notes)}
+      ${linkList(note.links || {})}
     </section>
   </article>`;
 }
@@ -1444,9 +1451,7 @@ async function bookmarkPage() {
       done();
     }
   });
-  document.querySelectorAll("[data-link-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteLink(button));
-  });
+  bindLinkDeleteControls();
   bindActionItemControls();
   bindReminderControls();
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
@@ -1664,6 +1669,24 @@ function noteOptions(notes, linkedNotes) {
   return `<option value="">Choose note</option>${available.map((note) => `<option value="${escapeHTML(note.id)}">${escapeHTML(note.title || "Untitled note")}</option>`).join("")}`;
 }
 
+function noteLinkOptions(notes, note) {
+  const linked = new Set(((note.links || {}).outgoing || []).filter((link) => link.to_type === "note").map((link) => link.to_id));
+  const available = (notes || []).filter((candidate) => candidate.id !== note.id && !linked.has(candidate.id));
+  if (!available.length) return `<option value="">No other notes available</option>`;
+  return `<option value="">Choose note</option>${available.map((candidate) => `<option value="${escapeHTML(candidate.id)}">${escapeHTML(candidate.title || "Untitled note")}</option>`).join("")}`;
+}
+
+function noteLinkForm(note, notes) {
+  return `<form class="task-form" data-note-link-form data-from-id="${escapeHTML(note.id)}">
+    <label class="sr-only" for="note-link-target-${escapeHTML(note.id)}">Linked note</label>
+    <select id="note-link-target-${escapeHTML(note.id)}" data-link-target>${noteLinkOptions(notes, note)}</select>
+    <label class="sr-only" for="note-link-label-${escapeHTML(note.id)}">Link label</label>
+    <input id="note-link-label-${escapeHTML(note.id)}" data-link-label type="text" maxlength="80" placeholder="supports, contradicts, follows">
+    <button type="submit" class="secondary">Link note</button>
+    <p class="form-message" data-form-message hidden></p>
+  </form>`;
+}
+
 function linkList(links) {
   const outgoing = links.outgoing || [];
   const incoming = links.incoming || [];
@@ -1697,6 +1720,49 @@ async function deleteLink(button) {
     ui.toast("Link deleted", "success");
     render();
   } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function bindLinkDeleteControls() {
+  document.querySelectorAll("[data-link-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteLink(button));
+  });
+}
+
+function bindNoteLinkForms() {
+  document.querySelectorAll("[data-note-link-form]").forEach((form) => {
+    form.addEventListener("submit", submitNoteLink);
+  });
+}
+
+async function submitNoteLink(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const targetID = form.querySelector("[data-link-target]").value;
+  if (!targetID) {
+    setFormMessage(form, "Choose a note to link.");
+    return;
+  }
+  const done = setButtonBusy(event.submitter, "Linking");
+  setFormMessage(form);
+  try {
+    await api("/links", {
+      method: "POST",
+      body: JSON.stringify({
+        from_type: "note",
+        from_id: form.dataset.fromId,
+        to_type: "note",
+        to_id: targetID,
+        label: form.querySelector("[data-link-label]").value,
+      }),
+    });
+    ui.toast("Link created", "success");
+    render();
+  } catch (err) {
+    setFormMessage(form, err.message);
     ui.toast(err.message, "error");
   } finally {
     done();

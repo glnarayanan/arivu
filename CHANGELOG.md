@@ -37,6 +37,7 @@ All notable changes to this project will be documented in this file.
 - Added durable action items for bookmarks and notes, with inline Inbox/bookmark controls, completion/deletion APIs, ownership validation, and JSON backup/restore support.
 - Added a Focus page that gathers pending action items and reminders without adding backend dependencies.
 - Added note-side action item and reminder controls so standalone notes can carry the same open loops as bookmarks from the Notes page.
+- Added note-side explicit links and backlinks, including note-to-note link creation from the Notes page.
 
 ### Changed
 
