@@ -19,12 +19,14 @@ For production, run behind TLS and set `COOKIE_SECURE=true`,
 
 ## Core Workflow
 
-1. Capture a URL from `/dashboard`, the browser extension, the PWA share target,
+1. Start at `/today` to plan the day, check Inbox, see open loops, review older
+   signals, and update the dated daily note.
+2. Capture a URL from `/dashboard`, the browser extension, the PWA share target,
    or `arivu save`.
-2. Triage new saves and notes in `/inbox` by setting stage, priority, and next
+3. Triage new saves and notes in `/inbox` by setting stage, priority, and next
    action.
-3. Work from `/focus` when a save has a task or reminder.
-4. Review older, due, high-priority, or still-actionable items in `/review`.
+4. Work from `/focus` when a save has a task or reminder.
+5. Review older, due, high-priority, or still-actionable items in `/review`.
 
 The UI labels item stages as Inbox, Working, Kept, and Archived. The stored API
 values are `inbox`, `processing`, `processed`, and `archived`.
@@ -46,6 +48,10 @@ needed.
 Use `/notes` for standalone thoughts that do not start from a URL. `/notes/:id`
 is the full note workspace for editing, tasks, reminders, note links, backlinks,
 and note-to-bookmark links.
+
+Use `/today` for the daily operating note. It is intentionally separate from the
+standalone note list: one dated note per user per day, optimized for planning
+and end-of-day wrap-up rather than long-term knowledge pages.
 
 Tasks are undated checklist items. Reminders have due times, timezone metadata,
 optional recurrence, and in-app due state. Email reminders are sent only when

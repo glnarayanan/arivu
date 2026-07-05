@@ -9,6 +9,7 @@ const routes = [
   { prefix: "/auth", page: authPage, access: "public" },
   { prefix: "/reset-password", page: resetPasswordPage, access: "public" },
   { prefix: "/accept-invite", page: acceptInvitePage, access: "public" },
+  { prefix: "/today", page: todayPage, access: "protected" },
   { prefix: "/dashboard", page: dashboardPage, access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
   { prefix: "/inbox", page: inboxPage, access: "protected" },
@@ -342,6 +343,7 @@ function navigate(path, replace = false) {
 
 function shell(title, content) {
   const nav = [
+    ["/today", "Today"],
     ["/dashboard", "Bookmarks"],
     ["/inbox", "Inbox"],
     ["/focus", "Focus"],
@@ -408,7 +410,7 @@ async function authPage() {
     try {
       await api("/auth/login", { method: "POST", body });
       ui.toast("Signed in", "success");
-      navigate("/dashboard", true);
+      navigate("/today", true);
     } catch (err) {
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
@@ -423,7 +425,7 @@ async function authPage() {
     try {
       await api("/auth/signup", { method: "POST", body: JSON.stringify({ email: emailInput.value, password: passwordInput.value }) });
       ui.toast("Account created", "success");
-      navigate("/dashboard", true);
+      navigate("/today", true);
     } catch (err) {
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
@@ -523,7 +525,7 @@ async function acceptInvitePage() {
         }),
       });
       ui.toast("Invite accepted", "success");
-      navigate("/dashboard", true);
+      navigate("/today", true);
     } catch (err) {
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
@@ -531,6 +533,138 @@ async function acceptInvitePage() {
       done();
     }
   });
+}
+
+async function todayPage() {
+  await requireUser();
+  const date = localDateKey();
+  const [daily, inbox, actions, reminders, review, memory, notes] = await Promise.all([
+    api(`/daily-notes/${date}`),
+    api("/inbox?stage=inbox&limit=6").catch(() => ({ items: [], counts: {} })),
+    api("/action-items?status=all").catch(() => ({ action_items: [] })),
+    api("/reminders?status=all").catch(() => ({ reminders: [] })),
+    api("/review?limit=6").catch(() => ({ items: [] })),
+    api("/memory-jogger").catch(() => ({ has_memory: false })),
+    api("/notes").catch(() => ({ notes: [] })),
+  ]);
+  const openActions = (actions.action_items || []).filter((item) => item.status !== "completed").slice(0, 6);
+  const dueReminders = (reminders.reminders || []).filter((item) => item.status !== "completed" && ["overdue", "today"].includes(item.due_state)).slice(0, 6);
+  const note = daily.daily_note || { body: "" };
+  setRoot(shell("Today", `
+    <section class="split">
+      <form class="panel form" id="daily-note-form">
+        <span class="meta">${escapeHTML(date)}</span>
+        <h2>Daily note</h2>
+        <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea></div>
+        <p class="form-message" id="daily-note-message" data-form-message hidden></p>
+        <button type="submit">Save daily note</button>
+      </form>
+      <section class="panel">
+        <span class="meta">Operating loop</span>
+        <h2>${Number((inbox.counts || {}).inbox || 0)} inbox · ${openActions.length + dueReminders.length} open now · ${(review.items || []).length} review</h2>
+        <p>Capture what arrived, decide what deserves attention, work the dated loops, then review one older signal.</p>
+        <div class="chips">
+          <a href="/dashboard">Capture</a>
+          <a href="/inbox">Triage</a>
+          <a href="/focus">Work</a>
+          <a href="/review">Review</a>
+        </div>
+      </section>
+    </section>
+    <section class="split">
+      ${todayList("Triage", inbox.items || [], "/inbox", todayInboxItem)}
+      ${todayList("Work", [...openActions, ...dueReminders].slice(0, 8), "/focus", todayWorkItem)}
+    </section>
+    <section class="split">
+      ${todayList("Review", review.items || [], "/review", todayReviewItem)}
+      <section class="panel">
+        <h2>Recent notes</h2>
+        ${todayListBody((notes.notes || []).slice(0, 5), todayNoteItem)}
+        <p><a class="text-link" href="/notes">Open notes</a></p>
+      </section>
+    </section>
+    <section class="split">
+      ${memoryCard(memory)}
+      <section class="panel">
+        <h2>Fast capture</h2>
+        <p>Use the bookmark cockpit when a URL needs to enter the system, or create a standalone note when the thought stands alone.</p>
+        <div class="chips">
+          <a href="/dashboard">Save URL</a>
+          <a href="/notes">New note</a>
+          <a href="/assistant">Assistant</a>
+        </div>
+      </section>
+    </section>
+  `));
+  const form = document.querySelector("#daily-note-form");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving");
+    setFormMessage(form);
+    try {
+      await api(`/daily-notes/${date}`, { method: "PUT", body: JSON.stringify({ body: document.querySelector("#daily-note-body").value }) });
+      setFormMessage(form, "Daily note saved.", "success");
+      ui.toast("Daily note saved", "success");
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+function localDateKey(value = new Date()) {
+  const tzOffset = value.getTimezoneOffset() * 60000;
+  return new Date(value.getTime() - tzOffset).toISOString().slice(0, 10);
+}
+
+function todayList(title, items, href, renderItem) {
+  return `<section class="panel">
+    <h2>${escapeHTML(title)}</h2>
+    ${todayListBody(items, renderItem)}
+    <p><a class="text-link" href="${href}">Open ${escapeHTML(title.toLowerCase())}</a></p>
+  </section>`;
+}
+
+function todayListBody(items, renderItem) {
+  if (!items.length) return `<p class="meta">Nothing waiting here.</p>`;
+  return `<div class="stack">${items.map(renderItem).join("")}</div>`;
+}
+
+function todayInboxItem(item) {
+  const isNote = item.item_type === "note";
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || item.url || "Untitled")}</strong></p>
+    <p class="meta">${escapeHTML(stageLabel(item.stage || "inbox"))} · ${escapeHTML(item.next_action || item.domain || item.source || "")}</p>
+    <a class="text-link" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${encodeURIComponent(item.id)}`}">Open</a>
+  </article>`;
+}
+
+function todayWorkItem(item) {
+  const isReminder = Boolean(item.due_at);
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(isReminder ? formatDate(item.due_at) : item.title || "Action item")}</strong></p>
+    <p class="meta">${escapeHTML(item.item_title || "")}${isReminder ? ` · ${escapeHTML(item.due_state || "")}` : ""}</p>
+    <a class="text-link" href="${itemHref(item)}">Open source</a>
+  </article>`;
+}
+
+function todayReviewItem(item) {
+  const isNote = item.item_type === "note";
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || item.url || "Untitled")}</strong></p>
+    <p class="meta">${(item.review_reasons || []).slice(0, 2).map(escapeHTML).join(" · ") || escapeHTML(item.resurfacing_reason || "review")}</p>
+    <a class="text-link" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${encodeURIComponent(item.id)}`}">Open</a>
+  </article>`;
+}
+
+function todayNoteItem(note) {
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(note.title || "Untitled note")}</strong></p>
+    <p class="meta">${escapeHTML(formatDate(note.updated_at))}</p>
+    <a class="text-link" href="/notes/${encodeURIComponent(note.id)}">Open note</a>
+  </article>`;
 }
 
 async function dashboardPage() {
@@ -3296,7 +3430,7 @@ async function render() {
   state.pendingRoutes += 1;
   document.body.classList.add("is-routing");
   const route = routes.find(routeMatches);
-  const page = route ? route.page : location.pathname === "/" ? () => navigate(state.user ? "/dashboard" : "/auth", true) : dashboardPage;
+  const page = route ? route.page : location.pathname === "/" ? () => navigate(state.user ? "/today" : "/auth", true) : dashboardPage;
   try {
     if (route?.access === "protected") await requireUser();
     await page();
@@ -3304,6 +3438,7 @@ async function render() {
     const actions = document.querySelector("#global-actions");
     if (actions) {
       ui.menu(actions, [
+        { label: "Today", action: () => navigate("/today") },
         { label: "Dashboard", action: () => navigate("/dashboard") },
         { label: "Settings", action: () => navigate("/settings") },
         { label: "Admin", action: () => navigate("/admin") },

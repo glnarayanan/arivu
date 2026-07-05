@@ -177,6 +177,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 		s.restoreBookmarkChildren(ctx, userID, newID, bookmark, oldNotes, now)
 	}
 	s.restoreStandaloneNotes(ctx, userID, backup["notes"], oldNotes, now)
+	s.restoreDailyNotes(ctx, userID, backup["daily_notes"], now)
 	s.restoreTags(ctx, userID, backup["tags"], now)
 	s.restoreSavedSearches(ctx, userID, backup["saved_searches"], now)
 	s.restoreReviewEvents(ctx, userID, backup["review_events"], oldBookmarks, oldNotes, now)
@@ -263,6 +264,26 @@ func (s *Service) restoreStandaloneNotes(ctx context.Context, userID string, raw
 				oldNotes[oldID] = noteID
 			}
 		}
+	}
+}
+
+func (s *Service) restoreDailyNotes(ctx context.Context, userID string, raw any, now string) {
+	for _, rawNote := range listValue(raw) {
+		note, ok := rawNote.(map[string]any)
+		if !ok {
+			continue
+		}
+		date, valid := dailyNoteDate(stringValue(note["date"]))
+		if !valid {
+			continue
+		}
+		body := strings.TrimSpace(stringValue(note["body"]))
+		if len(body) > maxNoteBody {
+			body = body[:maxNoteBody]
+		}
+		created := fallback(stringValue(note["created_at"]), now)
+		updated := fallback(stringValue(note["updated_at"]), now)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO daily_notes(user_id,note_date,body,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id,note_date) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at`, userID, date, body, created, updated)
 	}
 }
 
@@ -513,6 +534,7 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"exported_at":    time.Now().UTC().Format(time.RFC3339),
 		"bookmarks":      bookmarks,
 		"notes":          s.exportStandaloneNotes(ctx, userID),
+		"daily_notes":    s.exportDailyNotes(ctx, userID),
 		"tags":           s.exportTags(ctx, userID),
 		"saved_searches": s.exportSavedSearches(ctx, userID),
 		"import_jobs":    s.exportImportJobs(ctx, userID),
@@ -534,6 +556,21 @@ func (s *Service) exportStandaloneNotes(ctx context.Context, userID string) []ma
 	notes := []map[string]any{}
 	for rows.Next() {
 		notes = append(notes, scanNote(rows))
+	}
+	return notes
+}
+
+func (s *Service) exportDailyNotes(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT note_date,body,created_at,updated_at FROM daily_notes WHERE user_id=? ORDER BY note_date DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	notes := []map[string]any{}
+	for rows.Next() {
+		var date, body, created, updated string
+		_ = rows.Scan(&date, &body, &created, &updated)
+		notes = append(notes, map[string]any{"date": date, "body": body, "created_at": created, "updated_at": updated})
 	}
 	return notes
 }

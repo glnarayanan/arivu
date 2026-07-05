@@ -14,6 +14,7 @@ with foreign keys.
 - `bookmark_accesses`: access history.
 - `bookmark_entities` and `bookmark_concepts`: normalized graph terms.
 - `notes` and `bookmark_notes`: standalone Markdown/plain-text notes plus optional bookmark links.
+- `daily_notes`: one dated planning note per user and calendar day for the Today cockpit.
 - `annotations`: quoted text, user notes, selector metadata, and optional tag labels attached to bookmarks.
 - `tags`, `tag_aliases`, and `bookmark_tags`: normalized per-user tags with aliases so provider suggestions and manual tags converge instead of creating synonym clutter.
 - `saved_searches`: named user searches with structured filter JSON.

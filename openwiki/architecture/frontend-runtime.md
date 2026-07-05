@@ -41,6 +41,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   assertive alert semantics.
 - The authenticated shell includes a skip link and marks the active nav item with
   `aria-current="page"`.
+- `/today` is the default signed-in route. It reads `/api/daily-notes/{date}`,
+  `/api/inbox`, `/api/action-items`, `/api/reminders`, `/api/review`,
+  `/api/memory-jogger`, and `/api/notes`, then saves the dated daily note with
+  `PUT /api/daily-notes/{date}`.
 - `/dashboard` pre-fills the save form from PWA share-target `title`, `text`,
   and `url` query parameters. The URL field prefers the explicit `url`
   parameter, then falls back to the first URL found in shared text.

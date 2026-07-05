@@ -100,6 +100,119 @@ func TestWebAuthRequiresCSRFForBookmarkCreate(t *testing.T) {
 	}
 }
 
+func TestDailyNotesAreDateAddressedAndUserScoped(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "daily@example.com")
+	otherAccess, otherCSRF := signupForCookies(t, handler, "other-daily@example.com")
+
+	empty := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-07-06", "", accessCookie, csrfCookie)
+	if empty.StatusCode != http.StatusOK {
+		t.Fatalf("empty daily note status = %d body=%s", empty.StatusCode, readBody(empty))
+	}
+	var emptyBody struct {
+		DailyNote map[string]any `json:"daily_note"`
+	}
+	_ = json.NewDecoder(empty.Body).Decode(&emptyBody)
+	empty.Body.Close()
+	if emptyBody.DailyNote["date"] != "2026-07-06" || emptyBody.DailyNote["body"] != "" {
+		t.Fatalf("unexpected empty daily note: %#v", emptyBody.DailyNote)
+	}
+
+	badDate := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-7-6", "", accessCookie, csrfCookie)
+	if badDate.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad date status = %d body=%s", badDate.StatusCode, readBody(badDate))
+	}
+	badDate.Body.Close()
+
+	missingCSRFReq := httptest.NewRequest(http.MethodPut, "/api/daily-notes/2026-07-06", strings.NewReader(`{"body":"Plan"}`))
+	missingCSRFReq.Header.Set("Content-Type", "application/json")
+	missingCSRFReq.AddCookie(accessCookie)
+	missingCSRFRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingCSRFRec, missingCSRFReq)
+	missingCSRF := missingCSRFRec.Result()
+	if missingCSRF.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("missing csrf status = %d body=%s", missingCSRF.StatusCode, readBody(missingCSRF))
+	}
+	missingCSRF.Body.Close()
+
+	save := adminRequest(t, handler, http.MethodPut, "/api/daily-notes/2026-07-06", `{"body":"Plan the review loop."}`, accessCookie, csrfCookie)
+	if save.StatusCode != http.StatusOK {
+		t.Fatalf("save daily note status = %d body=%s", save.StatusCode, readBody(save))
+	}
+	save.Body.Close()
+	update := adminRequest(t, handler, http.MethodPut, "/api/daily-notes/2026-07-06", `{"body":"Ship the cockpit."}`, accessCookie, csrfCookie)
+	if update.StatusCode != http.StatusOK {
+		t.Fatalf("update daily note status = %d body=%s", update.StatusCode, readBody(update))
+	}
+	update.Body.Close()
+
+	read := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-07-06", "", accessCookie, csrfCookie)
+	var readBodyJSON struct {
+		DailyNote map[string]any `json:"daily_note"`
+	}
+	_ = json.NewDecoder(read.Body).Decode(&readBodyJSON)
+	read.Body.Close()
+	if readBodyJSON.DailyNote["body"] != "Ship the cockpit." {
+		t.Fatalf("daily note was not updated: %#v", readBodyJSON.DailyNote)
+	}
+
+	otherRead := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-07-06", "", otherAccess, otherCSRF)
+	var otherBody struct {
+		DailyNote map[string]any `json:"daily_note"`
+	}
+	_ = json.NewDecoder(otherRead.Body).Decode(&otherBody)
+	otherRead.Body.Close()
+	if otherBody.DailyNote["body"] != "" {
+		t.Fatalf("daily note leaked across users: %#v", otherBody.DailyNote)
+	}
+
+	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
+	if exportResp.StatusCode != http.StatusOK {
+		t.Fatalf("daily note export status = %d body=%s", exportResp.StatusCode, readBody(exportResp))
+	}
+	exportRaw, err := io.ReadAll(exportResp.Body)
+	if err != nil {
+		t.Fatalf("read daily note export: %v", err)
+	}
+	exportResp.Body.Close()
+	var exported struct {
+		DailyNotes []map[string]any `json:"daily_notes"`
+	}
+	_ = json.Unmarshal(exportRaw, &exported)
+	if len(exported.DailyNotes) != 1 || exported.DailyNotes[0]["date"] != "2026-07-06" || exported.DailyNotes[0]["body"] != "Ship the cockpit." {
+		t.Fatalf("export missing daily note: %#v", exported.DailyNotes)
+	}
+
+	restoreAccess, restoreCSRF := signupForCookies(t, handler, "restore-daily@example.com")
+	restore := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(exportRaw), restoreAccess, restoreCSRF)
+	if restore.StatusCode != http.StatusOK {
+		t.Fatalf("restore daily note status = %d body=%s", restore.StatusCode, readBody(restore))
+	}
+	restore.Body.Close()
+	restoredRead := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-07-06", "", restoreAccess, restoreCSRF)
+	var restoredBody struct {
+		DailyNote map[string]any `json:"daily_note"`
+	}
+	_ = json.NewDecoder(restoredRead.Body).Decode(&restoredBody)
+	restoredRead.Body.Close()
+	if restoredBody.DailyNote["body"] != "Ship the cockpit." {
+		t.Fatalf("restored daily note missing: %#v", restoredBody.DailyNote)
+	}
+}
+
 func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
@@ -2196,7 +2309,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}

@@ -137,6 +137,17 @@ CREATE TABLE IF NOT EXISTS notes (
 
 CREATE INDEX IF NOT EXISTS idx_notes_user_updated ON notes(user_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS daily_notes (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  note_date TEXT NOT NULL,
+  body TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, note_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_daily_notes_user_updated ON daily_notes(user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS bookmark_notes (
   bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
   note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,

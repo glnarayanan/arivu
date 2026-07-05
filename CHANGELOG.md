@@ -45,6 +45,8 @@ All notable changes to this project will be documented in this file.
 - Added a slim `/api/link-targets` route for bookmark/note link pickers so
   detail pages can populate relationship selectors without fetching note bodies
   or bookmark archive text.
+- Added a `/today` signed-in cockpit with per-day daily notes and existing
+  Inbox, Focus, Review, recent-note, and memory-jogger signals.
 
 ### Changed
 
