@@ -13,6 +13,7 @@ const routes = [
   { prefix: "/inbox", page: inboxPage, access: "protected" },
   { prefix: "/focus", page: focusPage, access: "protected" },
   { prefix: "/assistant", page: assistantPage, access: "protected" },
+  { prefix: "/notes/", page: notesPage, access: "protected" },
   { prefix: "/notes", page: notesPage, access: "protected" },
   { prefix: "/review", page: reviewPage, access: "protected" },
   { prefix: "/duplicates", page: duplicatesPage, access: "protected" },
@@ -357,7 +358,7 @@ function shell(title, content) {
 }
 
 async function authPage() {
-  setRoot(html`
+  setRoot(`
     <main class="auth">
       <section class="panel">
         <h1>Arivu</h1>
@@ -469,7 +470,7 @@ function resetPasswordForm() {
 }
 
 async function acceptInvitePage() {
-  setRoot(html`
+  setRoot(`
     <main class="auth">
       <section class="panel">
         <p class="meta">Invited account</p>
@@ -686,11 +687,14 @@ function answerPanel(answer) {
   const citations = answer.citations || [];
   return `<h2>Cited answer</h2>
     <p>${escapeHTML(answer.answer || "")}</p>
-    <div class="stack">${citations.map((item, index) => `<article class="annotation">
+    <div class="stack">${citations.map((item, index) => {
+      const itemID = encodeURIComponent(item.id || "");
+      return `<article class="annotation">
       <p><strong>[${index + 1}] ${escapeHTML(item.title || item.url)}</strong> <span class="meta">${escapeHTML(item.type || "bookmark")} · ${escapeHTML(item.domain || "")}</span></p>
       <p>${escapeHTML(item.snippet || "")}</p>
-      <a class="text-link" href="${item.type === "note" ? `/notes?note=${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open citation</a>
-    </article>`).join("") || `<p class="meta">No citations found.</p>`}</div>`;
+      <a class="text-link" href="${item.type === "note" ? `/notes/${itemID}` : `/bookmark/${itemID}`}">Open citation</a>
+    </article>`;
+    }).join("") || `<p class="meta">No citations found.</p>`}</div>`;
 }
 
 function sharedCaptureParams() {
@@ -705,10 +709,11 @@ function sharedCaptureParams() {
 }
 
 function bookmarkCard(b) {
-  return html`<a class="panel bookmark" href="/bookmark/${b.id}">
-    <span class="meta">${b.domain || "web"} · ${b.reading_time || 0} min</span>
-    <h2>${b.title || b.url}</h2>
-    <p>${b.description || "Queued for enrichment"}</p>
+  const bookmarkID = encodeURIComponent(b.id || "");
+  return `<a class="panel bookmark" href="/bookmark/${bookmarkID}">
+    <span class="meta">${escapeHTML(b.domain || "web")} · ${Number(b.reading_time || 0)} min</span>
+    <h2>${escapeHTML(b.title || b.url)}</h2>
+    <p>${escapeHTML(b.description || "Queued for enrichment")}</p>
   </a>`;
 }
 

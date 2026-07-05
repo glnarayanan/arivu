@@ -86,6 +86,7 @@ All notable changes to this project will be documented in this file.
 - JSON export now includes second-brain backup data: bookmark details, summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, import jobs, and import provenance.
 - Full JSON backups can now be restored through bookmark import, remapping IDs under the authenticated user while preserving summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, and import provenance.
 - Added an Obsidian ZIP export that writes bookmark and standalone note Markdown files into vault-ready folders without adding production dependencies.
+- Direct `/notes/:id` URLs now route to the full note workspace instead of the dashboard fallback.
 
 ### Security
 
@@ -115,3 +116,4 @@ All notable changes to this project will be documented in this file.
 - Reminder update and snooze routes are CSRF-protected, quota-limited, and user-scoped; reminder email jobs re-check ownership, due timestamp, pending status, and `last_notified_at` before sending.
 - Assistant suggestions are CSRF-protected, quota-limited, user-scoped, and ephemeral; queueing and approval continue to validate allowlisted proposal payloads before any mutation runs.
 - Inbox bulk triage is CSRF-protected, quota-limited, user-scoped, and returns per-item failures for stale or cross-user targets.
+- Bookmark cards now escape saved titles, domains, and descriptions before inserting them into the embedded frontend.
