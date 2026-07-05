@@ -457,21 +457,27 @@ func (s *Service) writeObsidianExport(ctx context.Context, w http.ResponseWriter
 	w.Header().Set("Content-Disposition", `attachment; filename="arivu-obsidian-vault.zip"`)
 	vault := zip.NewWriter(w)
 	defer vault.Close()
-	for _, bookmark := range mapList(export["bookmarks"]) {
-		name := "Bookmarks/" + obsidianFileName(stringValue(bookmark["title"]), stringValue(bookmark["id"]))
+	bookmarks := mapList(export["bookmarks"])
+	notes := obsidianNotes(export)
+	itemLinks := mapList(export["item_links"])
+	index := obsidianIndex(bookmarks, notes)
+	for _, bookmark := range bookmarks {
+		id := stringValue(bookmark["id"])
+		name := index[obsidianItemKey("bookmark", id)].Path + ".md"
 		file, err := vault.Create(name)
 		if err != nil {
 			return err
 		}
-		writeObsidianBookmark(file, bookmark)
+		writeObsidianBookmark(file, bookmark, index, itemLinks)
 	}
-	for _, note := range mapList(export["notes"]) {
-		name := "Notes/" + obsidianFileName(stringValue(note["title"]), stringValue(note["id"]))
+	for _, note := range notes {
+		id := stringValue(note["id"])
+		name := index[obsidianItemKey("note", id)].Path + ".md"
 		file, err := vault.Create(name)
 		if err != nil {
 			return err
 		}
-		writeObsidianNote(file, note)
+		writeObsidianNote(file, note, index, itemLinks)
 	}
 	return nil
 }
@@ -793,7 +799,55 @@ func remapItemID(itemType, itemID string, oldBookmarks, oldNotes map[string]stri
 	return ""
 }
 
-func writeObsidianBookmark(w io.Writer, bookmark map[string]any) {
+type obsidianItem struct {
+	Path  string
+	Title string
+}
+
+func obsidianNotes(export map[string]any) []map[string]any {
+	seen := map[string]bool{}
+	var notes []map[string]any
+	for _, note := range mapList(export["notes"]) {
+		id := stringValue(note["id"])
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		notes = append(notes, note)
+	}
+	for _, bookmark := range mapList(export["bookmarks"]) {
+		for _, note := range mapList(bookmark["notes"]) {
+			id := stringValue(note["id"])
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			notes = append(notes, note)
+		}
+	}
+	return notes
+}
+
+func obsidianIndex(bookmarks, notes []map[string]any) map[string]obsidianItem {
+	index := map[string]obsidianItem{}
+	for _, bookmark := range bookmarks {
+		id := stringValue(bookmark["id"])
+		title := fallback(stringValue(bookmark["title"]), stringValue(bookmark["url"]))
+		index[obsidianItemKey("bookmark", id)] = obsidianItem{Path: "Bookmarks/" + strings.TrimSuffix(obsidianFileName(title, id), ".md"), Title: title}
+	}
+	for _, note := range notes {
+		id := stringValue(note["id"])
+		title := fallback(stringValue(note["title"]), "Untitled Note")
+		index[obsidianItemKey("note", id)] = obsidianItem{Path: "Notes/" + strings.TrimSuffix(obsidianFileName(title, id), ".md"), Title: title}
+	}
+	return index
+}
+
+func obsidianItemKey(itemType, itemID string) string {
+	return itemType + ":" + itemID
+}
+
+func writeObsidianBookmark(w io.Writer, bookmark map[string]any, index map[string]obsidianItem, links []map[string]any) {
 	title := fallback(stringValue(bookmark["title"]), stringValue(bookmark["url"]))
 	fmt.Fprintf(w, "# %s\n\n", markdownText(title))
 	fmt.Fprintf(w, "Source: %s\n", markdownURL(stringValue(bookmark["url"])))
@@ -848,16 +902,53 @@ func writeObsidianBookmark(w io.Writer, bookmark map[string]any) {
 	if text := strings.TrimSpace(stringValue(bookmark["text_content"])); text != "" {
 		fmt.Fprintf(w, "## Archived Text\n\n%s\n", markdownText(text))
 	}
+	writeObsidianLinks(w, "bookmark", stringValue(bookmark["id"]), index, links)
 }
 
-func writeObsidianNote(w io.Writer, note map[string]any) {
+func writeObsidianNote(w io.Writer, note map[string]any, index map[string]obsidianItem, links []map[string]any) {
 	fmt.Fprintf(w, "# %s\n\n", markdownText(fallback(stringValue(note["title"]), "Untitled Note")))
 	if created := stringValue(note["created_at"]); created != "" {
 		fmt.Fprintf(w, "Created: %s\n\n", markdownText(created))
 	}
 	if body := stringValue(note["body"]); body != "" {
-		fmt.Fprintf(w, "%s\n", markdownText(body))
+		fmt.Fprintf(w, "%s\n\n", markdownText(body))
 	}
+	writeObsidianLinks(w, "note", stringValue(note["id"]), index, links)
+}
+
+func writeObsidianLinks(w io.Writer, itemType, itemID string, index map[string]obsidianItem, links []map[string]any) {
+	var outgoing, incoming []string
+	for _, link := range links {
+		label := fallback(stringValue(link["label"]), "linked")
+		if stringValue(link["from_type"]) == itemType && stringValue(link["from_id"]) == itemID {
+			target := index[obsidianItemKey(stringValue(link["to_type"]), stringValue(link["to_id"]))]
+			if target.Path != "" {
+				outgoing = append(outgoing, fmt.Sprintf("- %s: %s", markdownText(label), obsidianWikiLink(target)))
+			}
+		}
+		if stringValue(link["to_type"]) == itemType && stringValue(link["to_id"]) == itemID {
+			source := index[obsidianItemKey(stringValue(link["from_type"]), stringValue(link["from_id"]))]
+			if source.Path != "" {
+				incoming = append(incoming, fmt.Sprintf("- %s from %s", markdownText(label), obsidianWikiLink(source)))
+			}
+		}
+	}
+	if len(outgoing) == 0 && len(incoming) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "## Links")
+	fmt.Fprintln(w)
+	for _, line := range outgoing {
+		fmt.Fprintln(w, line)
+	}
+	for _, line := range incoming {
+		fmt.Fprintln(w, line)
+	}
+	fmt.Fprintln(w)
+}
+
+func obsidianWikiLink(item obsidianItem) string {
+	return fmt.Sprintf("[[%s|%s]]", item.Path, markdownText(item.Title))
 }
 
 func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, processErr error) {

@@ -1343,9 +1343,24 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 			if !strings.Contains(string(content), "The capture loop needs review.") || !strings.Contains(string(content), "Recall with evidence") {
 				t.Fatalf("obsidian bookmark missing second-brain content: %s", string(content))
 			}
+			if !strings.Contains(string(content), "[[Notes/Recall field note") || !strings.Contains(string(content), "supports") {
+				t.Fatalf("obsidian bookmark missing graph links: %s", string(content))
+			}
 		}
 		if strings.HasPrefix(file.Name, "Notes/") && strings.Contains(file.Name, "Recall field note") {
 			sawNoteFile = true
+			rc, err := file.Open()
+			if err != nil {
+				t.Fatalf("open obsidian note: %v", err)
+			}
+			content, err := io.ReadAll(rc)
+			rc.Close()
+			if err != nil {
+				t.Fatalf("read obsidian note: %v", err)
+			}
+			if !strings.Contains(string(content), "[[Bookmarks/Capture Loop") || !strings.Contains(string(content), "[[Notes/Research note") || !strings.Contains(string(content), "extends") {
+				t.Fatalf("obsidian note missing graph links: %s", string(content))
+			}
 		}
 	}
 	if !sawBookmarkFile || !sawNoteFile {

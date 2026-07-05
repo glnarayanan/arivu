@@ -103,6 +103,7 @@ All notable changes to this project will be documented in this file.
 - Full JSON backup restore writes every restored row with the authenticated user ID and remaps cross-references instead of trusting exported ownership.
 - Escaped formula-like CSV export cells to reduce spreadsheet injection risk.
 - Obsidian ZIP export sanitizes generated filenames and reuses existing Markdown escaping for file content.
+- Obsidian ZIP export now emits bookmark/note graph links as vault-ready wikilinks and writes linked notes as note files.
 - Covered new second-brain routes with CSRF, audience isolation, and cross-user isolation tests.
 - Assistant actions are inert until explicit approval, revalidate item ownership during execution, and record failed stale proposals without running arbitrary tools.
 - Authenticated mutation quotas now throttle high-risk write paths with hashed per-user, per-audience keys in SQLite.

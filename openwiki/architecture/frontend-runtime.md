@@ -56,7 +56,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   bounded item provenance for the import just submitted, download or restore
   full JSON backups with second-brain data, or download CSV, browser HTML, and
   Markdown bookmark interchange exports. Obsidian ZIP export downloads
-  vault-ready bookmark and standalone note folders from the same export route.
+  vault-ready bookmark and note folders with explicit graph links as wikilinks
+  from the same export route.
 - Settings tags uses native forms to create canonical tags and add aliases to
   existing tags through the normalized tag APIs.
 - Settings profile uses the existing profile and password-change routes; Settings

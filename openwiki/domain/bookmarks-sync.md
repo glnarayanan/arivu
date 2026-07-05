@@ -75,8 +75,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Imported bookmarks keep source hints such as browser, Pocket, Raindrop,
   Linkwarden, Linkding, and Karakeep/Hoarder when the export content identifies
   them.
-- `/api/bookmarks/export` supports JSON, CSV, browser HTML, and
-  Markdown/Obsidian-style links.
+- `/api/bookmarks/export` supports JSON, CSV, browser HTML, Markdown bookmark
+  links, and an Obsidian ZIP vault with bookmark/note files plus explicit graph
+  links as wikilinks.
 - Full JSON export and restore include inbox processing state, action items,
   notes, annotations, tags, searches, and review events remapped under the
   importing user.
