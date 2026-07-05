@@ -80,6 +80,7 @@ func (s *Service) CreateNote(w http.ResponseWriter, r *http.Request, user auth.U
 	}
 	note, _ := s.note(r.Context(), user.ID, id)
 	s.decorateNote(r.Context(), user.ID, note)
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"note": note})
 }
 
@@ -113,6 +114,7 @@ func (s *Service) UpdateNote(w http.ResponseWriter, r *http.Request, user auth.U
 	}
 	note, _ := s.note(r.Context(), user.ID, r.PathValue("id"))
 	s.decorateNote(r.Context(), user.ID, note)
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"note": note})
 }
 
@@ -138,6 +140,7 @@ func (s *Service) DeleteNote(w http.ResponseWriter, r *http.Request, user auth.U
 	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM item_states WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
 	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM review_events WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
 	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM item_links WHERE user_id=? AND ((from_type='note' AND from_id=?) OR (to_type='note' AND to_id=?))`, user.ID, r.PathValue("id"), r.PathValue("id"))
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Note deleted"})
 }
 
@@ -185,6 +188,7 @@ func (s *Service) CreateAnnotation(w http.ResponseWriter, r *http.Request, user 
 		_ = s.attachTag(r.Context(), user.ID, bookmarkID, tag, "manual")
 	}
 	annotation, _ := s.annotation(r.Context(), user.ID, id)
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"annotation": annotation})
 }
 
@@ -216,6 +220,7 @@ func (s *Service) UpdateAnnotation(w http.ResponseWriter, r *http.Request, user 
 		return
 	}
 	annotation, _ := s.annotation(r.Context(), user.ID, r.PathValue("id"))
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"annotation": annotation})
 }
 
@@ -225,6 +230,7 @@ func (s *Service) DeleteAnnotation(w http.ResponseWriter, r *http.Request, user 
 		writeError(w, http.StatusNotFound, "Annotation not found")
 		return
 	}
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Annotation deleted"})
 }
 
@@ -472,6 +478,7 @@ func (s *Service) CreateLink(w http.ResponseWriter, r *http.Request, user auth.U
 		writeError(w, http.StatusConflict, "Link already exists")
 		return
 	}
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"link": link})
 }
 
@@ -481,6 +488,7 @@ func (s *Service) DeleteLink(w http.ResponseWriter, r *http.Request, user auth.U
 		writeError(w, http.StatusNotFound, "Link not found")
 		return
 	}
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Link deleted"})
 }
 

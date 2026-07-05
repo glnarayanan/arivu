@@ -38,6 +38,7 @@ All notable changes to this project will be documented in this file.
 - Added a Focus page that gathers pending action items and reminders without adding backend dependencies.
 - Added note-side action item and reminder controls so standalone notes can carry the same open loops as bookmarks from the Notes page.
 - Added note-side explicit links and backlinks, including note-to-note link creation from the Notes page.
+- Added a unified per-user search index for bookmarks and notes, a typed `/api/search/items` retrieval API, and a quota-protected `/api/search/rebuild` repair path.
 
 ### Changed
 
@@ -73,7 +74,7 @@ All notable changes to this project will be documented in this file.
 - CI now checks embedded frontend and extension JavaScript syntax and runs the extension URL/origin self-test.
 - Removed the extension popup's remote Google Fonts import in favor of native system font stacks.
 - Bookmark list and search now support normalized tag, domain, source, read-status, and created-date filters, and text search includes linked annotations and notes.
-- Cited answer mode now synthesizes deterministic answer text from saved summaries, highlights, snippets, and standalone notes while preserving citations back to the source items.
+- Cited answer mode now uses the unified retrieval layer and synthesizes deterministic answer text from saved summaries, highlights, snippets, linked context, and notes while preserving citations back to the source items.
 - Bookmark import now accepts safe URLs from JSON arrays, object-wrapped exports, browser/Netscape HTML, and newline URL lists while recording source hints for inserted bookmarks.
 - Imported bookmarks now create summary placeholders before processing and use safer duplicate counting for import reports.
 - Imported bookmark processing now updates the visible import job counters for fetched, AI-processed, and failed items.
@@ -107,3 +108,4 @@ All notable changes to this project will be documented in this file.
 - Covered new second-brain routes with CSRF, audience isolation, and cross-user isolation tests.
 - Assistant actions are inert until explicit approval, revalidate item ownership during execution, and record failed stale proposals without running arbitrary tools.
 - Authenticated mutation quotas now throttle high-risk write paths with hashed per-user, per-audience keys in SQLite.
+- Search index rebuilds are explicit CSRF-protected mutations; read-only search routes do not mutate server state and typed search results remain user-scoped.

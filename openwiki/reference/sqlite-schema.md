@@ -22,6 +22,10 @@ with foreign keys.
   and note inbox workflows.
 - `item_links`: explicit per-user bookmark/note relationships with labels and
   source provenance.
+- `search_index`: durable per-user retrieval rows for bookmarks and notes,
+  including normalized title, body, tags, link text, source, and update time.
+- `search_fts`: optional FTS5 mirror of `search_index` used for ranked
+  full-text retrieval when the local SQLite build supports FTS5.
 - `reminders`: one-time due reminders for bookmarks and notes with pending or
   completed status.
 - `action_items`: durable completable tasks attached to bookmarks or notes.
@@ -66,8 +70,14 @@ with foreign keys.
   objects; arbitrary arrays or scalar JSON values are rejected at the API layer.
 - Bookmark list/search filters are user-scoped and support domain, source,
   read status, created-date bounds, normalized tag names, and tag aliases.
-  Text search includes bookmark title/description/body plus linked annotations
-  and notes.
+  Legacy bookmark list search still uses the bookmark filter path.
+- Unified retrieval uses `search_index` for both bookmarks and notes. Bookmark
+  rows include URL/domain metadata, descriptions, archived text, AI summaries,
+  annotations, linked notes, tags, and explicit graph-link text. Note rows
+  include note title/body plus outgoing and incoming graph-link text.
+- `/api/search/items` is read-only and reads the maintained index. `/api/search/rebuild`
+  is the quota-protected repair path for imports or operator repair and is the
+  only web route that rebuilds search rows directly.
 - Imports use the same `safefetch` URL validation policy as normal saves before
   inserting any bookmark or queuing a fetch job. Queued import bookmark jobs
   carry the owning import job ID so background processing can update progress
@@ -78,9 +88,9 @@ with foreign keys.
 
 ## FTS5
 
-The schema attempts to create a `bookmarks_fts` virtual table. If the local
-SQLite build lacks FTS5, startup continues and search falls back to `LIKE`.
-This fallback is a supported production mode for the first rewrite release so
-operators are not forced into a custom SQLite build. Production builds should
-still prefer FTS5 when available because it leaves room for lower-latency
-full-text ranking, but FTS5 is not a hard runtime requirement.
+The schema attempts to create `bookmarks_fts` and `search_fts` virtual tables.
+If the local SQLite build lacks FTS5, startup continues and search falls back to
+`LIKE` over durable tables. This fallback is a supported production mode for the
+first rewrite release so operators are not forced into a custom SQLite build.
+Production builds should still prefer FTS5 when available because it enables
+ranked full-text retrieval, but FTS5 is not a hard runtime requirement.

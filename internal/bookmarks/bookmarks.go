@@ -101,6 +101,7 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": body.URL})
 	jobID, _ := s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", string(payload))
 	bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
 }
 
@@ -218,6 +219,7 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request, user auth.User)
 		return
 	}
 	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE user_id=? AND item_type='bookmark' AND item_id=?`, user.ID, r.PathValue("id"))
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark deleted"})
 }
 
@@ -265,17 +267,11 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		writeError(w, http.StatusBadRequest, "query must be between 2 and 2000 characters")
 		return
 	}
-	req := r.Clone(r.Context())
-	values := req.URL.Query()
-	values.Set("search", q)
-	req.URL.RawQuery = values.Encode()
-	where, args := s.bookmarkFilter(req, user.ID)
-	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.title,b.url,b.domain,b.description,b.text_content FROM bookmarks b `+where+` ORDER BY b.updated_at DESC, b.id ASC LIMIT 8`, args...)
+	results, _, err := s.searchIndex(r.Context(), user.ID, q, r.URL.Query(), 8)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not answer search")
 		return
 	}
-	defer rows.Close()
 	type citation struct {
 		ID      string `json:"id"`
 		Type    string `json:"type"`
@@ -285,38 +281,17 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		Snippet string `json:"snippet"`
 	}
 	var citations []citation
-	for rows.Next() {
-		var id, title, rawURL, domain, description, text string
-		_ = rows.Scan(&id, &title, &rawURL, &domain, &description, &text)
-		snippet := searchSnippet(q, firstNonEmpty(text, description, title))
-		citations = append(citations, citation{ID: id, Type: "bookmark", Title: fallback(title, rawURL), URL: rawURL, Domain: domain, Snippet: snippet})
-	}
-	if standaloneNotesMatchFilters(values) {
-		like := "%" + q + "%"
-		noteWhere := `WHERE user_id=? AND NOT EXISTS (SELECT 1 FROM bookmark_notes WHERE note_id=notes.id AND user_id=notes.user_id) AND (title LIKE ? OR body LIKE ?)`
-		noteArgs := []any{user.ID, like, like}
-		if from := strings.TrimSpace(values.Get("date_from")); from != "" {
-			noteWhere += " AND created_at>=?"
-			noteArgs = append(noteArgs, from)
+	for _, result := range results {
+		itemType := stringValue(result["item_type"])
+		id := stringValue(result["item_id"])
+		title := stringValue(result["title"])
+		source := stringValue(result["source"])
+		snippet := stringValue(result["snippet"])
+		cite := citation{ID: id, Type: itemType, Title: title, Domain: source, Snippet: snippet}
+		if itemType == "bookmark" {
+			_ = s.db.QueryRowContext(r.Context(), `SELECT url,domain FROM bookmarks WHERE id=? AND user_id=?`, id, user.ID).Scan(&cite.URL, &cite.Domain)
 		}
-		if to := strings.TrimSpace(values.Get("date_to")); to != "" {
-			noteWhere += " AND created_at<=?"
-			noteArgs = append(noteArgs, to)
-		}
-		noteRows, err := s.db.QueryContext(r.Context(), `SELECT id,title,body,source FROM notes `+noteWhere+` ORDER BY updated_at DESC, id ASC LIMIT 8`, noteArgs...)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Could not answer search")
-			return
-		}
-		defer noteRows.Close()
-		for noteRows.Next() {
-			if len(citations) >= 8 {
-				break
-			}
-			var id, title, body, source string
-			_ = noteRows.Scan(&id, &title, &body, &source)
-			citations = append(citations, citation{ID: id, Type: "note", Title: fallback(title, "Untitled note"), Domain: source, Snippet: searchSnippet(q, firstNonEmpty(body, title))})
-		}
+		citations = append(citations, cite)
 	}
 	if len(citations) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"answer": "No saved items matched this query.", "citations": []any{}})
@@ -763,6 +738,7 @@ func (s *Service) Merge(w http.ResponseWriter, r *http.Request, user auth.User) 
 		return
 	}
 	kept, _ := s.getBookmark(r.Context(), user.ID, keepID)
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmarks merged", "kept_bookmark": kept, "merged_count": len(deleteIDs)})
 }
 func (s *Service) BulkDelete(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -779,6 +755,9 @@ func (s *Service) BulkDelete(w http.ResponseWriter, r *http.Request, user auth.U
 		if n, _ := res.RowsAffected(); n > 0 {
 			deleted++
 		}
+	}
+	if deleted > 0 {
+		s.refreshSearchIndex(r.Context(), user.ID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted_count": deleted})
 }

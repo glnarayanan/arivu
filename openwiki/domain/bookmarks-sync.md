@@ -58,10 +58,14 @@ Second-brain v1 adds user-authored context around bookmarks:
   approves it.
 - The review queue is powered by resurfacing candidates and records completion or snooze events.
 - Tags are normalized and alias-aware so manual tags and provider suggestions converge.
-- Retrieval filters by query, tag, domain, source, read state, and dates. Query
-  matching includes bookmark text, annotations, and linked notes.
-- Cited answer mode summarizes the matching set and returns citations back to
-  saved bookmarks instead of producing uncited claims.
+- Bookmark list retrieval filters by query, tag, domain, source, read state, and
+  dates. Query matching includes bookmark text, annotations, and linked notes.
+- Unified search has a durable per-user index for bookmarks and notes. The
+  typed `/api/search/items` route returns ranked bookmark/note results with
+  snippets and source links, and `/api/search/rebuild` exists as a
+  quota-protected repair path for imports or operator recovery.
+- Cited answer mode uses the same unified retrieval layer and returns citations
+  back to saved bookmarks or notes instead of producing uncited claims.
 - Job status is visible per user, which makes background import/enrichment progress inspectable without exposing server errors.
 - High-risk writes use lightweight SQLite mutation quotas before expensive work
   begins, including bookmark preview, import, saves, notes, inbox updates,

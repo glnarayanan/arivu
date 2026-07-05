@@ -142,9 +142,13 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	}{
 		{"cli bookmark web route", cliToken, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com"}`},
 		{"cli notes web route", cliToken, http.MethodGet, "/api/notes", ``},
+		{"cli search items web route", cliToken, http.MethodGet, "/api/search/items?q=test", ``},
+		{"cli search rebuild web route", cliToken, http.MethodPost, "/api/search/rebuild", `{}`},
 		{"cli admin web route", cliToken, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"x"}`},
 		{"extension bookmark web route", extensionToken, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com"}`},
 		{"extension notes web route", extensionToken, http.MethodGet, "/api/notes", ``},
+		{"extension search items web route", extensionToken, http.MethodGet, "/api/search/items?q=test", ``},
+		{"extension search rebuild web route", extensionToken, http.MethodPost, "/api/search/rebuild", `{}`},
 		{"extension admin web route", extensionToken, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"x"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1091,6 +1095,97 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	filteredResp.Body.Close()
 	if len(filtered) != 1 || filtered[0]["id"] != "capture" {
 		t.Fatalf("tag/date filter did not return capture: %#v", filtered)
+	}
+
+	missingSearchRebuildCSRF := httptest.NewRequest(http.MethodPost, "/api/search/rebuild", strings.NewReader(`{}`))
+	missingSearchRebuildCSRF.Header.Set("Content-Type", "application/json")
+	missingSearchRebuildCSRF.AddCookie(accessCookie)
+	missingSearchRebuildRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingSearchRebuildRec, missingSearchRebuildCSRF)
+	missingSearchRebuildResp := missingSearchRebuildRec.Result()
+	if missingSearchRebuildResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("search rebuild without csrf status = %d body=%s", missingSearchRebuildResp.StatusCode, readBody(missingSearchRebuildResp))
+	}
+	missingSearchRebuildResp.Body.Close()
+	searchRebuildResp := adminRequest(t, handler, http.MethodPost, "/api/search/rebuild", `{}`, accessCookie, csrfCookie)
+	if searchRebuildResp.StatusCode != http.StatusOK {
+		t.Fatalf("search rebuild status = %d body=%s", searchRebuildResp.StatusCode, readBody(searchRebuildResp))
+	}
+	var searchRebuildBody struct {
+		Count int `json:"count"`
+	}
+	_ = json.NewDecoder(searchRebuildResp.Body).Decode(&searchRebuildBody)
+	searchRebuildResp.Body.Close()
+	if searchRebuildBody.Count < 4 {
+		t.Fatalf("search rebuild indexed too few items: %#v", searchRebuildBody)
+	}
+	searchItemsResp := adminRequest(t, handler, http.MethodGet, "/api/search/items?q=recall&tag=evidence", "", accessCookie, csrfCookie)
+	if searchItemsResp.StatusCode != http.StatusOK {
+		t.Fatalf("search items status = %d body=%s", searchItemsResp.StatusCode, readBody(searchItemsResp))
+	}
+	var searchItemsBody struct {
+		Query   string           `json:"query"`
+		Mode    string           `json:"mode"`
+		Count   int              `json:"count"`
+		Results []map[string]any `json:"results"`
+	}
+	_ = json.NewDecoder(searchItemsResp.Body).Decode(&searchItemsBody)
+	searchItemsResp.Body.Close()
+	if searchItemsBody.Query != "recall" || searchItemsBody.Mode == "" || len(searchItemsBody.Results) != 1 || searchItemsBody.Results[0]["item_id"] != "capture" || searchItemsBody.Results[0]["item_type"] != "bookmark" || searchItemsBody.Results[0]["snippet"] == "" || searchItemsBody.Results[0]["href"] != "/bookmark/capture" {
+		t.Fatalf("search items did not return tagged capture: %#v", searchItemsBody)
+	}
+	noteSearchResp := adminRequest(t, handler, http.MethodGet, "/api/search/items?q=recall&type=note", "", accessCookie, csrfCookie)
+	if noteSearchResp.StatusCode != http.StatusOK {
+		t.Fatalf("note search items status = %d body=%s", noteSearchResp.StatusCode, readBody(noteSearchResp))
+	}
+	var noteSearchBody struct {
+		Results []map[string]any `json:"results"`
+	}
+	_ = json.NewDecoder(noteSearchResp.Body).Decode(&noteSearchBody)
+	noteSearchResp.Body.Close()
+	var sawSearchNote bool
+	for _, result := range noteSearchBody.Results {
+		if result["item_id"] == searchNoteID && result["item_type"] == "note" && strings.HasPrefix(result["href"].(string), "/notes?note=") {
+			sawSearchNote = true
+		}
+		if result["item_id"] == otherNoteID {
+			t.Fatalf("search items leaked other user's note: %#v", noteSearchBody)
+		}
+	}
+	if !sawSearchNote {
+		t.Fatalf("search items missing standalone note: %#v", noteSearchBody)
+	}
+	linkSearchResp := adminRequest(t, handler, http.MethodGet, "/api/search/items?q=extends&type=note", "", accessCookie, csrfCookie)
+	if linkSearchResp.StatusCode != http.StatusOK {
+		t.Fatalf("link search items status = %d body=%s", linkSearchResp.StatusCode, readBody(linkSearchResp))
+	}
+	var linkSearchBody struct {
+		Results []map[string]any `json:"results"`
+	}
+	_ = json.NewDecoder(linkSearchResp.Body).Decode(&linkSearchBody)
+	linkSearchResp.Body.Close()
+	var sawLinkedNote bool
+	for _, result := range linkSearchBody.Results {
+		if result["item_id"] == searchNoteID && result["item_type"] == "note" && result["snippet"] != "" {
+			sawLinkedNote = true
+		}
+	}
+	if !sawLinkedNote {
+		t.Fatalf("search items missing link text: %#v", linkSearchBody)
+	}
+	cleanupSearchResp := adminRequest(t, handler, http.MethodGet, "/api/search/items?q="+url.QueryEscape("Temporary source"), "", accessCookie, csrfCookie)
+	if cleanupSearchResp.StatusCode != http.StatusOK {
+		t.Fatalf("cleanup search status = %d body=%s", cleanupSearchResp.StatusCode, readBody(cleanupSearchResp))
+	}
+	var cleanupSearchBody struct {
+		Results []map[string]any `json:"results"`
+	}
+	_ = json.NewDecoder(cleanupSearchResp.Body).Decode(&cleanupSearchBody)
+	cleanupSearchResp.Body.Close()
+	for _, result := range cleanupSearchBody.Results {
+		if result["item_id"] == cleanupSourceID {
+			t.Fatalf("deleted note remained in search index: %#v", cleanupSearchBody)
+		}
 	}
 
 	answerResp := adminRequest(t, handler, http.MethodGet, "/api/search/answer?q=recall&tag=evidence", "", accessCookie, csrfCookie)
