@@ -542,46 +542,66 @@ async function dashboardPage() {
   const bookmarkList = bookmarks || [];
   const params = new URLSearchParams(location.search);
   const shared = sharedCaptureParams();
-  setRoot(shell("Saved knowledge", `
-    <form class="panel form" id="save-form">
-      <div class="field"><label for="url">Save URL</label><input id="url" type="url" placeholder="https://example.com/article" value="${escapeHTML(shared.url)}" required></div>
-      <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea></div>
-      <div class="field"><label for="save-tags">Tags</label><input id="save-tags" type="text" placeholder="research, idea, later"></div>
-      <button type="submit">Save bookmark</button>
-      <p class="meta" id="job-status" hidden></p>
-    </form>
-    <form class="toolbar" role="search" id="search-form">
-      <label class="sr-only" for="search">Search bookmarks</label>
-      <input id="search" type="search" placeholder="Search bookmarks" value="${escapeHTML(params.get("search") || "")}">
-      <label class="sr-only" for="filter-tag">Filter by tag</label>
-      <input id="filter-tag" type="text" placeholder="Tag" value="${escapeHTML(params.get("tag") || "")}">
-      <label class="sr-only" for="filter-domain">Filter by domain</label>
-      <input id="filter-domain" type="text" placeholder="Domain" value="${escapeHTML(params.get("domain") || "")}">
-      <label class="sr-only" for="filter-source">Filter by source</label>
-      <input id="filter-source" type="text" placeholder="Source" value="${escapeHTML(params.get("source") || "")}">
-      <input id="filter-date-from" type="date" aria-label="Saved after" value="${escapeHTML(params.get("date_from") || "")}">
-      <input id="filter-date-to" type="date" aria-label="Saved before" value="${escapeHTML(params.get("date_to") || "")}">
-      <label class="sr-only" for="filter-read">Filter by read status</label>
-      <select id="filter-read">
-        <option value="">Any status</option>
-        <option value="unread" ${params.get("read_status") === "unread" ? "selected" : ""}>Unread</option>
-        <option value="read" ${params.get("read_status") === "read" ? "selected" : ""}>Read</option>
-      </select>
-      <button id="search-button" class="secondary" type="submit">Search</button>
-      <button id="answer-button" class="secondary" type="button">Answer</button>
-    </form>
+  setRoot(shell("Dashboard", `
     <section class="split">
-      <form class="panel form" id="saved-search-form">
-        <h2>Saved search</h2>
-        <div class="field"><label for="saved-search-name">Name</label><input id="saved-search-name" type="text" placeholder="Unread research"></div>
-        <p class="form-message" id="saved-search-message" data-form-message hidden></p>
-        <button type="submit">Save current search</button>
+      <form class="panel form" id="save-form">
+        <span class="meta">Capture</span>
+        <h2>Save a page into Inbox</h2>
+        <div class="field"><label for="url">URL</label><input id="url" type="url" placeholder="https://example.com/article" value="${escapeHTML(shared.url)}" required></div>
+        <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea></div>
+        <div class="field"><label for="save-tags">Tags</label><input id="save-tags" type="text" placeholder="research, idea, later"></div>
+        <button type="submit">Save bookmark</button>
+        <p class="meta" id="job-status" hidden></p>
       </form>
       <section class="panel">
-        <h2>Saved searches</h2>
-        ${savedSearchList(savedSearches.saved_searches || [])}
+        <span class="meta">Work loop</span>
+        <h2>Capture, decide, act, review</h2>
+        <p>New saves land in Inbox. Move active work to Working, keep finished references in Kept, then let Review bring back what matters.</p>
+        <div class="chips">
+          <a href="/inbox">Inbox</a>
+          <a href="/focus">Focus</a>
+          <a href="/review">Review</a>
+        </div>
       </section>
     </section>
+    <form class="toolbar" role="search" id="search-form">
+      <label class="sr-only" for="search">Search bookmarks</label>
+      <input id="search" type="search" placeholder="Search saved pages" value="${escapeHTML(params.get("search") || "")}">
+      <button id="search-button" class="secondary" type="submit">Search</button>
+      <button id="answer-button" class="secondary" type="button">Answer</button>
+      <details>
+        <summary>Filters</summary>
+        <label class="sr-only" for="filter-tag">Filter by tag</label>
+        <input id="filter-tag" type="text" placeholder="Tag" value="${escapeHTML(params.get("tag") || "")}">
+        <label class="sr-only" for="filter-domain">Filter by domain</label>
+        <input id="filter-domain" type="text" placeholder="Domain" value="${escapeHTML(params.get("domain") || "")}">
+        <label class="sr-only" for="filter-source">Filter by source</label>
+        <input id="filter-source" type="text" placeholder="Source" value="${escapeHTML(params.get("source") || "")}">
+        <input id="filter-date-from" type="date" aria-label="Saved after" value="${escapeHTML(params.get("date_from") || "")}">
+        <input id="filter-date-to" type="date" aria-label="Saved before" value="${escapeHTML(params.get("date_to") || "")}">
+        <label class="sr-only" for="filter-read">Filter by read status</label>
+        <select id="filter-read">
+          <option value="">Any status</option>
+          <option value="unread" ${params.get("read_status") === "unread" ? "selected" : ""}>Unread</option>
+          <option value="read" ${params.get("read_status") === "read" ? "selected" : ""}>Read</option>
+        </select>
+      </details>
+    </form>
+    <details class="panel disclosure-panel">
+      <summary><strong>Saved searches</strong> · ${Number((savedSearches.saved_searches || []).length)} saved</summary>
+      <section class="split disclosure-body embedded-split">
+        <form class="form" id="saved-search-form">
+          <h2>Save this search</h2>
+          <div class="field"><label for="saved-search-name">Name</label><input id="saved-search-name" type="text" placeholder="Unread research"></div>
+          <p class="form-message" id="saved-search-message" data-form-message hidden></p>
+          <button type="submit">Save current search</button>
+        </form>
+        <section>
+          <h2>Saved searches</h2>
+          ${savedSearchList(savedSearches.saved_searches || [])}
+        </section>
+      </section>
+    </details>
     <section class="panel" id="answer-panel" hidden></section>
     <section class="grid" aria-label="Bookmarks">
       ${bookmarkList.map(bookmarkCard).join("") || workflowEmptyState()}
@@ -748,6 +768,25 @@ function splitTags(value) {
   return String(value || "").split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 20);
 }
 
+function stageLabel(stage) {
+  return {
+    inbox: "Inbox",
+    processing: "Working",
+    processed: "Kept",
+    archived: "Archived",
+  }[stage] || stage;
+}
+
+function focusViewLabel(view) {
+  return {
+    pending: "Pending",
+    overdue: "Overdue",
+    today: "Today",
+    upcoming: "Upcoming",
+    completed: "Completed",
+  }[view] || view;
+}
+
 async function inboxPage() {
   await requireUser();
   const params = new URLSearchParams(location.search);
@@ -758,27 +797,27 @@ async function inboxPage() {
   setRoot(shell("Inbox", `
     <section class="split">
       <section class="panel">
-        <span class="meta">Processing loop</span>
+        <span class="meta">Triage loop</span>
         <h2>${Number(counts.inbox || 0)} unprocessed</h2>
-        <p>Decide why each saved item matters, move active work into processing, then mark finished items processed before review.</p>
+        <p>Decide why each saved item matters, move active work to Working, then mark finished references Kept before review.</p>
       </section>
       <section class="panel">
         <h2>Stages</h2>
         <div class="chips stage-tabs">
-          ${["inbox", "processing", "processed", "archived"].map((name) => `<a class="${name === stage ? "active" : ""}" ${name === stage ? `aria-current="page"` : ""} href="/inbox?stage=${name}">${name} · ${Number(counts[name] || 0)}</a>`).join("")}
+          ${["inbox", "processing", "processed", "archived"].map((name) => `<a class="${name === stage ? "active" : ""}" ${name === stage ? `aria-current="page"` : ""} href="/inbox?stage=${name}">${escapeHTML(stageLabel(name))} · ${Number(counts[name] || 0)}</a>`).join("")}
         </div>
       </section>
     </section>
     <section class="panel bulk-toolbar" data-inbox-bulk>
       <span class="meta"><span data-bulk-count>0</span> selected</span>
       <div class="button-row">
-        <button type="button" class="secondary" data-bulk-stage="processing">Processing</button>
-        <button type="button" class="secondary" data-bulk-stage="processed">Processed</button>
+        <button type="button" class="secondary" data-bulk-stage="processing">Working</button>
+        <button type="button" class="secondary" data-bulk-stage="processed">Kept</button>
         <button type="button" class="secondary" data-bulk-stage="archived">Archive</button>
       </div>
     </section>
     <section class="stack">
-      ${items.map(inboxCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No ${escapeHTML(stage)} items</h2><p>New captures and notes appear in the inbox until you process them.</p></div>`}
+      ${items.map(inboxCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No ${escapeHTML(stageLabel(stage))} items</h2><p>New captures and notes appear in Inbox until you decide what to do with them.</p></div>`}
     </section>
   `));
   document.querySelectorAll("[data-inbox-select]").forEach((checkbox) => {
@@ -819,15 +858,15 @@ function inboxCard(item) {
       <div class="field">
         <label for="stage-${escapeHTML(item.id)}">Stage</label>
         <select id="stage-${escapeHTML(item.id)}" data-next-stage>
-          ${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}" ${stage === item.stage ? "selected" : ""}>${stage}</option>`).join("")}
+          ${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}" ${stage === item.stage ? "selected" : ""}>${escapeHTML(stageLabel(stage))}</option>`).join("")}
         </select>
       </div>
     </div>
     <p class="button-row">
       <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
       <button type="button" data-inbox-save="${escapeHTML(itemID)}">Save state</button>
-      <button type="button" class="secondary" data-inbox-stage="processing">Processing</button>
-      <button type="button" class="secondary" data-inbox-stage="processed">Processed</button>
+      <button type="button" class="secondary" data-inbox-stage="processing">Working</button>
+      <button type="button" class="secondary" data-inbox-stage="processed">Kept</button>
       <button type="button" class="secondary" data-inbox-stage="archived">Archive</button>
     </p>
     ${actionItemsPanel(item.item_type, item.id, item.action_items || [])}
@@ -927,14 +966,14 @@ async function focusPage() {
   setRoot(shell("Focus", `
     <section class="split">
       <section class="panel">
-        <span class="meta">${escapeHTML(view)}</span>
+        <span class="meta">${escapeHTML(focusViewLabel(view))}</span>
         <h2>${actionItems.length + reminderItems.length} open loops</h2>
         <p>Work from concrete tasks first, then timed reminders. Everything here stays tied to the saved item it came from.</p>
       </section>
       <section class="panel">
         <h2>Queue</h2>
         <div class="chips">
-          <a href="/inbox?stage=processing">Processing</a>
+          <a href="/inbox?stage=processing">Working</a>
           <a href="/review">Review</a>
           <a href="/assistant">Assistant</a>
         </div>
@@ -942,7 +981,7 @@ async function focusPage() {
     </section>
     <section class="panel">
       <div class="chips stage-tabs">
-        ${["pending", "overdue", "today", "upcoming", "completed"].map((name) => `<a class="${name === view ? "active" : ""}" ${name === view ? `aria-current="page"` : ""} href="/focus?view=${name}">${name}</a>`).join("")}
+        ${["pending", "overdue", "today", "upcoming", "completed"].map((name) => `<a class="${name === view ? "active" : ""}" ${name === view ? `aria-current="page"` : ""} href="/focus?view=${name}">${escapeHTML(focusViewLabel(name))}</a>`).join("")}
       </div>
     </section>
     <section class="split">
@@ -1281,7 +1320,7 @@ async function showJobStatus(jobID) {
     await new Promise((resolve) => setTimeout(resolve, 650));
     const job = await api(`/jobs/${jobID}`).catch(() => null);
     if (!job) return;
-    status.textContent = jobStatusLabel(job.status);
+    status.innerHTML = jobStatusMarkup(job.status);
     if (job.status === "completed" || job.status === "failed") return;
   }
 }
@@ -1292,6 +1331,13 @@ function jobStatusLabel(status) {
   if (status === "completed") return "Saved and enriched";
   if (status === "failed") return "Processing failed. Open import jobs or server logs for details.";
   return status ? `Processing: ${status.replaceAll("_", " ")}` : "Processing saved item";
+}
+
+function jobStatusMarkup(status) {
+  if (status === "failed") {
+    return `Processing failed. <a class="text-link" href="/settings">Open import jobs</a> or check server logs.`;
+  }
+  return escapeHTML(jobStatusLabel(status));
 }
 
 function tagList(tags) {
@@ -1508,85 +1554,104 @@ async function bookmarkPage() {
   const summary = bookmark.ai_summary || {};
   const itemState = bookmark.item_state || { stage: "inbox", importance: 0, next_action: "" };
   setRoot(shell(bookmark.title || "Bookmark", `
-    <article class="panel reader">
+    <article class="panel reader primary-reader">
       <p class="meta">${bookmark.domain || ""} · ${bookmark.reading_time || 0} min</p>
       <p class="button-row">
         <a class="button" href="${escapeHTML(bookmark.url)}" target="_blank" rel="noreferrer noopener">Open original</a>
         <button type="button" class="secondary" id="toggle-read">${bookmark.read_status ? "Mark unread" : "Mark read"}</button>
-        <button type="button" class="secondary" id="review-complete">Review done</button>
         <button type="button" class="danger" id="delete-bookmark">Delete</button>
       </p>
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
-      ${processingStrip(id, itemState)}
       <div class="reader-content">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
     </article>
-    <section class="split">
-      <form class="panel form" id="annotation-form">
-        <h2>Capture a note</h2>
-        <div class="field"><label for="annotation-quote">Quote</label><textarea id="annotation-quote" rows="3" placeholder="Paste the passage worth keeping"></textarea></div>
-        <div class="field"><label for="annotation-note">Note</label><textarea id="annotation-note" rows="4" placeholder="Your interpretation, decision, or next action"></textarea></div>
-        <div class="field"><label for="annotation-tags">Tags</label><input id="annotation-tags" type="text" placeholder="strategy, quote"></div>
-        <p class="form-message" id="annotation-message" data-form-message hidden></p>
-        <div class="button-row">
-          <button type="button" class="secondary" id="use-selection">Use selected text</button>
-          <button type="submit">Save annotation</button>
-        </div>
-      </form>
-      <section class="panel">
-        <h2>Annotations</h2>
-        ${annotationList(bookmark.annotations || [])}
+    <section class="panel primary-work">
+      <div>
+        <p class="meta">Next step</p>
+        <h2>Decide what this becomes</h2>
+      </div>
+      ${processingStrip(id, itemState)}
+      <p class="button-row">
+        <button type="button" class="secondary" id="review-complete">Mark review done</button>
+      </p>
+    </section>
+    <details class="panel disclosure-panel workbench-group">
+      <summary><span>Capture passages</span><span class="meta">${(bookmark.annotations || []).length} saved</span></summary>
+      <section class="split disclosure-body embedded-split">
+        <form class="form" id="annotation-form">
+          <h2>New annotation</h2>
+          <div class="field"><label for="annotation-quote">Quote</label><textarea id="annotation-quote" rows="3" placeholder="Paste the passage worth keeping"></textarea></div>
+          <div class="field"><label for="annotation-note">Note</label><textarea id="annotation-note" rows="4" placeholder="Your interpretation, decision, or next action"></textarea></div>
+          <div class="field"><label for="annotation-tags">Tags</label><input id="annotation-tags" type="text" placeholder="strategy, quote"></div>
+          <p class="form-message" id="annotation-message" data-form-message hidden></p>
+          <div class="button-row">
+            <button type="button" class="secondary" id="use-selection">Use selected text</button>
+            <button type="submit">Save annotation</button>
+          </div>
+        </form>
+        <section>
+          <h2>Saved annotations</h2>
+          ${annotationList(bookmark.annotations || [])}
+        </section>
       </section>
-    </section>
-    <section class="split">
-      <form class="panel form" id="note-form">
-        <h2>Linked note</h2>
-        <div class="field"><label for="note-title">Title</label><input id="note-title" type="text" placeholder="Working note"></div>
-        <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea></div>
-        <p class="form-message" id="note-message" data-form-message hidden></p>
-        <button type="submit">Save note</button>
-      </form>
-      <section class="panel">
-        <h2>Linked notes</h2>
-        ${noteList(bookmark.notes || [])}
+    </details>
+    <details class="panel disclosure-panel workbench-group">
+      <summary><span>Notes and links</span><span class="meta">${(bookmark.notes || []).length} notes</span></summary>
+      <section class="split disclosure-body embedded-split">
+        <form class="form" id="note-form">
+          <h2>Linked note</h2>
+          <div class="field"><label for="note-title">Title</label><input id="note-title" type="text" placeholder="Working note"></div>
+          <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea></div>
+          <p class="form-message" id="note-message" data-form-message hidden></p>
+          <button type="submit">Save note</button>
+        </form>
+        <section>
+          <h2>Linked notes</h2>
+          ${noteList(bookmark.notes || [])}
+        </section>
       </section>
-    </section>
-    <section class="split">
-      <form class="panel form" id="link-form">
-        <h2>Link note</h2>
-        <div class="field"><label for="link-note">Note</label><select id="link-note">${noteOptions(noteTargets.targets || [], bookmark.notes || [])}</select></div>
-        <div class="field"><label for="link-label">Label</label><input id="link-label" type="text" maxlength="80" placeholder="supports, contradicts, next step"></div>
-        <p class="form-message" id="link-message" data-form-message hidden></p>
-        <button type="submit">Create link</button>
-      </form>
-      <section class="panel">
-        <h2>Linked graph</h2>
-        ${linkList(bookmark.links || {})}
+      <section class="split disclosure-body embedded-split">
+        <form class="form" id="link-form">
+          <h2>Connect a note</h2>
+          <div class="field"><label for="link-note">Note</label><select id="link-note">${noteOptions(noteTargets.targets || [], bookmark.notes || [])}</select></div>
+          <div class="field"><label for="link-label">Label</label><input id="link-label" type="text" maxlength="80" placeholder="supports, contradicts, next step"></div>
+          <p class="form-message" id="link-message" data-form-message hidden></p>
+          <button type="submit">Create link</button>
+        </form>
+        <section>
+          <h2>Connections</h2>
+          ${linkList(bookmark.links || {})}
+        </section>
       </section>
-    </section>
-    <section class="split">
-      <form class="panel form" data-action-item-form data-item-type="bookmark" data-item-id="${escapeHTML(id)}">
-        <h2>Action item</h2>
-        <div class="field"><label for="action-item-title">Task</label><input id="action-item-title" data-action-item-title type="text" maxlength="300" placeholder="Concrete thing to do with this"></div>
-        <p class="form-message" data-form-message hidden></p>
-        <button type="submit">Add task</button>
-      </form>
-      <section class="panel">
-        <h2>Action items</h2>
-        ${actionItemsList(bookmark.action_items || [])}
+    </details>
+    <details class="panel disclosure-panel workbench-group">
+      <summary><span>Tasks and reminders</span><span class="meta">${(bookmark.action_items || []).length} tasks · ${(bookmark.reminders || []).length} reminders</span></summary>
+      <section class="split disclosure-body embedded-split">
+        <form class="form" data-action-item-form data-item-type="bookmark" data-item-id="${escapeHTML(id)}">
+          <h2>Action item</h2>
+          <div class="field"><label for="action-item-title">Task</label><input id="action-item-title" data-action-item-title type="text" maxlength="300" placeholder="Concrete thing to do with this"></div>
+          <p class="form-message" data-form-message hidden></p>
+          <button type="submit">Add task</button>
+        </form>
+        <section>
+          <h2>Action items</h2>
+          ${actionItemsList(bookmark.action_items || [])}
+        </section>
       </section>
-    </section>
-    <section class="split">
-      ${reminderForm("bookmark", id, "panel")}
-      <section class="panel">
-        <h2>Reminders</h2>
-        ${reminderList(bookmark.reminders || [])}
+      <section class="split disclosure-body embedded-split">
+        ${reminderForm("bookmark", id)}
+        <section>
+          <h2>Reminders</h2>
+          ${reminderList(bookmark.reminders || [])}
+        </section>
       </section>
-    </section>
-    <section class="panel">
-      <h2>Related</h2>
-      ${relatedList(related.related || [])}
-    </section>
+    </details>
+    <details class="panel disclosure-panel workbench-group">
+      <summary><span>Related items</span><span class="meta">${(related.related || []).length} matches</span></summary>
+      <section class="disclosure-body">
+        ${relatedList(related.related || [])}
+      </section>
+    </details>
   `));
   document.querySelector("#toggle-read").addEventListener("click", async (event) => {
     const done = setButtonBusy(event.currentTarget, bookmark.read_status ? "Marking unread" : "Marking read");
@@ -2196,11 +2261,11 @@ async function submitNoteBookmarkLink(event) {
 
 function processingStrip(bookmarkID, itemState) {
   return `<section class="insight-strip processing-strip" data-reader-item="bookmark:${escapeHTML(bookmarkID)}">
-    <span class="meta">Processing · ${escapeHTML(itemState.stage || "inbox")}</span>
+    <span class="meta">Workflow · ${readerStageLabel(itemState.stage || "inbox")}</span>
     <div class="split compact-split">
       <div class="field">
         <label for="processing-next-action">Next action</label>
-        <input id="processing-next-action" data-next-action value="${escapeHTML(itemState.next_action || "")}" maxlength="500" placeholder="What should this item become?">
+        <input id="processing-next-action" data-next-action value="${escapeHTML(itemState.next_action || "")}" maxlength="500" placeholder="One concrete follow-up">
       </div>
       <fieldset class="field priority-field">
         <legend>Priority</legend>
@@ -2210,16 +2275,20 @@ function processingStrip(bookmarkID, itemState) {
       <div class="field">
         <label for="processing-stage">Stage</label>
         <select id="processing-stage" data-next-stage>
-          ${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}" ${stage === itemState.stage ? "selected" : ""}>${stage}</option>`).join("")}
+          ${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}" ${stage === itemState.stage ? "selected" : ""}>${readerStageLabel(stage)}</option>`).join("")}
         </select>
       </div>
     </div>
     <p class="button-row">
-      <button type="button" id="processing-save">Save state</button>
-      <button type="button" class="secondary" data-reader-stage="processed">Processed</button>
+      <button type="button" id="processing-save">Save next step</button>
+      <button type="button" class="secondary" data-reader-stage="processed">Keep</button>
       <button type="button" class="secondary" data-reader-stage="archived">Archive</button>
     </p>
   </section>`;
+}
+
+function readerStageLabel(stage) {
+  return escapeHTML(({ inbox: "Inbox", processing: "Working", processed: "Kept", archived: "Archived" })[stage] || stage || "Inbox");
 }
 
 async function updateReaderState(button, stage) {
@@ -2735,7 +2804,7 @@ async function reviewPage() {
       <section class="panel">
         <span class="meta">Daily review</span>
         <h2>Keep saved pages from becoming a pile</h2>
-        <p>Complete what is useful, snooze what needs time, archive what should stop resurfacing.</p>
+        <p>Complete what is useful, snooze what needs time, archive what should stop coming back for review.</p>
       </section>
     </section>
     <section class="grid" aria-label="Review queue">
@@ -2784,7 +2853,7 @@ function reviewCard(item) {
   const importance = Number(itemState.importance || 0);
   const reasons = item.review_reasons || [];
   return `<article class="panel bookmark">
-    <span class="meta">${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")} · priority ${Number(item.review_priority || 0)}</span>
+    <span class="meta">Why this came back: ${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")} · priority ${Number(item.review_priority || 0)}</span>
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
     <p>${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
     ${reasons.length ? `<div class="chips">${reasons.slice(0, 4).map((reason) => `<span>${escapeHTML(reason)}</span>`).join("")}</div>` : ""}
