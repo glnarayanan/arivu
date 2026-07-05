@@ -1,9 +1,15 @@
+function getCookie(name) {
+  return document.cookie.split(';').map((row) => row.trim()).find((row) => row.startsWith(`${name}=`))?.split('=')[1] || '';
+}
+
 async function fetchExtensionTokens() {
   try {
     const apiBase = window.location.origin + '/api';
+    const csrf = getCookie('csrf_token');
     const response = await fetch(`${apiBase}/auth/extension-token`, {
       method: 'POST',
       credentials: 'include',
+      headers: csrf ? { 'X-CSRF-Token': csrf } : {},
     });
 
     if (!response.ok) return;

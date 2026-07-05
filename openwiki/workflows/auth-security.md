@@ -16,10 +16,10 @@ Arivu issues cryptographically secure, random session tokens (`/internal/ids/ids
 - `cli`: Terminal interface sessions. Excluded from cookie-related CSRF.
 - `extension`: Companion browser extension. Uses bespoke authorization structures.
 
-Tokens are stored using SHA-256 digests in the backend SQLite `sessions` table. During authentication, raw user password hashing is dynamically updated from legacy standard `bcrypt` algorithms to modern, highly cost-tunable `Argon2id` derivations.
+Tokens are stored using SHA-256 digests in the backend SQLite `sessions` table. During authentication, raw user password hashing is dynamically updated from legacy standard `bcrypt` algorithms to modern, highly cost-tunable `Argon2id` derivations. New passwords created through user reset, user change-password, and admin reset flows are stored as Argon2id hashes.
 
 ### CSRF Protections
-Browser requests (`web` audience actions) utilize HTTP-only, secure cookies. Any mutating endpoint (POST, PUT, DELETE) requires the client to fetch, hold, and submit a session-matched CSRF protection token header.
+Browser requests (`web` audience actions) utilize HTTP-only, secure cookies. Any mutating endpoint (POST, PUT, DELETE) requires the client to fetch, hold, and submit a session-matched CSRF protection token header. The browser extension bootstrap mirrors the readable CSRF cookie into `X-CSRF-Token` when it exchanges a web session for extension-audience tokens.
 
 ---
 

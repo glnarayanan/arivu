@@ -47,7 +47,7 @@ edit.
 
 1. Log into your self-hosted Arivu web app
 2. Visit the app in the same browser
-3. The content script requests extension tokens from `/api/auth/extension-token`
+3. The content script requests extension tokens from `/api/auth/extension-token` with the web session's CSRF cookie mirrored into `X-CSRF-Token`
 4. Tokens are stored in `chrome.storage.session`
 
 ## Troubleshooting
