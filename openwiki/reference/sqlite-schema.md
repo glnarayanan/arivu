@@ -1,6 +1,6 @@
 # SQLite Schema Notes
 
-The Go rewrite normalizes the legacy Mongo document model into SQLite tables
+The Go rewrite normalizes the legacy document model into SQLite tables
 with foreign keys.
 
 ## Core Tables

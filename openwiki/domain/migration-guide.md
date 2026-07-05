@@ -1,16 +1,14 @@
 # Migration Guide
 
-The migration implementation validates legacy JSON exports without adding a
-Mongo driver dependency, then can apply a validated export into the SQLite
-database. Full live Mongo extraction is intentionally still gated because a
-driver would expand the dependency surface.
+The migration implementation validates a legacy JSON export, then applies the
+validated data into the SQLite database.
 
 ## Current Command
 
 Dry-run discovery and validation:
 
 ```bash
-go run ./cmd/arivu migrate --json-export ./legacy-export --mongo-db arivu_db --out migration-manifest.json --dry-run
+go run ./cmd/arivu migrate --json-export ./legacy-export --out migration-manifest.json --dry-run
 ```
 
 Apply a validated export into SQLite:
@@ -38,7 +36,7 @@ discarded.
 
 ## JSON Export Shape
 
-The `--json-export`/`--mongo-export` path is required and may be either:
+The `--json-export` path is required and may be either:
 
 - A single JSON object keyed by collection name, where each value is an object
   or array of objects.
@@ -50,10 +48,14 @@ unknown collections and fields, and rejects missing required fields such as user
 email or bookmark URL. The output manifest includes per-collection sample counts
 under `samples`.
 
+The apply command prints a JSON report with imported row counts, source document
+counts, skipped legacy sessions, warnings, and errors.
+
 ## Apply Guarantees
 
 - Requires the old `SECRET_KEY` to decrypt legacy Fernet-encrypted X tokens and runtime settings.
-- Re-encrypts migrated X tokens and runtime settings with AES-256-GCM key material derived from the new `SECRET_KEY`; settings include the supplied `--key-id`.
+- Re-encrypts migrated X tokens and secret runtime settings with AES-256-GCM key material derived from the new `SECRET_KEY`; encrypted settings include the supplied `--key-id`.
+- Stores plain runtime settings such as X redirect URI, X enablement, and Resend sender as plain settings.
 - Preserves valid user, bookmark, collection, summary, and X connection IDs.
 - Validates ownership and referential integrity for bookmarks, summaries, collections, collection memberships, and X connections.
 - Sanitizes archived HTML during import.

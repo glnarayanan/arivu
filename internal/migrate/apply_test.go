@@ -100,6 +100,9 @@ func TestApplyExportMigratesRowsAndRekeysSecrets(t *testing.T) {
 	if report.Users != 1 || report.Bookmarks != 1 || report.XConnections != 1 || report.Settings != 7 || report.LegacySessionsDropped != 1 {
 		t.Fatalf("unexpected report: %#v", report)
 	}
+	if report.SourceDocuments["users"] != 1 || report.SourceDocuments["bookmarks"] != 1 || report.Skipped["sessions"] != 1 {
+		t.Fatalf("report missing source/skipped counts: %#v", report)
+	}
 	db, err := database.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)

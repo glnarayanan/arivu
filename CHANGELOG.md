@@ -33,9 +33,17 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
-- Removed the inert `arivu migrate --mongo-uri` discovery path; migration now
-  requires a dependency-free JSON export via `--json-export` or
-  `--mongo-export`.
+- Removed stale Mongo-named migration CLI options; migration now requires a
+  dependency-free legacy JSON export via `--json-export`.
+- Migration apply reports now include source document counts, skipped legacy
+  sessions, and JSON-formatted errors on failed apply runs.
+- Admin API key settings now take effect at runtime through SQLite overrides,
+  with encrypted provider secrets, plain operational settings, source-aware UI
+  status, and per-setting override removal.
+- The Admin page now exposes overview, API usage, users, system, activity,
+  collections, and audit sections backed by SQLite-native admin endpoints.
+- Consolidated public project documentation under `openwiki/` and removed the
+  duplicate `documentation/` tree.
 - Consolidated v2 provider-secret sealing/opening in `internal/secrets` and
   removed unused internal helpers and inert frontend state.
 - Polished the embedded frontend with stronger interaction states, route loading feedback, semantic toasts, accessible search and navigation affordances, safer mobile layout behavior, and refined design tokens.

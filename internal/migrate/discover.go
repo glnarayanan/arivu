@@ -16,7 +16,6 @@ import (
 
 type Options struct {
 	ExportPath  string
-	DBName      string
 	OutPath     string
 	DryRun      bool
 	SampleLimit int
@@ -24,7 +23,6 @@ type Options struct {
 
 type Manifest struct {
 	GeneratedAt string             `json:"generated_at"`
-	DBName      string             `json:"db_name"`
 	DryRun      bool               `json:"dry_run"`
 	Collections map[string][]Field `json:"collections"`
 	Samples     map[string]Sample  `json:"samples,omitempty"`
@@ -43,9 +41,9 @@ type Sample struct {
 	Documents int `json:"documents"`
 }
 
-func DiscoverMongoSchema(ctx context.Context, opts Options) error {
+func DiscoverLegacyExport(ctx context.Context, opts Options) error {
 	if opts.ExportPath == "" {
-		return errors.New("mongo export path is required")
+		return errors.New("json export path is required")
 	}
 	manifest := baselineManifest(opts)
 	samples, err := ValidateExport(ctx, manifest, opts.ExportPath, opts.SampleLimit)
@@ -281,11 +279,10 @@ func collectionFromFilename(manifest Manifest, name string) (string, bool) {
 func baselineManifest(opts Options) Manifest {
 	return Manifest{
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
-		DBName:      opts.DBName,
 		DryRun:      opts.DryRun,
 		Notes: []string{
-			"Baseline manifest generated without live Mongo sampling.",
-			"Production migration must compare live document keys against this allowlist and fail dry-run on unknown fields.",
+			"Baseline manifest generated from a legacy JSON export.",
+			"Migration must compare exported document keys against this allowlist and fail dry-run on unknown fields.",
 			"Existing sessions are intentionally not migrated; users reauthenticate after cutover.",
 		},
 		Collections: map[string][]Field{

@@ -55,7 +55,8 @@ Users import bookmarks containing arbitrary rich documentation or raw source HTM
 
 ## Runtime Secrets Encryption
 
-Dynamic settings, API keys (AI Providers, transactional mailers) and OAuth configurations are persisted securely.
+Runtime provider settings are stored in SQLite.
 
-- `/internal/secrets/secrets.go` manages configuration state on the disk.
-- High-value secrets stored in the SQLite `settings` table are encrypted at rest using validated encryption envelopes.
+- `/internal/runtimeconfig` resolves settings from SQLite, environment variables, and defaults.
+- `/internal/secrets/secrets.go` encrypts provider secrets before they are stored in the SQLite `settings` table.
+- Plain settings such as redirect URI, Resend sender, and X enablement are stored in `value_plain`.

@@ -48,7 +48,11 @@ The full tables structure is declared in `/internal/database/schema.sql`. It mod
 - **Core Entities**: `users`, `sessions`, `bookmarks`, `collections`, `collection_bookmarks` (join table).
 - **Processing Outputs**: `ai_summaries` (from Gemini), `bookmark_entities`, and `bookmark_concepts`.
 - **Integrations**: `import_jobs`, `x_connections`, `oauth_states`.
-- **Durable Controls**: `settings` (encrypted dynamic settings), `rate_limits`, `audit_events`, and `jobs`.
+- **Durable Controls**: `settings` (encrypted provider secrets plus plain runtime settings), `rate_limits`, `audit_events`, and `jobs`.
+
+`internal/runtimeconfig` resolves provider settings with this precedence:
+SQLite override, environment variable, then default. Admin API key updates write
+to `settings`; Gemini, Resend, and X read effective values at runtime.
 
 ---
 

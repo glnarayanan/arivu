@@ -39,18 +39,21 @@ type ApplyOptions struct {
 }
 
 type ApplyReport struct {
-	Users                 int      `json:"users"`
-	Bookmarks             int      `json:"bookmarks"`
-	Summaries             int      `json:"summaries"`
-	Collections           int      `json:"collections"`
-	CollectionMemberships int      `json:"collection_memberships"`
-	AccessEvents          int      `json:"access_events"`
-	Entities              int      `json:"entities"`
-	Concepts              int      `json:"concepts"`
-	XConnections          int      `json:"x_connections"`
-	Settings              int      `json:"settings"`
-	LegacySessionsDropped int      `json:"legacy_sessions_dropped"`
-	Warnings              []string `json:"warnings,omitempty"`
+	Users                 int            `json:"users"`
+	Bookmarks             int            `json:"bookmarks"`
+	Summaries             int            `json:"summaries"`
+	Collections           int            `json:"collections"`
+	CollectionMemberships int            `json:"collection_memberships"`
+	AccessEvents          int            `json:"access_events"`
+	Entities              int            `json:"entities"`
+	Concepts              int            `json:"concepts"`
+	XConnections          int            `json:"x_connections"`
+	Settings              int            `json:"settings"`
+	LegacySessionsDropped int            `json:"legacy_sessions_dropped"`
+	SourceDocuments       map[string]int `json:"source_documents,omitempty"`
+	Skipped               map[string]int `json:"skipped,omitempty"`
+	Errors                []string       `json:"errors,omitempty"`
+	Warnings              []string       `json:"warnings,omitempty"`
 }
 
 func ApplyExport(ctx context.Context, opts ApplyOptions) (ApplyReport, error) {
@@ -116,10 +119,14 @@ func assertEmptyTarget(ctx context.Context, tx *sql.Tx) error {
 }
 
 func applyCollections(ctx context.Context, tx *sql.Tx, export map[string][]map[string]any, opts ApplyOptions) (ApplyReport, error) {
-	report := ApplyReport{}
+	report := ApplyReport{SourceDocuments: map[string]int{}, Skipped: map[string]int{}}
 	now := time.Now().UTC().Format(time.RFC3339)
+	for collection, docs := range export {
+		report.SourceDocuments[collection] = len(docs)
+	}
 	if sessions, ok := export["sessions"]; ok {
 		report.LegacySessionsDropped = len(sessions)
+		report.Skipped["sessions"] = len(sessions)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions`); err != nil {
 		return report, err

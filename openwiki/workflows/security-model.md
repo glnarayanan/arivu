@@ -10,7 +10,7 @@
 - Login, forgot-password, and reset-password endpoints use SQLite-backed
   throttles with hashed rate-limit keys.
 - Legacy bcrypt hashes are accepted and upgraded to Argon2id on successful login.
-- Runtime provider secrets are encrypted with AES-256-GCM using HKDF-derived key material from `SECRET_KEY`.
+- Runtime provider secrets are encrypted with AES-256-GCM using HKDF-derived key material from `SECRET_KEY`; non-secret runtime settings stay in plain settings rows.
 - Provider setting updates are restricted to known provider/runtime keys, and
   audit metadata records changed key names without storing secret values.
 - Successful admin user mutations, provider setting updates, password changes,
@@ -37,7 +37,7 @@
 ## Legacy Migration Cryptography
 
 - Legacy exports used Python Fernet with a key derived as `base64url(SHA-256(SECRET_KEY))`.
-- The migration importer reproduces that derivation only to decrypt existing legacy runtime settings and X tokens, then immediately re-encrypts them with the new HKDF/AES-256-GCM secret format.
+- The migration importer reproduces that derivation only to decrypt existing legacy runtime secrets and X tokens, then immediately re-encrypts secrets with the new HKDF/AES-256-GCM format. Plain runtime settings stay plain.
 
 ## Browser Controls
 
