@@ -722,6 +722,46 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if len(remindersBody.Reminders) != 1 || remindersBody.Reminders[0]["id"] != reminderID || remindersBody.Reminders[0]["note"] != "Use this in planning." {
 		t.Fatalf("unexpected reminders body: %#v", remindersBody)
 	}
+	missingReminderCSRF := httptest.NewRequest(http.MethodPost, "/api/reminders/"+reminderID+"/complete", strings.NewReader(`{}`))
+	missingReminderCSRF.Header.Set("Content-Type", "application/json")
+	missingReminderCSRF.AddCookie(accessCookie)
+	missingReminderRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingReminderRec, missingReminderCSRF)
+	missingReminderResp := missingReminderRec.Result()
+	if missingReminderResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("reminder complete without csrf status = %d body=%s", missingReminderResp.StatusCode, readBody(missingReminderResp))
+	}
+	missingReminderResp.Body.Close()
+	crossCompleteReminder := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+reminderID+"/complete", `{}`, otherAccess, otherCSRF)
+	if crossCompleteReminder.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-user reminder complete status = %d body=%s", crossCompleteReminder.StatusCode, readBody(crossCompleteReminder))
+	}
+	crossCompleteReminder.Body.Close()
+	crossDeleteReminder := adminRequest(t, handler, http.MethodDelete, "/api/reminders/"+reminderID, "", otherAccess, otherCSRF)
+	if crossDeleteReminder.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-user reminder delete status = %d body=%s", crossDeleteReminder.StatusCode, readBody(crossDeleteReminder))
+	}
+	crossDeleteReminder.Body.Close()
+	tempReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"bookmark","item_id":"capture","due_at":"`+now.Add(72*time.Hour).UTC().Format(time.RFC3339)+`","note":"Temporary reminder."}`, accessCookie, csrfCookie)
+	if tempReminderResp.StatusCode != http.StatusOK {
+		t.Fatalf("create temp reminder status = %d body=%s", tempReminderResp.StatusCode, readBody(tempReminderResp))
+	}
+	var tempReminderBody struct {
+		Reminder map[string]any `json:"reminder"`
+	}
+	_ = json.NewDecoder(tempReminderResp.Body).Decode(&tempReminderBody)
+	tempReminderResp.Body.Close()
+	tempReminderID, _ := tempReminderBody.Reminder["id"].(string)
+	completeTempReminder := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+tempReminderID+"/complete", `{}`, accessCookie, csrfCookie)
+	if completeTempReminder.StatusCode != http.StatusOK {
+		t.Fatalf("complete temp reminder status = %d body=%s", completeTempReminder.StatusCode, readBody(completeTempReminder))
+	}
+	completeTempReminder.Body.Close()
+	deleteTempReminder := adminRequest(t, handler, http.MethodDelete, "/api/reminders/"+tempReminderID, "", accessCookie, csrfCookie)
+	if deleteTempReminder.StatusCode != http.StatusOK {
+		t.Fatalf("delete temp reminder status = %d body=%s", deleteTempReminder.StatusCode, readBody(deleteTempReminder))
+	}
+	deleteTempReminder.Body.Close()
 
 	actionResp := adminRequest(t, handler, http.MethodPost, "/api/action-items", `{"item_type":"bookmark","item_id":"capture","title":"Turn this into the launch checklist"}`, accessCookie, csrfCookie)
 	if actionResp.StatusCode != http.StatusOK {
@@ -1581,7 +1621,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `/notes?note=${encodeURIComponent(item.id)}`, `function focusNoteFromQuery()`} {
+	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `/notes?note=${encodeURIComponent(item.id)}`, `function focusNoteFromQuery()`, `async function focusPage()`, `/action-items?status=pending`, `/reminders?status=pending`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}

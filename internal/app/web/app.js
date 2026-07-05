@@ -11,6 +11,7 @@ const routes = [
   { prefix: "/dashboard", page: dashboardPage, access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
   { prefix: "/inbox", page: inboxPage, access: "protected" },
+  { prefix: "/focus", page: focusPage, access: "protected" },
   { prefix: "/assistant", page: assistantPage, access: "protected" },
   { prefix: "/notes", page: notesPage, access: "protected" },
   { prefix: "/review", page: reviewPage, access: "protected" },
@@ -319,6 +320,7 @@ function shell(title, content) {
   const nav = [
     ["/dashboard", "Bookmarks"],
     ["/inbox", "Inbox"],
+    ["/focus", "Focus"],
     ["/assistant", "Assistant"],
     ["/notes", "Notes"],
     ["/review", "Review"],
@@ -809,6 +811,80 @@ function saveItemState(itemID, stage, importance, nextAction) {
     method: "PATCH",
     body: JSON.stringify({ stage, importance, next_action: nextAction }),
   });
+}
+
+async function focusPage() {
+  await requireUser();
+  const [actions, reminders] = await Promise.all([
+    api("/action-items?status=pending"),
+    api("/reminders?status=pending"),
+  ]);
+  const actionItems = actions.action_items || [];
+  const reminderItems = reminders.reminders || [];
+  setRoot(shell("Focus", `
+    <section class="split">
+      <section class="panel">
+        <span class="meta">Today</span>
+        <h2>${actionItems.length + reminderItems.length} open loops</h2>
+        <p>Work from concrete tasks first, then timed reminders. Everything here stays tied to the saved item it came from.</p>
+      </section>
+      <section class="panel">
+        <h2>Queue</h2>
+        <div class="chips">
+          <a href="/inbox?stage=processing">Processing</a>
+          <a href="/review">Review</a>
+          <a href="/assistant">Assistant</a>
+        </div>
+      </section>
+    </section>
+    <section class="split">
+      <section class="panel">
+        <h2>Action items</h2>
+        ${focusActionItems(actionItems)}
+      </section>
+      <section class="panel">
+        <h2>Reminders</h2>
+        ${focusReminders(reminderItems)}
+      </section>
+    </section>
+  `));
+  bindActionItemControls();
+  document.querySelectorAll("[data-reminder-complete]").forEach((button) => {
+    button.addEventListener("click", () => completeReminder(button));
+  });
+  document.querySelectorAll("[data-reminder-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteReminder(button));
+  });
+}
+
+function focusActionItems(items) {
+  if (!items.length) return `<div class="empty-state"><span class="meta">Clear</span><h3>No pending action items</h3><p>Tasks added from Inbox or a saved item appear here.</p></div>`;
+  return `<div class="stack">${items.map((item) => `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.item_title || "")}</span></p>
+    <p class="button-row">
+      <a class="button secondary" href="${itemHref(item)}">Open item</a>
+      <button type="button" data-action-item-complete="${escapeHTML(item.id)}" aria-label="Complete action item ${escapeHTML(item.title || "")}">Done</button>
+      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}" aria-label="Delete action item ${escapeHTML(item.title || "")}">Delete</button>
+    </p>
+  </article>`).join("")}</div>`;
+}
+
+function focusReminders(items) {
+  if (!items.length) return `<div class="empty-state"><span class="meta">Clear</span><h3>No pending reminders</h3><p>Timed nudges from saved items appear here.</p></div>`;
+  return `<div class="stack">${items.map((item) => `<article class="annotation">
+    <p><strong>${escapeHTML(formatDate(item.due_at))}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.item_title || "")}</span></p>
+    ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
+    <p class="button-row">
+      <a class="button secondary" href="${itemHref(item)}">Open item</a>
+      <button type="button" data-reminder-complete="${escapeHTML(item.id)}" aria-label="Complete reminder ${escapeHTML(item.note || item.item_title || "")}">Done</button>
+      <button type="button" class="danger" data-reminder-delete="${escapeHTML(item.id)}" aria-label="Delete reminder ${escapeHTML(item.note || item.item_title || "")}">Delete</button>
+    </p>
+  </article>`).join("")}</div>`;
+}
+
+function itemHref(item) {
+  const id = encodeURIComponent(item.item_id || "");
+  return item.item_type === "note" ? `/notes?note=${id}` : `/bookmark/${id}`;
 }
 
 async function assistantPage() {

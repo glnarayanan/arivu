@@ -45,6 +45,9 @@ Second-brain v1 adds user-authored context around bookmarks:
   separate from the single `next_action` processing prompt and from dated
   reminders, so one saved item can carry a checklist without becoming a project
   management system.
+- The Focus page reads pending action items and reminders through existing APIs,
+  giving users one working surface for open loops without introducing a new
+  backend workflow.
 - Assistant proposals can suggest only bounded second-brain mutations: item
   state updates, explicit links, one-time reminders, and action items. The
   Assistant page presents the proposal ledger; nothing executes until a user
