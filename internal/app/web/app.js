@@ -760,7 +760,7 @@ function inboxCard(item) {
       </div>
     </div>
     <p class="button-row">
-      <a class="button secondary" href="${isNote ? "/notes" : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
+      <a class="button secondary" href="${isNote ? `/notes?note=${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
       <button type="button" data-inbox-save="${escapeHTML(itemID)}">Save state</button>
       <button type="button" class="secondary" data-inbox-stage="processing">Processing</button>
       <button type="button" class="secondary" data-inbox-stage="processed">Processed</button>
