@@ -2,6 +2,7 @@ const state = {
   user: null,
   cleanup: [],
   pendingRoutes: 0,
+  focusMainAfterRender: false,
 };
 
 const routes = [
@@ -67,6 +68,27 @@ function setRoot(markup) {
   disposeRoute();
   const root = document.querySelector("#app");
   root.innerHTML = markup;
+}
+
+function syncRouteAccessibility() {
+  const title = document.querySelector(".headline, main h1, h1")?.textContent?.trim() || "Arivu";
+  document.title = `${title} · Arivu`;
+  let announcer = document.querySelector("#route-announcer");
+  if (!announcer) {
+    announcer = document.createElement("div");
+    announcer.id = "route-announcer";
+    announcer.className = "sr-only";
+    announcer.setAttribute("aria-live", "polite");
+    announcer.setAttribute("aria-atomic", "true");
+    document.body.append(announcer);
+  }
+  announcer.textContent = title;
+  if (!state.focusMainAfterRender) return;
+  state.focusMainAfterRender = false;
+  const target = document.querySelector("#main-content") || document.querySelector("main") || document.querySelector("h1");
+  if (!target) return;
+  if (!target.hasAttribute("tabindex")) target.setAttribute("tabindex", "-1");
+  requestAnimationFrame(() => target.focus({ preventScroll: true }));
 }
 
 function toast(message, tone = "info") {
@@ -313,6 +335,7 @@ function tabByKey(tabs, index, key) {
 }
 
 function navigate(path, replace = false) {
+  state.focusMainAfterRender = true;
   history[replace ? "replaceState" : "pushState"]({}, "", path);
   render();
 }
@@ -343,9 +366,9 @@ function shell(title, content) {
           }).join("")}
         </nav>
       </aside>
-      <main class="main" id="main-content" tabindex="-1">
+      <main class="main" id="main-content" tabindex="-1" aria-labelledby="route-title">
         <div class="topbar">
-          <h1 class="headline">${escapeHTML(title)}</h1>
+          <h1 class="headline" id="route-title">${escapeHTML(title)}</h1>
           <div class="top-actions">
             <button id="global-actions" class="secondary" type="button">Actions</button>
             <button id="logout" class="secondary" type="button">Log out</button>
@@ -530,11 +553,15 @@ async function dashboardPage() {
     <form class="toolbar" role="search" id="search-form">
       <label class="sr-only" for="search">Search bookmarks</label>
       <input id="search" type="search" placeholder="Search bookmarks" value="${escapeHTML(params.get("search") || "")}">
+      <label class="sr-only" for="filter-tag">Filter by tag</label>
       <input id="filter-tag" type="text" placeholder="Tag" value="${escapeHTML(params.get("tag") || "")}">
+      <label class="sr-only" for="filter-domain">Filter by domain</label>
       <input id="filter-domain" type="text" placeholder="Domain" value="${escapeHTML(params.get("domain") || "")}">
+      <label class="sr-only" for="filter-source">Filter by source</label>
       <input id="filter-source" type="text" placeholder="Source" value="${escapeHTML(params.get("source") || "")}">
       <input id="filter-date-from" type="date" aria-label="Saved after" value="${escapeHTML(params.get("date_from") || "")}">
       <input id="filter-date-to" type="date" aria-label="Saved before" value="${escapeHTML(params.get("date_to") || "")}">
+      <label class="sr-only" for="filter-read">Filter by read status</label>
       <select id="filter-read">
         <option value="">Any status</option>
         <option value="unread" ${params.get("read_status") === "unread" ? "selected" : ""}>Unread</option>
@@ -637,7 +664,7 @@ function workflowEmptyState() {
   return `<div class="panel empty-state">
     <span class="meta">First save</span>
     <h2>No bookmarks yet</h2>
-    <p>Save a URL above, then process it through the working loop.</p>
+    <p>Save a URL above. Arivu will archive it, extract text, and queue it in Inbox for triage.</p>
     <div class="chips">
       <a href="/dashboard">Capture</a>
       <a href="/inbox">Inbox</a>
@@ -921,11 +948,11 @@ async function focusPage() {
     <section class="split">
       <section class="panel">
         <h2>Action items</h2>
-        ${focusActionItems(actionItems)}
+        ${focusActionItems(actionItems, view)}
       </section>
       <section class="panel">
         <h2>Reminders</h2>
-        ${focusReminders(reminderItems)}
+        ${focusReminders(reminderItems, view)}
       </section>
     </section>
   `));
@@ -945,8 +972,8 @@ function focusReminderFilter(items, view) {
   return items.filter((item) => item.status !== "completed" && item.due_state === view);
 }
 
-function focusActionItems(items) {
-  if (!items.length) return `<div class="empty-state"><span class="meta">Clear</span><h3>No pending action items</h3><p>Tasks added from Inbox or a saved item appear here.</p></div>`;
+function focusActionItems(items, view) {
+  if (!items.length) return focusEmptyState("action", view);
   return `<div class="stack">${items.map((item) => `<article class="annotation">
     <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.item_title || "")}</span></p>
     <p class="button-row">
@@ -957,8 +984,8 @@ function focusActionItems(items) {
   </article>`).join("")}</div>`;
 }
 
-function focusReminders(items) {
-  if (!items.length) return `<div class="empty-state"><span class="meta">Clear</span><h3>No pending reminders</h3><p>Timed nudges from saved items appear here.</p></div>`;
+function focusReminders(items, view) {
+  if (!items.length) return focusEmptyState("reminder", view);
   return `<div class="stack">${items.map((item) => `<article class="annotation">
     <p><strong>${escapeHTML(formatDate(item.due_at))}</strong> <span class="meta">${reminderMeta(item)}</span></p>
     ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
@@ -970,6 +997,22 @@ function focusReminders(items) {
       <button type="button" class="danger" data-reminder-delete="${escapeHTML(item.id)}" aria-label="Delete reminder ${escapeHTML(item.note || item.item_title || "")}">Delete</button>
     </p>
   </article>`).join("")}</div>`;
+}
+
+function focusEmptyState(type, view) {
+  const label = {
+    pending: "pending",
+    overdue: "overdue",
+    today: "due today",
+    upcoming: "upcoming",
+    completed: "completed",
+  }[view] || view;
+  if (type === "action" && view !== "pending" && view !== "completed") {
+    return `<div class="empty-state"><span class="meta">Clear</span><h3>No ${escapeHTML(label)} action items</h3><p>Action items stay in pending or completed. Timed work appears under reminders.</p></div>`;
+  }
+  const noun = type === "action" ? "action items" : "reminders";
+  const body = type === "action" ? "Tasks added from Inbox or a saved item appear here." : "Timed nudges from saved items appear here.";
+  return `<div class="empty-state"><span class="meta">Clear</span><h3>No ${escapeHTML(label)} ${noun}</h3><p>${body}</p></div>`;
 }
 
 function itemHref(item) {
@@ -1008,9 +1051,9 @@ async function assistantPage() {
         <button type="submit">Generate drafts</button>
       </form>
       <section class="panel">
-        <span class="meta">Approval ledger</span>
+        <span class="meta">Pending proposals</span>
         <h2>${actions.length} ${escapeHTML(status)} proposals</h2>
-        <p>Assistant drafts are inert. Queue one to inspect it in the approval ledger, then approve or reject it explicitly.</p>
+        <p>Drafts do nothing until you queue them. Review the JSON, then execute or reject each proposal.</p>
       </section>
     </section>
     <section class="stack" id="assistant-drafts" aria-live="polite"></section>
@@ -1041,7 +1084,7 @@ async function assistantPage() {
       </div>
     </section>
     <section class="stack">
-      ${actions.map(assistantActionCard).join("") || `<div class="panel empty-state"><span class="meta">No proposals</span><h2>Nothing waiting</h2><p>Approved assistant work appears here as a ledger.</p></div>`}
+      ${actions.map(assistantActionCard).join("") || `<div class="panel empty-state"><span class="meta">No proposals</span><h2>Nothing waiting</h2><p>Queued assistant proposals appear here for review.</p></div>`}
     </section>
   `));
   document.querySelector("#assistant-suggest-form").addEventListener("submit", submitAssistantSuggestions);
@@ -1065,7 +1108,7 @@ function assistantActionCard(action) {
     <span class="meta">${escapeHTML(action.action_type || "action")} · ${escapeHTML(action.status || "")} · ${escapeHTML(formatDate(action.created_at))}</span>
     <h2>${escapeHTML(assistantActionTitle(action))}</h2>
     ${action.error ? `<p class="form-message form-message-error">${escapeHTML(action.error)}</p>` : ""}
-    <div class="split compact-split">
+    <div class="split comparison-split">
       <div class="field">
         <label>Payload</label>
         <pre class="code-block">${escapeHTML(payload)}</pre>
@@ -1076,7 +1119,7 @@ function assistantActionCard(action) {
       </div>
     </div>
     <p class="button-row">
-      ${isPending ? `<button type="button" data-assistant-approve="${actionID}">Approve</button><button type="button" class="secondary" data-assistant-reject="${actionID}">Reject</button>` : ""}
+      ${isPending ? `<button type="button" data-assistant-approve="${actionID}">Execute proposal</button><button type="button" class="secondary" data-assistant-reject="${actionID}">Reject proposal</button>` : ""}
     </p>
   </article>`;
 }
@@ -1109,7 +1152,7 @@ async function submitAssistantSuggestions(event) {
 
 function renderAssistantDrafts(drafts) {
   const target = document.querySelector("#assistant-drafts");
-  target.innerHTML = drafts.map(assistantDraftCard).join("") || `<div class="panel empty-state"><span class="meta">No drafts</span><h2>No safe suggestion found</h2><p>Try a different source or create a manual proposal.</p></div>`;
+  target.innerHTML = drafts.map(assistantDraftCard).join("") || `<div class="panel empty-state"><span class="meta">No drafts</span><h2>No reviewable draft found</h2><p>Try a different source or create a manual proposal.</p></div>`;
   target.querySelectorAll("[data-assistant-draft]").forEach((button) => {
     button.addEventListener("click", () => queueAssistantDraft(button));
   });
@@ -1206,7 +1249,7 @@ function updateAssistantPayloadTemplate(event) {
 
 async function decideAssistantAction(button, decision) {
   const id = button.dataset.assistantApprove || button.dataset.assistantReject;
-  const done = setButtonBusy(button, decision === "approve" ? "Approving" : "Rejecting");
+  const done = setButtonBusy(button, decision === "approve" ? "Executing" : "Rejecting");
   try {
     await api(`/assistant/actions/${id}/${decision}`, { method: "POST", body: "{}" });
     ui.toast(decision === "approve" ? "Assistant action executed" : "Assistant action rejected", "success");
@@ -1233,14 +1276,22 @@ async function showJobStatus(jobID) {
   const status = document.querySelector("#job-status");
   if (!jobID || !status) return;
   status.hidden = false;
-  status.textContent = "Processing saved page";
+  status.textContent = "Queued for archiving";
   for (let i = 0; i < 4; i += 1) {
     await new Promise((resolve) => setTimeout(resolve, 650));
     const job = await api(`/jobs/${jobID}`).catch(() => null);
     if (!job) return;
-    status.textContent = `Processing status: ${job.status}`;
+    status.textContent = jobStatusLabel(job.status);
     if (job.status === "completed" || job.status === "failed") return;
   }
+}
+
+function jobStatusLabel(status) {
+  if (status === "queued") return "Queued for archiving";
+  if (status === "leased" || status === "running" || status === "processing") return "Fetching and summarizing";
+  if (status === "completed") return "Saved and enriched";
+  if (status === "failed") return "Processing failed. Open import jobs or server logs for details.";
+  return status ? `Processing: ${status.replaceAll("_", " ")}` : "Processing saved item";
 }
 
 function tagList(tags) {
@@ -1726,7 +1777,7 @@ function reminderEditForm(reminder) {
       <label class="sr-only" for="edit-reminder-note-${id}">Note</label>
       <input id="edit-reminder-note-${id}" data-reminder-note type="text" maxlength="500" value="${escapeHTML(reminder.note || "")}" placeholder="Why this should come back">
       <p class="form-message" data-form-message hidden></p>
-      <button type="submit" class="secondary">Save</button>
+      <button type="submit" class="secondary">Save reminder</button>
     </form>
   </details>`;
 }
@@ -1736,7 +1787,7 @@ function reminderRecurrenceOptions(current) {
 }
 
 function reminderChannelOptions(current) {
-  return [["in_app", "In app"], ["email", "In app + email"]].map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
+  return [["in_app", "In-app"], ["email", "In-app + email"]].map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
 }
 
 function reminderMeta(reminder) {
@@ -2229,12 +2280,12 @@ async function settingsPage() {
   const tabs = [
     ["profile", "Profile", "Manage your profile and account access."],
     ["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."],
-    ["tags", "Tags", "Normalize your vocabulary and map aliases to canonical tags."],
+    ["tags", "Tags", "Keep tag names consistent and merge aliases into one tag."],
     ["connections", "Connections", "Connect provider accounts and sync saved items."],
     ["api-keys", "API Keys", "Configure provider keys for enrichment and delivery."],
   ];
   const active = tabs.some(([id]) => id === section) ? section : "profile";
-  setRoot(shell("Settings", `<section class="panel tabs" id="settings-tabs">
+  setRoot(shell("Settings", `<section class="tabs" id="settings-tabs">
     <div class="tab-list" role="tablist" aria-label="Settings sections">
       ${tabs.map(([id, label]) => `<button type="button" role="tab" id="tab-${id}" aria-controls="panel-${id}" aria-selected="${id === active}">${label}</button>`).join("")}
     </div>
@@ -2327,14 +2378,14 @@ async function bindProfilePanel() {
 function tagSettingsPanel() {
   return `<section class="split">
     <form class="panel form" id="tag-form">
-      <h3>Canonical tag</h3>
+      <h3>Primary tag</h3>
       <div class="field"><label for="tag-name">Name</label><input id="tag-name" type="text" placeholder="Research"></div>
       <p class="form-message" id="tag-message" data-form-message hidden></p>
       <button type="submit">Create tag</button>
     </form>
     <form class="panel form" id="tag-alias-form">
       <h3>Alias</h3>
-      <div class="field"><label for="alias-tag">Canonical tag</label><select id="alias-tag"></select></div>
+      <div class="field"><label for="alias-tag">Primary tag</label><select id="alias-tag"></select></div>
       <div class="field"><label for="alias-name">Alias</label><input id="alias-name" type="text" placeholder="PKM"></div>
       <p class="form-message" id="tag-alias-message" data-form-message hidden></p>
       <button type="submit">Add alias</button>
@@ -2429,7 +2480,7 @@ async function bindConnectionsPanel() {
     try {
       const enabled = await api("/auth/x/enabled");
       if (!enabled.enabled) {
-        status.innerHTML = `<p class="meta">X integration is not enabled on this server.</p>`;
+        status.innerHTML = `<p class="meta">X is disabled. Add X client keys in API Keys, then enable X integration.</p>`;
         connect.disabled = true;
         sync.disabled = true;
         disconnect.disabled = true;
@@ -2598,10 +2649,10 @@ function apiKeyStatus(keys) {
 function importPanel() {
   return `<section class="split">
     <form class="panel form" id="import-form">
-      <h3>Paste export</h3>
-      <div class="field"><label for="import-content">Export content</label><textarea id="import-content" rows="9" placeholder="Paste browser HTML, Pocket/Raindrop/Linkwarden JSON, or one URL per line"></textarea></div>
+      <h3>Import or restore</h3>
+      <div class="field"><label for="import-content">Import or restore content</label><textarea id="import-content" rows="9" placeholder="Paste a browser, Pocket, Raindrop, Linkwarden, or Arivu JSON export, or one URL per line"></textarea></div>
       <p class="form-message" id="import-message" data-form-message hidden></p>
-      <button type="submit">Start import</button>
+      <button type="submit">Queue import or restore</button>
     </form>
     <section class="panel">
       <h3>Export</h3>
@@ -2795,7 +2846,7 @@ async function duplicatesPage() {
   document.querySelectorAll("[data-merge]").forEach((button) => {
     button.addEventListener("click", async () => {
       const ids = button.dataset.merge.split(",");
-      const confirmed = await ui.confirmDestructive({ title: "Merge duplicates", body: "Arivu will keep the first item and move useful data from the rest.", confirm: "Merge", cancel: "Cancel" });
+      const confirmed = await ui.confirmDestructive({ title: "Merge duplicates", body: "Merge this group into the top bookmark shown. Arivu keeps its URL and moves summaries, links, tags, notes, and reading history from the duplicates.", confirm: "Merge into top bookmark", cancel: "Keep separate" });
       if (!confirmed) return;
       const done = setButtonBusy(button, "Merging");
       try {
@@ -3072,7 +3123,7 @@ async function runAdminUserAction(button) {
   const action = button.dataset.adminUserAction;
   const userID = button.dataset.userId;
   if (action === "delete") {
-    const ok = await ui.confirmDestructive({ title: "Delete user", body: "This removes the user and their data.", confirm: "Delete", cancel: "Cancel" });
+    const ok = await ui.confirmDestructive({ title: "Delete user", body: "Delete this user and all of their bookmarks, notes, collections, sessions, and account data? This cannot be undone.", confirm: "Delete user permanently", cancel: "Keep user" });
     if (!ok) return;
   }
   let body = "{}";
@@ -3181,6 +3232,7 @@ async function render() {
   try {
     if (route?.access === "protected") await requireUser();
     await page();
+    syncRouteAccessibility();
     const actions = document.querySelector("#global-actions");
     if (actions) {
       ui.menu(actions, [
@@ -3218,5 +3270,8 @@ document.addEventListener("click", (event) => {
   event.preventDefault();
   navigate(link.getAttribute("href"));
 });
-addEventListener("popstate", render);
+addEventListener("popstate", () => {
+  state.focusMainAfterRender = true;
+  render();
+});
 render();

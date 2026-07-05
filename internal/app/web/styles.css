@@ -258,9 +258,24 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   overflow-wrap: anywhere;
   padding: var(--space-5);
 }
+.panel h2,
+.panel h3 {
+  font-family: var(--font-display);
+  font-weight: 800;
+  letter-spacing: 0;
+  line-height: 1;
+  margin: 0 0 var(--space-3);
+  text-transform: uppercase;
+}
+.panel h2 { font-size: 1.5rem; }
+.panel h3 { font-size: 1.125rem; }
 
 .compact-split {
   grid-template-columns: minmax(220px, 1fr) minmax(96px, .22fr) minmax(140px, .28fr);
+  margin: var(--space-4) 0;
+}
+.comparison-split {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   margin: var(--space-4) 0;
 }
 
@@ -283,7 +298,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   gap: var(--space-2);
 }
 .priority-buttons button {
-  min-height: 40px;
+  min-height: 44px;
   padding: 0 var(--space-2);
 }
 .priority-buttons button.active {
@@ -687,7 +702,7 @@ input::placeholder, textarea::placeholder {
     transform: translate(2px, 2px);
     box-shadow: 1px 1px 0 oklch(22% .025 68 / .92);
   }
-  .panel, .bookmark, .menu, .dialog, .toast { animation: hardReveal .22s var(--ease-out-quart) both; }
+  .menu, .dialog, .toast { animation: hardReveal .22s var(--ease-out-quart) both; }
   .toast-earned::after { animation: receiptMark .42s var(--ease-out-quart) both; }
   body.is-routing #route-progress { animation: routeSweep .9s var(--ease-out-quart) infinite; }
   @media (hover: hover) {
