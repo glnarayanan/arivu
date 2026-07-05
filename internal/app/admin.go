@@ -15,7 +15,6 @@ import (
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/runtimeconfig"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func (a *App) adminOverview(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -165,14 +164,10 @@ func (a *App) adminResetPassword(w http.ResponseWriter, r *http.Request, user au
 		writeError(w, http.StatusBadRequest, "new_password must be at least 8 characters")
 		return
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(body.NewPassword), bcrypt.DefaultCost)
-	if err != nil {
+	if err := a.auth.ResetUserPassword(r.Context(), r.PathValue("id"), body.NewPassword); err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not reset password")
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, _ = a.db.ExecContext(r.Context(), `UPDATE users SET password_hash=?, password_scheme='bcrypt', invite_pending=0, updated_at=? WHERE id=?`, string(hash), now, r.PathValue("id"))
-	_, _ = a.db.ExecContext(r.Context(), `UPDATE sessions SET revoked_at=? WHERE user_id=?`, now, r.PathValue("id"))
 	a.auditEvent(r.Context(), user.ID, "admin.user.reset_password", "user", r.PathValue("id"), nil)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "password_reset", "user_id": r.PathValue("id")})
 }
@@ -380,6 +375,12 @@ func sanitizeAuditMetadataValue(value any) any {
 			items = append(items, sanitizeAuditMetadataValue(item))
 		}
 		return items
+	case []string:
+		items := make([]any, 0, min(len(typed), 12))
+		for _, item := range typed[:min(len(typed), 12)] {
+			items = append(items, truncateRunes(item, 160))
+		}
+		return items
 	default:
 		return "[object]"
 	}
@@ -397,6 +398,7 @@ func (a *App) auditEvent(ctx context.Context, actorID, action, targetType, targe
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
+	metadata = sanitizeAuditMetadata(metadata)
 	raw, _ := json.Marshal(metadata)
 	_, _ = a.db.ExecContext(ctx, `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), actorID, action, targetType, targetID, string(raw), time.Now().UTC().Format(time.RFC3339))
 }

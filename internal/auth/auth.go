@@ -272,6 +272,20 @@ func (s *Service) ChangePassword(w http.ResponseWriter, r *http.Request, user Us
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Password changed successfully"})
 }
 
+func (s *Service) ResetUserPassword(ctx context.Context, userID string, newPassword string) error {
+	hash, err := hashArgon2id(newPassword)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.ExecContext(ctx, `UPDATE users SET password_hash=?, password_scheme='argon2id', invite_pending=0, updated_at=? WHERE id=?`, hash, now, userID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE sessions SET revoked_at=? WHERE user_id=?`, now, userID)
+	return err
+}
+
 func (s *Service) Profile(w http.ResponseWriter, r *http.Request, user User) {
 	writeJSON(w, http.StatusOK, user)
 }

@@ -1250,6 +1250,15 @@ func TestAdminUserMutations(t *testing.T) {
 	}
 	assertAuditAction(t, a, "admin.settings.update", "settings", "")
 	assertAuditAction(t, a, "admin.settings.delete", "settings", "")
+	adminID := userIDForEmail(t, a, "admin@example.com")
+	a.auditEvent(context.Background(), adminID, "admin.secret.stored", "settings", "", map[string]any{"token": "do-not-store", "note": "visible"})
+	var storedMetadata string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT metadata_json FROM audit_events WHERE action='admin.secret.stored'`).Scan(&storedMetadata); err != nil {
+		t.Fatalf("stored sanitized audit event: %v", err)
+	}
+	if strings.Contains(storedMetadata, "do-not-store") || !strings.Contains(storedMetadata, "[redacted]") {
+		t.Fatalf("audit metadata was not redacted before storage: %s", storedMetadata)
+	}
 	if _, err := a.db.ExecContext(context.Background(), `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, "audit-secret", userIDForEmail(t, a, "admin@example.com"), "admin.secret.test", "settings", "", `{"token":"do-not-leak","note":"visible"}`, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatalf("seed secret audit event: %v", err)
 	}
@@ -1311,6 +1320,13 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("reset status = %d body=%s", reset.StatusCode, readBody(reset))
 	}
 	reset.Body.Close()
+	var passwordScheme string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT password_scheme FROM users WHERE id=?`, userID).Scan(&passwordScheme); err != nil {
+		t.Fatalf("reset password scheme: %v", err)
+	}
+	if passwordScheme != "argon2id" {
+		t.Fatalf("admin reset stored password scheme %q, want argon2id", passwordScheme)
+	}
 
 	for _, path := range []string{"/api/admin/users/" + userID + "/ban", "/api/admin/users/" + userID + "/unban"} {
 		resp := adminRequest(t, handler, http.MethodPost, path, `{}`, accessCookie, csrfCookie)

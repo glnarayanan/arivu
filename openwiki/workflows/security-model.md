@@ -10,9 +10,12 @@
 - Login, forgot-password, and reset-password endpoints use SQLite-backed
   throttles with hashed rate-limit keys.
 - Legacy bcrypt hashes are accepted and upgraded to Argon2id on successful login.
+- User-initiated and admin-initiated password resets store new hashes as Argon2id
+  and revoke affected sessions.
 - Runtime provider secrets are encrypted with AES-256-GCM using HKDF-derived key material from `SECRET_KEY`; non-secret runtime settings stay in plain settings rows.
 - Provider setting updates are restricted to known provider/runtime keys, and
-  audit metadata records changed key names without storing secret values.
+  audit metadata is redacted before storage so secret-like values are not
+  persisted in `audit_events`.
 - Successful admin user mutations, provider setting updates, password changes,
   and password resets write `audit_events` rows.
 - Admins can inspect recent audit events through a bounded newest-first
