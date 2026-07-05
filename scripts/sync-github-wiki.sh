@@ -26,8 +26,8 @@ rewrite_title() {
 {
   echo "# Arivu Wiki"
   echo
-  sed -n '3,5p' "$root/README.md"
-  echo
+  section "$root/README.md" "^Self-hosted" "^## What Arivu Does"
+  section "$root/README.md" "^## What Arivu Does" "^## How It Runs"
   echo "## Start Here"
   echo
   echo "- [Getting Started](Getting-Started): install, run locally, and configure production."
@@ -36,7 +36,9 @@ rewrite_title() {
   echo "- [Security](Security): sessions, CSRF, SSRF protection, sanitization, exports, and operational limits."
   echo "- [Developer Architecture](Developer-Architecture): codebase layout, runtime, frontend, and testing notes."
   echo
-  section "$root/README.md" "^## What Ships" "^## Quick Start"
+  echo "## Self-Hosting Shape"
+  echo
+  echo "Arivu runs as a Go application with embedded frontend assets and SQLite persistence. The same binary serves the browser UI, API, workers, CLI commands, and migration tooling."
   echo
   echo "Repository: https://github.com/glnarayanan/arivu"
 } > "$out/Home.md"

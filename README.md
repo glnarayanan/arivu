@@ -1,20 +1,39 @@
 # Arivu
 
-AI-native bookmarking, rebuilt as a low-dependency single binary.
+Self-hosted AI second brain for web research, notes, tasks, and review.
 
-Arivu is a self-hosted bookmarking app with an embedded browser UI, SQLite persistence, durable background jobs, direct provider integrations, a small CLI, and migration tooling for legacy Arivu exports.
+Arivu helps you save web pages, turn them into useful knowledge, search by
+meaning, and bring important material back before it disappears into the
+archive. It runs on your own infrastructure with a Go application, SQLite
+persistence, embedded browser UI, browser extension, CLI, and optional AI
+provider integrations.
 
-## What Ships
+## What Arivu Does
 
-- One Go binary for the web app, API, workers, CLI commands, and migration tooling.
-- Embedded dependency-free frontend assets served from the binary.
-- SQLite with WAL, foreign keys, optional FTS5, and a supported LIKE search fallback.
-- Opaque web, CLI, and extension sessions with audience isolation and CSRF protection for web mutations.
-- SSRF-safe outbound fetching, backend-owned HTML sanitization, and direct HTTP clients for Gemini, Resend, and X.
-- Browser extension support through extension-scoped API routes.
-- Second-brain workflow surfaces for Inbox triage, Focus tasks/reminders,
-  Review, standalone notes, explicit links, annotations, cited answers, and
-  Obsidian-ready exports.
+- Capture pages from the dashboard, browser extension, PWA share target, or
+  `arivu save`.
+- Triage saved pages and notes through Inbox, Working, Kept, and Archived.
+- Work from Focus when an item carries a task or reminder.
+- Use Review to resurface older, due, high-priority, or still-actionable items.
+- Write standalone notes, link notes to saved pages, and keep backlinks.
+- Search saved content by title, URL, tags, filters, archived text, and meaning
+  when semantic features are available.
+- Ask cited questions against your own saved content and approve assistant
+  drafts before they change anything.
+- Import from common bookmark tools and export JSON, CSV, browser HTML,
+  Markdown, and Obsidian-ready ZIP archives.
+
+## How It Runs
+
+- One Go binary serves the web app, API, workers, CLI commands, and migration
+  tooling.
+- Embedded dependency-free frontend assets are served from the binary.
+- SQLite stores content, sessions, jobs, settings, search indexes, tasks, and
+  reminders.
+- Web, CLI, and extension sessions are audience-isolated, with CSRF protection
+  for browser mutations.
+- Outbound fetching is SSRF-shielded, archived HTML is sanitized on the backend,
+  and provider integrations use direct HTTP clients for Gemini, Resend, and X.
 
 ## Quick Start
 
