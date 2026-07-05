@@ -22,7 +22,10 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 - `/focus`: daily work surface combining pending action items and reminders
   with links back to their source items plus quick reminder completion, snooze,
   and delete actions.
-- `/assistant`: approval ledger for allowlisted assistant action proposals, with payload/result inspection and approve/reject controls.
+- `/assistant`: guided planner for inert assistant drafts plus an approval ledger
+  for allowlisted action proposals, with payload/result inspection and
+  approve/reject controls. Draft cards expose the source item and JSON payload
+  before they can be queued as proposals.
 - `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions. Reminder controls include timezone-aware due times, recurrence, in-app/email channel selection, inline edits, snooze, completion, and deletion.
 - `/notes`: standalone notes for ideas and snippets that are not tied to a URL,
   including note-side action items, reminders, explicit links, backlinks, and

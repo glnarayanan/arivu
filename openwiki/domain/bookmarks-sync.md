@@ -53,10 +53,11 @@ Second-brain v1 adds user-authored context around bookmarks:
 - The Focus page reads pending action items and reminders through existing APIs,
   giving users one working surface for open loops without introducing a new
   backend workflow.
-- Assistant proposals can suggest only bounded second-brain mutations: item
-  state updates, explicit links, reminders, and action items. The
-  Assistant page presents the proposal ledger; nothing executes until a user
-  approves it.
+- Assistant suggestions generate inert drafts from an item, search query, Inbox
+  stage, or Review queue. Drafts are limited to bounded second-brain mutations:
+  item state updates, explicit links, reminders, and action items. Queueing a
+  draft creates a normal proposal in the Assistant ledger; nothing executes
+  until a user approves it.
 - The review queue is powered by resurfacing candidates and records completion or snooze events.
 - Tags are normalized and alias-aware so manual tags and provider suggestions converge.
 - Bookmark list retrieval filters by query, tag, domain, source, read state, and

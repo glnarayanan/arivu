@@ -892,13 +892,38 @@ async function assistantPage() {
   const actions = result.actions || [];
   setRoot(shell("Assistant actions", `
     <section class="split">
+      <form class="panel form" id="assistant-suggest-form">
+        <span class="meta">Planner</span>
+        <h2>Generate reviewable drafts</h2>
+        <div class="field">
+          <label for="assistant-suggest-mode">Context</label>
+          <select id="assistant-suggest-mode" name="mode">
+            <option value="inbox">Inbox stage</option>
+            <option value="review">Review queue</option>
+            <option value="search">Search query</option>
+            <option value="item">Specific item</option>
+          </select>
+        </div>
+        <div class="field"><label for="assistant-suggest-stage">Stage</label><select id="assistant-suggest-stage" name="stage">${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}">${stage}</option>`).join("")}</select></div>
+        <div class="field"><label for="assistant-suggest-query">Search</label><input id="assistant-suggest-query" name="query" type="search" maxlength="2000" placeholder="recall, launch, research"></div>
+        <div class="split compact-split">
+          <div class="field"><label for="assistant-suggest-type">Item type</label><select id="assistant-suggest-type" name="item_type"><option value="bookmark">Bookmark</option><option value="note">Note</option></select></div>
+          <div class="field"><label for="assistant-suggest-id">Item ID</label><input id="assistant-suggest-id" name="item_id" type="text" autocomplete="off"></div>
+        </div>
+        <div class="field"><label for="assistant-suggest-limit">Drafts</label><input id="assistant-suggest-limit" name="limit" type="number" min="1" max="12" value="6"></div>
+        <p class="form-message" data-form-message hidden></p>
+        <button type="submit">Generate drafts</button>
+      </form>
       <section class="panel">
         <span class="meta">Approval ledger</span>
         <h2>${actions.length} ${escapeHTML(status)} proposals</h2>
-        <p>Assistant suggestions stay inert until you approve them. Each approval rechecks ownership and executes one bounded mutation.</p>
+        <p>Assistant drafts are inert. Queue one to inspect it in the approval ledger, then approve or reject it explicitly.</p>
       </section>
-      <form class="panel form" id="assistant-action-form">
-        <h2>Propose action</h2>
+    </section>
+    <section class="stack" id="assistant-drafts" aria-live="polite"></section>
+    <details class="panel form">
+      <summary>Manual proposal JSON</summary>
+      <form id="assistant-action-form">
         <div class="field">
           <label for="assistant-action-type">Action</label>
           <select id="assistant-action-type">
@@ -915,7 +940,7 @@ async function assistantPage() {
         <p class="form-message" id="assistant-message" data-form-message hidden></p>
         <button type="submit">Add to review</button>
       </form>
-    </section>
+    </details>
     <section class="panel">
       <h2>Queue</h2>
       <div class="chips stage-tabs">
@@ -926,6 +951,7 @@ async function assistantPage() {
       ${actions.map(assistantActionCard).join("") || `<div class="panel empty-state"><span class="meta">No proposals</span><h2>Nothing waiting</h2><p>Approved assistant work appears here as a ledger.</p></div>`}
     </section>
   `));
+  document.querySelector("#assistant-suggest-form").addEventListener("submit", submitAssistantSuggestions);
   const form = document.querySelector("#assistant-action-form");
   form.addEventListener("submit", submitAssistantAction);
   document.querySelector("#assistant-action-type").addEventListener("change", updateAssistantPayloadTemplate);
@@ -970,6 +996,65 @@ function assistantActionTitle(action) {
   return action.action_type || "Assistant action";
 }
 
+async function submitAssistantSuggestions(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const done = setButtonBusy(event.submitter, "Generating");
+  setFormMessage(form);
+  try {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.limit = Number(payload.limit || 6);
+    const result = await api("/assistant/suggestions", { method: "POST", body: JSON.stringify(payload) });
+    renderAssistantDrafts(result.suggestions || []);
+  } catch (err) {
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function renderAssistantDrafts(drafts) {
+  const target = document.querySelector("#assistant-drafts");
+  target.innerHTML = drafts.map(assistantDraftCard).join("") || `<div class="panel empty-state"><span class="meta">No drafts</span><h2>No safe suggestion found</h2><p>Try a different source or create a manual proposal.</p></div>`;
+  target.querySelectorAll("[data-assistant-draft]").forEach((button) => {
+    button.addEventListener("click", () => queueAssistantDraft(button));
+  });
+}
+
+function assistantDraftCard(draft) {
+  const payload = JSON.stringify(draft.payload || {}, null, 2);
+  const source = draft.source || {};
+  const encoded = escapeHTML(JSON.stringify({ action_type: draft.action_type, payload: draft.payload || {} }));
+  return `<article class="panel form">
+    <span class="meta">${escapeHTML(draft.action_type || "action")} · ${escapeHTML(source.title || source.item_id || "")}</span>
+    <h2>${escapeHTML(draft.title || "Assistant draft")}</h2>
+    <p>${escapeHTML(draft.reason || "")}</p>
+    <div class="field">
+      <label>Payload</label>
+      <pre class="code-block">${escapeHTML(payload)}</pre>
+    </div>
+    <p class="button-row">
+      ${source.href ? `<a class="button secondary" href="${escapeHTML(source.href)}">Open source</a>` : ""}
+      <button type="button" data-assistant-draft="${encoded}">Queue proposal</button>
+    </p>
+  </article>`;
+}
+
+async function queueAssistantDraft(button) {
+  const draft = JSON.parse(button.dataset.assistantDraft || "{}");
+  const done = setButtonBusy(button, "Queueing");
+  try {
+    await api("/assistant/actions", { method: "POST", body: JSON.stringify(draft) });
+    ui.toast("Assistant proposal queued", "success");
+    navigate("/assistant?status=pending", true);
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
 async function submitAssistantAction(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1011,6 +1096,10 @@ function updateAssistantPayloadTemplate(event) {
       item_type: "bookmark",
       item_id: "",
       due_at: new Date(Date.now() + 86400000).toISOString(),
+      timezone: browserTimezone(),
+      recurrence: "none",
+      recurrence_interval_days: 0,
+      notification_channel: "in_app",
       note: "",
     },
     create_action_item: {

@@ -83,3 +83,6 @@
   behind CSRF and mutation quota checks. Reminder email jobs re-check the owning
   user, exact due timestamp, pending status, email notification channel, and
   empty `last_notified_at` before sending through Resend.
+- Assistant suggestions are ephemeral and do not insert into `assistant_actions`.
+  Suggestions and proposal creation both validate allowlisted action payloads
+  against current user-owned items; approval revalidates again before executing.

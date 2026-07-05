@@ -62,6 +62,7 @@ var (
 	quotaRemindersCreate  = mutationQuota{name: "reminders.create", limit: 120, window: time.Hour}
 	quotaRemindersUpdate  = mutationQuota{name: "reminders.update", limit: 240, window: time.Hour}
 	quotaActionItemCreate = mutationQuota{name: "action_items.create", limit: 240, window: time.Hour}
+	quotaAssistantSuggest = mutationQuota{name: "assistant.suggest", limit: 60, window: time.Hour}
 	quotaAssistantPropose = mutationQuota{name: "assistant.propose", limit: 60, window: time.Hour}
 	quotaAssistantApprove = mutationQuota{name: "assistant.approve", limit: 60, window: time.Hour}
 	quotaSearchRebuild    = mutationQuota{name: "search.rebuild", limit: 12, window: time.Hour}
@@ -173,6 +174,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/action-items/{id}/complete", a.withUser(a.bookmarks.CompleteActionItem))
 	mux.HandleFunc("DELETE /api/action-items/{id}", a.withUser(a.bookmarks.DeleteActionItem))
 	mux.HandleFunc("GET /api/assistant/actions", a.withUser(a.bookmarks.AssistantActions))
+	mux.HandleFunc("POST /api/assistant/suggestions", a.withUserQuota(quotaAssistantSuggest, a.bookmarks.AssistantSuggestions))
 	mux.HandleFunc("POST /api/assistant/actions", a.withUserQuota(quotaAssistantPropose, a.bookmarks.ProposeAssistantAction))
 	mux.HandleFunc("POST /api/assistant/actions/{id}/approve", a.withUserQuota(quotaAssistantApprove, a.bookmarks.ApproveAssistantAction))
 	mux.HandleFunc("POST /api/assistant/actions/{id}/reject", a.withUser(a.bookmarks.RejectAssistantAction))

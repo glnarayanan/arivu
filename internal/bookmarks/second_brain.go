@@ -347,10 +347,18 @@ func (s *Service) CreateSavedSearch(w http.ResponseWriter, r *http.Request, user
 
 func (s *Service) Review(w http.ResponseWriter, r *http.Request, user auth.User) {
 	limit := queryInt(r, "limit", 10, 1, 50)
-	candidates, err := s.resurfacingCandidates(r.Context(), user.ID, 500)
+	items, err := s.reviewItems(r.Context(), user.ID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load review queue")
 		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+}
+
+func (s *Service) reviewItems(ctx context.Context, userID string, limit int) ([]map[string]any, error) {
+	candidates, err := s.resurfacingCandidates(ctx, userID, 500)
+	if err != nil {
+		return nil, err
 	}
 	var items []map[string]any
 	for _, candidate := range candidates {
@@ -358,23 +366,22 @@ func (s *Service) Review(w http.ResponseWriter, r *http.Request, user auth.User)
 			break
 		}
 		id, _ := candidate.Bookmark["id"].(string)
-		if s.recentReviewEvent(r.Context(), user.ID, "bookmark", id) {
+		if s.recentReviewEvent(ctx, userID, "bookmark", id) {
 			continue
 		}
 		item := cloneMap(candidate.Bookmark)
 		item["item_type"] = "bookmark"
-		item["item_state"] = s.itemState(r.Context(), user.ID, "bookmark", id)
+		item["item_state"] = s.itemState(ctx, userID, "bookmark", id)
 		items = append(items, item)
 	}
 	if len(items) < limit {
-		notes, err := s.reviewNotes(r.Context(), user.ID, limit-len(items))
+		notes, err := s.reviewNotes(ctx, userID, limit-len(items))
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Could not load review queue")
-			return
+			return nil, err
 		}
 		items = append(items, notes...)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": items})
+	return items, nil
 }
 
 func (s *Service) Inbox(w http.ResponseWriter, r *http.Request, user auth.User) {

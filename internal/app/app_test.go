@@ -1643,6 +1643,77 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("restore missing standalone note or alias: %#v", restoredExport)
 	}
 
+	missingSuggestionsCSRF := httptest.NewRequest(http.MethodPost, "/api/assistant/suggestions", strings.NewReader(`{"mode":"inbox"}`))
+	missingSuggestionsCSRF.Header.Set("Content-Type", "application/json")
+	missingSuggestionsCSRF.AddCookie(accessCookie)
+	missingSuggestionsRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingSuggestionsRec, missingSuggestionsCSRF)
+	missingSuggestionsResp := missingSuggestionsRec.Result()
+	if missingSuggestionsResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("assistant suggestions without csrf status = %d body=%s", missingSuggestionsResp.StatusCode, readBody(missingSuggestionsResp))
+	}
+	missingSuggestionsResp.Body.Close()
+	var assistantActionCount int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM assistant_actions WHERE user_id=?`, userID).Scan(&assistantActionCount); err != nil {
+		t.Fatalf("count assistant actions before suggestions: %v", err)
+	}
+	suggestionsResp := adminRequest(t, handler, http.MethodPost, "/api/assistant/suggestions", `{"mode":"item","item_type":"bookmark","item_id":"capture","limit":4}`, accessCookie, csrfCookie)
+	if suggestionsResp.StatusCode != http.StatusOK {
+		t.Fatalf("assistant suggestions status = %d body=%s", suggestionsResp.StatusCode, readBody(suggestionsResp))
+	}
+	var suggestionsBody struct {
+		Mode        string           `json:"mode"`
+		Inert       bool             `json:"inert"`
+		Suggestions []map[string]any `json:"suggestions"`
+	}
+	_ = json.NewDecoder(suggestionsResp.Body).Decode(&suggestionsBody)
+	suggestionsResp.Body.Close()
+	if suggestionsBody.Mode != "item" || !suggestionsBody.Inert || len(suggestionsBody.Suggestions) == 0 {
+		t.Fatalf("unexpected assistant suggestions: %#v", suggestionsBody)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM assistant_actions WHERE user_id=?`, userID).Scan(&assistantActionCount); err != nil {
+		t.Fatalf("count assistant actions after suggestions: %v", err)
+	}
+	if assistantActionCount != 0 {
+		t.Fatalf("suggestions wrote assistant actions: %d", assistantActionCount)
+	}
+	firstDraft := suggestionsBody.Suggestions[0]
+	if firstDraft["draft_id"] == "" || firstDraft["action_type"] == "" || firstDraft["payload"] == nil || firstDraft["source"] == nil {
+		t.Fatalf("assistant draft missing reviewable fields: %#v", firstDraft)
+	}
+	payloadBytes, _ := json.Marshal(map[string]any{"action_type": firstDraft["action_type"], "payload": firstDraft["payload"]})
+	queueDraft := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", string(payloadBytes), accessCookie, csrfCookie)
+	if queueDraft.StatusCode != http.StatusOK {
+		t.Fatalf("queue assistant draft status = %d body=%s", queueDraft.StatusCode, readBody(queueDraft))
+	}
+	queueDraft.Body.Close()
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM assistant_actions WHERE user_id=?`, userID).Scan(&assistantActionCount); err != nil {
+		t.Fatalf("count assistant actions after queue: %v", err)
+	}
+	if assistantActionCount != 1 {
+		t.Fatalf("queueing a draft should create one pending action, got %d", assistantActionCount)
+	}
+	searchSuggestionsResp := adminRequest(t, handler, http.MethodPost, "/api/assistant/suggestions", `{"mode":"search","query":"recall","limit":6}`, accessCookie, csrfCookie)
+	if searchSuggestionsResp.StatusCode != http.StatusOK {
+		t.Fatalf("assistant search suggestions status = %d body=%s", searchSuggestionsResp.StatusCode, readBody(searchSuggestionsResp))
+	}
+	var searchSuggestionsBody struct {
+		Suggestions []map[string]any `json:"suggestions"`
+	}
+	_ = json.NewDecoder(searchSuggestionsResp.Body).Decode(&searchSuggestionsBody)
+	searchSuggestionsResp.Body.Close()
+	for _, suggestion := range searchSuggestionsBody.Suggestions {
+		source, _ := suggestion["source"].(map[string]any)
+		if source["item_id"] == otherNoteID {
+			t.Fatalf("assistant search suggestions leaked other user source: %#v", searchSuggestionsBody)
+		}
+	}
+	crossUserSuggestions := adminRequest(t, handler, http.MethodPost, "/api/assistant/suggestions", `{"mode":"item","item_type":"note","item_id":"`+otherNoteID+`"}`, accessCookie, csrfCookie)
+	if crossUserSuggestions.StatusCode != http.StatusBadRequest {
+		t.Fatalf("cross-user assistant suggestions status = %d body=%s", crossUserSuggestions.StatusCode, readBody(crossUserSuggestions))
+	}
+	crossUserSuggestions.Body.Close()
+
 	unsupportedAction := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"delete_item","payload":{}}`, accessCookie, csrfCookie)
 	if unsupportedAction.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unsupported assistant action status = %d body=%s", unsupportedAction.StatusCode, readBody(unsupportedAction))
@@ -2040,7 +2111,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `/notes?note=${encodeURIComponent(item.id)}`, `function focusNoteFromQuery()`, `async function focusPage()`, `/action-items?status=pending`, `/reminders?status=pending`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `function bindReminderControls()`, `noteLinkForm(note, notes)`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `/notes?note=${encodeURIComponent(item.id)}`, `function focusNoteFromQuery()`, `async function focusPage()`, `/action-items?status=pending`, `/reminders?status=pending`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `function bindReminderControls()`, `noteLinkForm(note, notes)`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}

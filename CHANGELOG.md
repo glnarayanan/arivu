@@ -40,6 +40,7 @@ All notable changes to this project will be documented in this file.
 - Added note-side explicit links and backlinks, including note-to-note link creation from the Notes page.
 - Added a unified per-user search index for bookmarks and notes, a typed `/api/search/items` retrieval API, and a quota-protected `/api/search/rebuild` repair path.
 - Added timezone-aware recurring reminders with custom day intervals, notification channels, edit and snooze APIs, due-state response metadata, and idempotent scheduled Resend email jobs.
+- Added an Assistant planning endpoint and guided UI that generate inert, reviewable drafts from Inbox, Review, search, or a specific saved item before queueing any proposal.
 
 ### Changed
 
@@ -111,3 +112,4 @@ All notable changes to this project will be documented in this file.
 - Authenticated mutation quotas now throttle high-risk write paths with hashed per-user, per-audience keys in SQLite.
 - Search index rebuilds are explicit CSRF-protected mutations; read-only search routes do not mutate server state and typed search results remain user-scoped.
 - Reminder update and snooze routes are CSRF-protected, quota-limited, and user-scoped; reminder email jobs re-check ownership, due timestamp, pending status, and `last_notified_at` before sending.
+- Assistant suggestions are CSRF-protected, quota-limited, user-scoped, and ephemeral; queueing and approval continue to validate allowlisted proposal payloads before any mutation runs.
