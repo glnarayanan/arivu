@@ -50,6 +50,8 @@ All notable changes to this project will be documented in this file.
 - Added a dependency-free command palette on the global Actions button and
   `Cmd/Ctrl+K` for navigation, capture, notes, search, cited answers, and
   current-item task/reminder/link actions.
+- Added URL-bearing OPML, RSS/Atom, and CSV/TSV import parsing for feed lists
+  and Readwise/Kindle-style exports that include source URLs.
 
 ### Changed
 

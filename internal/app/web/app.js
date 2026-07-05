@@ -2998,7 +2998,7 @@ function importPanel() {
   return `<section class="split">
     <form class="panel form" id="import-form">
       <h3>Import or restore</h3>
-      <div class="field"><label for="import-content">Import or restore content</label><textarea id="import-content" rows="9" placeholder="Paste a browser, Pocket, Raindrop, Linkwarden, or Arivu JSON export, or one URL per line"></textarea></div>
+      <div class="field"><label for="import-content">Import or restore content</label><textarea id="import-content" rows="9" placeholder="Paste browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom, URL-bearing Readwise/Kindle CSV, Arivu JSON, or one URL per line"></textarea></div>
       <p class="form-message" id="import-message" data-form-message hidden></p>
       <button type="submit">Queue import or restore</button>
     </form>

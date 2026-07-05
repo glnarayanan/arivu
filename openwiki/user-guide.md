@@ -72,9 +72,10 @@ queues and runs the proposal.
 
 ## Import, Export, And Migration
 
-Settings can import browser, Pocket, Raindrop, Linkwarden, Arivu JSON, or one URL
-per line. Exports include JSON backup, CSV, browser HTML, Markdown, and Obsidian
-ZIP vault output.
+Settings can import browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom,
+URL-bearing Readwise/Kindle CSV or TSV, Arivu JSON, or one URL per line.
+Exports include JSON backup, CSV, browser HTML, Markdown, and Obsidian ZIP vault
+output.
 
 Legacy Arivu migrations use the JSON export path documented in
 `domain/migration-guide.md`.
