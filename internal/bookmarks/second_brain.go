@@ -46,6 +46,73 @@ func (s *Service) Notes(w http.ResponseWriter, r *http.Request, user auth.User) 
 	writeJSON(w, http.StatusOK, map[string]any{"notes": notes})
 }
 
+func (s *Service) LinkTargets(w http.ResponseWriter, r *http.Request, user auth.User) {
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	itemType := strings.TrimSpace(r.URL.Query().Get("type"))
+	limit := queryInt(r, "limit", 50, 1, 100)
+	results := []map[string]any{}
+	if itemType == "" || itemType == "bookmark" {
+		results = append(results, s.bookmarkLinkTargets(r.Context(), user.ID, query, limit)...)
+	}
+	if itemType == "" || itemType == "note" {
+		results = append(results, s.noteLinkTargets(r.Context(), user.ID, query, limit)...)
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		return stringValue(results[i]["updated_at"]) > stringValue(results[j]["updated_at"])
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"targets": results})
+}
+
+func (s *Service) bookmarkLinkTargets(ctx context.Context, userID, query string, limit int) []map[string]any {
+	sqlQuery := `SELECT id,title,domain,url,updated_at FROM bookmarks WHERE user_id=?`
+	args := []any{userID}
+	if query != "" {
+		sqlQuery += ` AND (title LIKE ? OR domain LIKE ? OR url LIKE ?)`
+		like := "%" + query + "%"
+		args = append(args, like, like, like)
+	}
+	sqlQuery += ` ORDER BY updated_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	results := []map[string]any{}
+	for rows.Next() {
+		var id, title, domain, url, updated string
+		_ = rows.Scan(&id, &title, &domain, &url, &updated)
+		results = append(results, map[string]any{"id": id, "type": "bookmark", "title": title, "domain": domain, "url": url, "updated_at": updated})
+	}
+	return results
+}
+
+func (s *Service) noteLinkTargets(ctx context.Context, userID, query string, limit int) []map[string]any {
+	sqlQuery := `SELECT id,title,updated_at FROM notes WHERE user_id=?`
+	args := []any{userID}
+	if query != "" {
+		sqlQuery += ` AND title LIKE ?`
+		args = append(args, "%"+query+"%")
+	}
+	sqlQuery += ` ORDER BY updated_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, sqlQuery, args...)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	results := []map[string]any{}
+	for rows.Next() {
+		var id, title, updated string
+		_ = rows.Scan(&id, &title, &updated)
+		results = append(results, map[string]any{"id": id, "type": "note", "title": title, "updated_at": updated})
+	}
+	return results
+}
+
 func (s *Service) CreateNote(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body struct {
 		Title      string `json:"title"`

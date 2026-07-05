@@ -1412,14 +1412,13 @@ function noteListItem(note) {
 }
 
 async function noteDetailPage(id) {
-  const [note, notesResult, bookmarks] = await Promise.all([
+  const [note, noteTargets, bookmarkTargets] = await Promise.all([
     api(`/notes/${encodeURIComponent(id)}`),
-    api("/notes").catch(() => ({ notes: [] })),
-    api("/bookmarks").catch(() => []),
+    api("/link-targets?type=note&limit=100").catch(() => ({ targets: [] })),
+    api("/link-targets?type=bookmark&limit=100").catch(() => ({ targets: [] })),
   ]);
-  const notes = notesResult.notes || [];
   setRoot(shell(note.title || "Note", `
-    ${standaloneNoteCard(note, notes, bookmarks)}
+    ${standaloneNoteCard(note, noteTargets.targets || [], bookmarkTargets.targets || [])}
   `));
   document.querySelectorAll("[data-note-save]").forEach((button) => {
     button.addEventListener("click", () => updateStandaloneNote(button));
@@ -1501,10 +1500,10 @@ async function deleteStandaloneNote(button) {
 async function bookmarkPage() {
   await requireUser();
   const id = location.pathname.split("/").pop();
-  const [bookmark, related, notesResult] = await Promise.all([
+  const [bookmark, related, noteTargets] = await Promise.all([
     api(`/bookmarks/${id}`),
     api(`/bookmarks/${id}/related?limit=4`).catch(() => ({ related: [] })),
-    api("/notes").catch(() => ({ notes: [] })),
+    api("/link-targets?type=note&limit=100").catch(() => ({ targets: [] })),
   ]);
   const summary = bookmark.ai_summary || {};
   const itemState = bookmark.item_state || { stage: "inbox", importance: 0, next_action: "" };
@@ -1555,7 +1554,7 @@ async function bookmarkPage() {
     <section class="split">
       <form class="panel form" id="link-form">
         <h2>Link note</h2>
-        <div class="field"><label for="link-note">Note</label><select id="link-note">${noteOptions(notesResult.notes || [], bookmark.notes || [])}</select></div>
+        <div class="field"><label for="link-note">Note</label><select id="link-note">${noteOptions(noteTargets.targets || [], bookmark.notes || [])}</select></div>
         <div class="field"><label for="link-label">Label</label><input id="link-label" type="text" maxlength="80" placeholder="supports, contradicts, next step"></div>
         <p class="form-message" id="link-message" data-form-message hidden></p>
         <button type="submit">Create link</button>

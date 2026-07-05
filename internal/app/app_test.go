@@ -760,6 +760,39 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if len(linksBody.Outgoing) != 1 || linksBody.Outgoing[0]["id"] != linkID || linksBody.Outgoing[0]["to_id"] != searchNoteID {
 		t.Fatalf("unexpected links body: %#v", linksBody)
 	}
+	targetsResp := adminRequest(t, handler, http.MethodGet, "/api/link-targets?q=recall", "", accessCookie, csrfCookie)
+	if targetsResp.StatusCode != http.StatusOK {
+		t.Fatalf("link targets status = %d body=%s", targetsResp.StatusCode, readBody(targetsResp))
+	}
+	var targetsBody struct {
+		Targets []map[string]any `json:"targets"`
+	}
+	_ = json.NewDecoder(targetsResp.Body).Decode(&targetsBody)
+	targetsResp.Body.Close()
+	foundSearchNote := false
+	for _, target := range targetsBody.Targets {
+		if target["id"] == searchNoteID && target["type"] == "note" {
+			foundSearchNote = true
+		}
+		if _, hasBody := target["body"]; hasBody {
+			t.Fatalf("link targets should not include note bodies: %#v", target)
+		}
+	}
+	if !foundSearchNote {
+		t.Fatalf("unexpected link targets body: %#v", targetsBody)
+	}
+	crossTargetsResp := adminRequest(t, handler, http.MethodGet, "/api/link-targets?q=Other", "", accessCookie, csrfCookie)
+	if crossTargetsResp.StatusCode != http.StatusOK {
+		t.Fatalf("cross link targets status = %d body=%s", crossTargetsResp.StatusCode, readBody(crossTargetsResp))
+	}
+	var crossTargetsBody struct {
+		Targets []map[string]any `json:"targets"`
+	}
+	_ = json.NewDecoder(crossTargetsResp.Body).Decode(&crossTargetsBody)
+	crossTargetsResp.Body.Close()
+	if len(crossTargetsBody.Targets) != 0 {
+		t.Fatalf("link targets leaked other user's note: %#v", crossTargetsBody)
+	}
 	noteDetailResp := adminRequest(t, handler, http.MethodGet, "/api/notes/"+searchNoteID, "", accessCookie, csrfCookie)
 	if noteDetailResp.StatusCode != http.StatusOK {
 		t.Fatalf("note detail status = %d body=%s", noteDetailResp.StatusCode, readBody(noteDetailResp))
@@ -2148,7 +2181,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 		t.Fatalf("read embedded app.js: %v", err)
 	}
 	source := string(script)
-	if !strings.Contains(source, "<h1 class=\"headline\">${escapeHTML(title)}</h1>") {
+	if !strings.Contains(source, `<h1 class="headline" id="route-title">${escapeHTML(title)}</h1>`) {
 		t.Fatal("shell must escape route titles before writing them into the DOM")
 	}
 	if strings.Contains(source, "<h1 class=\"headline\">${title}</h1>") {
@@ -2163,7 +2196,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `noteLinkForm(note, notes)`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
