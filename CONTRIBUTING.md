@@ -30,7 +30,7 @@ COOKIE_SECURE=false
 - SQLite is the persistence layer. Keep foreign keys, WAL behavior, and user-scoped predicates intact.
 - Web, CLI, and extension sessions are audience-scoped. Do not let non-web tokens reach web or admin handlers.
 - Server-side outbound fetches must use `internal/safefetch` so SSRF controls stay centralized.
-- Keep long-form docs under `documentation/`; keep root docs limited to community-standard entry points.
+- Keep long-form docs under `openwiki/`; keep root docs limited to community-standard entry points.
 
 ## Making Changes
 
@@ -69,9 +69,9 @@ GOCACHE=/private/tmp/arivu-build-cache go test ./...
 GOCACHE=/private/tmp/arivu-build-cache go build -trimpath -ldflags="-s -w" -o /private/tmp/arivu-check ./cmd/arivu
 ```
 
-If you change deployment files, also review `documentation/deployment.md`.
+If you change deployment files, also review `openwiki/operations/deployment.md`.
 
-If you change security-sensitive code, update `SECURITY.md` or `documentation/security-model.md` when the operating model changes.
+If you change security-sensitive code, update `SECURITY.md` or `openwiki/workflows/security-model.md` when the operating model changes.
 
 ## Questions
 

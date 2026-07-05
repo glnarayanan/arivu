@@ -63,14 +63,13 @@ A Compose sample is available at `deploy/compose.yaml`.
 
 ## Migration
 
-Use `arivu migrate` with a validated legacy JSON export. See `documentation/migration-guide.md`.
+Use `arivu migrate` with a validated legacy JSON export. See `openwiki/domain/migration-guide.md`.
 
 ## Documentation
 
-- Codebase guide: `openwiki/quickstart.md`
-- Durable docs index: `documentation/README.md`
-- Deployment: `documentation/deployment.md`
-- Migration guide: `documentation/migration-guide.md`
+Start with `openwiki/quickstart.md`. OpenWiki contains the codebase guide,
+deployment notes, dependency policy, security model, schema reference, and
+legacy migration guide.
 
 ## Legacy Repository
 

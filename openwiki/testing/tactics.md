@@ -29,7 +29,7 @@ These ensure updates to rendering mechanics do not introduce drift or semantic m
 
 Frontend smoke checks stay outside the checked-in dependency tree. Use the
 running Go binary plus a temporary SQLite database, then cover the flows listed
-in `../../documentation/frontend-runtime.md`.
+in `../architecture/frontend-runtime.md`.
 
 ---
 
