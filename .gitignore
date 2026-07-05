@@ -22,4 +22,5 @@ migration-manifest.json
 /tmp/
 .cache/
 .codegraph/
+.impeccable/
 openwiki/.last-update.json

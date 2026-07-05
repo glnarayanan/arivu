@@ -75,6 +75,9 @@ Start with `openwiki/user-guide.md` if you are running Arivu, or
 user guide, codebase guide, deployment notes, dependency policy, security model,
 schema reference, GitHub Wiki publishing notes, and legacy migration guide.
 
+The user-facing guide is also published at the
+[Arivu GitHub Wiki](https://github.com/glnarayanan/arivu/wiki).
+
 ## Legacy Repository
 
 The previous Python/FastAPI/MongoDB/React implementation is archived separately as `arivu-legacy`. This repository is the canonical low-dependency Go implementation.
