@@ -1,0 +1,49 @@
+name: Sync GitHub Wiki
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - README.md
+      - openwiki/**
+      - scripts/sync-github-wiki.sh
+      - .github/workflows/wiki-sync.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: github-wiki-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Generate wiki pages
+        run: bash scripts/sync-github-wiki.sh "$RUNNER_TEMP/wiki-pages"
+
+      - name: Clone wiki
+        run: git clone "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git" "$RUNNER_TEMP/wiki"
+
+      - name: Copy generated pages
+        run: |
+          cp "$RUNNER_TEMP/wiki-pages"/*.md "$RUNNER_TEMP/wiki"/
+          cd "$RUNNER_TEMP/wiki"
+          git status --short
+
+      - name: Commit and push wiki changes
+        run: |
+          cd "$RUNNER_TEMP/wiki"
+          if git diff --quiet -- .; then
+            echo "Wiki is already up to date."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .
+          git commit -m "docs: sync wiki from openwiki"
+          git push

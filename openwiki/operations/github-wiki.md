@@ -17,7 +17,17 @@ to `glnarayanan/arivu.wiki.git`.
 - `Developer-Architecture.md`: use `openwiki/quickstart.md`,
   `openwiki/architecture/runtime.md`, and `openwiki/architecture/frontend.md`.
 
-## Publish
+## Automatic Sync
+
+The repository includes `.github/workflows/wiki-sync.yml`. After changes land
+on `main`, the workflow runs `scripts/sync-github-wiki.sh`, clones the existing
+GitHub Wiki remote, copies the generated Markdown pages, and pushes only when
+the generated pages changed.
+
+The sync is intentionally curated. It publishes the public pages in the map
+above instead of dumping every `openwiki/` page into the GitHub Wiki.
+
+## Manual Publish
 
 Clone the wiki repository next to the app repository:
 
@@ -39,6 +49,6 @@ settings, create the first page in the browser, then clone it.
 
 ## Maintenance Rule
 
-Do not edit the GitHub Wiki as the canonical copy. Update `openwiki/` first,
-then republish the relevant wiki page. This avoids drift between repository
-documentation and the public wiki.
+Do not edit the GitHub Wiki as the canonical copy. Update `README.md` or
+`openwiki/` first, then let the workflow republish the relevant wiki page. This
+avoids drift between repository documentation and the public wiki.
