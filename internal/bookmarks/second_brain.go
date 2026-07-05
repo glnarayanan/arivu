@@ -456,6 +456,91 @@ func (s *Service) DeleteLink(w http.ResponseWriter, r *http.Request, user auth.U
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Link deleted"})
 }
 
+func (s *Service) Reminders(w http.ResponseWriter, r *http.Request, user auth.User) {
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status == "" {
+		status = "pending"
+	}
+	if status != "pending" && status != "completed" && status != "all" {
+		writeError(w, http.StatusBadRequest, "Invalid reminder status")
+		return
+	}
+	where := "user_id=?"
+	args := []any{user.ID}
+	if status != "all" {
+		where += " AND status=?"
+		args = append(args, status)
+	}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,item_type,item_id,due_at,note,status,created_at,COALESCE(completed_at,'') FROM reminders WHERE `+where+` ORDER BY due_at ASC LIMIT 200`, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load reminders")
+		return
+	}
+	reminders, err := s.scanReminders(r.Context(), user.ID, rows)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load reminders")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"reminders": reminders})
+}
+
+func (s *Service) CreateReminder(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		ItemType string `json:"item_type"`
+		ItemID   string `json:"item_id"`
+		DueAt    string `json:"due_at"`
+		Note     string `json:"note"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	body.ItemType = strings.TrimSpace(body.ItemType)
+	body.ItemID = strings.TrimSpace(body.ItemID)
+	if !s.reviewItemExists(r.Context(), user.ID, body.ItemType, body.ItemID) {
+		writeError(w, http.StatusNotFound, "Reminder item not found")
+		return
+	}
+	due, err := time.Parse(time.RFC3339, strings.TrimSpace(body.DueAt))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "due_at must be RFC3339")
+		return
+	}
+	note := strings.TrimSpace(body.Note)
+	if len(note) > 500 {
+		writeError(w, http.StatusBadRequest, "note is too large")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	id := ids.New()
+	_, err = s.db.ExecContext(r.Context(), `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,note,status,created_at) VALUES(?,?,?,?,?,?,?,?)`, id, user.ID, body.ItemType, body.ItemID, due.UTC().Format(time.RFC3339), note, "pending", now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not create reminder")
+		return
+	}
+	reminder, _ := s.reminder(r.Context(), user.ID, id)
+	writeJSON(w, http.StatusOK, map[string]any{"reminder": reminder})
+}
+
+func (s *Service) CompleteReminder(w http.ResponseWriter, r *http.Request, user auth.User) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, _ := s.db.ExecContext(r.Context(), `UPDATE reminders SET status='completed',completed_at=? WHERE id=? AND user_id=?`, now, r.PathValue("id"), user.ID)
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Reminder not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "Reminder completed", "completed_at": now})
+}
+
+func (s *Service) DeleteReminder(w http.ResponseWriter, r *http.Request, user auth.User) {
+	res, _ := s.db.ExecContext(r.Context(), `DELETE FROM reminders WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID)
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Reminder not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "Reminder deleted"})
+}
+
 func (s *Service) inboxItems(ctx context.Context, userID, stage string, limit int) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT 'bookmark',b.id,b.title,b.url,COALESCE(b.description,''),b.source,b.domain,COALESCE(st.stage,'inbox'),COALESCE(st.importance,0),COALESCE(st.next_action,''),b.created_at,b.updated_at
@@ -714,6 +799,51 @@ func scanLink(row scanner) map[string]any {
 		return map[string]any{"id": ""}
 	}
 	return map[string]any{"id": id, "from_type": fromType, "from_id": fromID, "to_type": toType, "to_id": toID, "label": label, "source": source, "created_at": created}
+}
+
+func (s *Service) reminder(ctx context.Context, userID, id string) (map[string]any, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,item_type,item_id,due_at,note,status,created_at,COALESCE(completed_at,'') FROM reminders WHERE id=? AND user_id=?`, id, userID)
+	reminder := scanReminder(row)
+	if reminder["id"] == "" {
+		return nil, sql.ErrNoRows
+	}
+	reminder["item_title"] = s.itemTitle(ctx, userID, stringValue(reminder["item_type"]), stringValue(reminder["item_id"]))
+	return reminder, nil
+}
+
+func (s *Service) itemReminders(ctx context.Context, userID, itemType, itemID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,due_at,note,status,created_at,COALESCE(completed_at,'') FROM reminders WHERE user_id=? AND item_type=? AND item_id=? ORDER BY due_at ASC LIMIT 50`, userID, itemType, itemID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	reminders, err := s.scanReminders(ctx, userID, rows)
+	if err != nil {
+		return []map[string]any{}
+	}
+	return reminders
+}
+
+func (s *Service) scanReminders(ctx context.Context, userID string, rows *sql.Rows) ([]map[string]any, error) {
+	defer rows.Close()
+	reminders := []map[string]any{}
+	for rows.Next() {
+		reminders = append(reminders, scanReminder(rows))
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	for _, reminder := range reminders {
+		reminder["item_title"] = s.itemTitle(ctx, userID, stringValue(reminder["item_type"]), stringValue(reminder["item_id"]))
+	}
+	return reminders, nil
+}
+
+func scanReminder(row scanner) map[string]any {
+	var id, itemType, itemID, dueAt, note, status, created, completed string
+	if err := row.Scan(&id, &itemType, &itemID, &dueAt, &note, &status, &created, &completed); err != nil {
+		return map[string]any{"id": ""}
+	}
+	return map[string]any{"id": id, "item_type": itemType, "item_id": itemID, "due_at": dueAt, "note": note, "status": status, "created_at": created, "completed_at": completed}
 }
 
 func (s *Service) itemTitle(ctx context.Context, userID, itemType, itemID string) string {

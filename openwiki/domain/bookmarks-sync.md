@@ -38,6 +38,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Explicit links connect bookmarks and notes with user-authored labels. Link
   reads return outgoing and incoming relationships so a saved item can show both
   what it points to and what points back to it.
+- One-time reminders attach due times and reminder notes to bookmarks or notes.
+  Reminder reads decorate each row with the item title while mutations continue
+  to validate item ownership.
 - The review queue is powered by resurfacing candidates and records completion or snooze events.
 - Tags are normalized and alias-aware so manual tags and provider suggestions converge.
 - Retrieval filters by query, tag, domain, source, read state, and dates. Query
@@ -61,6 +64,8 @@ Second-brain v1 adds user-authored context around bookmarks:
   events.
 - Explicit item links are also exported and restored with remapped bookmark and
   note IDs.
+- Reminder rows are exported and restored with remapped item IDs and UTC due
+  times.
 
 ---
 

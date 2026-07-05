@@ -1061,6 +1061,19 @@ async function bookmarkPage() {
         ${linkList(bookmark.links || {})}
       </section>
     </section>
+    <section class="split">
+      <form class="panel form" id="reminder-form">
+        <h2>Reminder</h2>
+        <div class="field"><label for="reminder-due">Due</label><input id="reminder-due" type="datetime-local" required></div>
+        <div class="field"><label for="reminder-note">Note</label><input id="reminder-note" type="text" maxlength="500" placeholder="Why this should come back"></div>
+        <p class="form-message" id="reminder-message" data-form-message hidden></p>
+        <button type="submit">Set reminder</button>
+      </form>
+      <section class="panel">
+        <h2>Reminders</h2>
+        ${reminderList(bookmark.reminders || [])}
+      </section>
+    </section>
     <section class="panel">
       <h2>Related</h2>
       ${relatedList(related.related || [])}
@@ -1184,6 +1197,41 @@ async function bookmarkPage() {
   document.querySelectorAll("[data-link-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteLink(button));
   });
+  const reminderForm = document.querySelector("#reminder-form");
+  reminderForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const dueAt = localDateTimeToRFC3339(document.querySelector("#reminder-due").value);
+    if (!dueAt) {
+      setFormMessage(reminderForm, "Choose a valid reminder time.");
+      return;
+    }
+    const done = setButtonBusy(event.submitter, "Saving reminder");
+    setFormMessage(reminderForm);
+    try {
+      await api("/reminders", {
+        method: "POST",
+        body: JSON.stringify({
+          item_type: "bookmark",
+          item_id: id,
+          due_at: dueAt,
+          note: document.querySelector("#reminder-note").value,
+        }),
+      });
+      ui.toast("Reminder set", "success");
+      render();
+    } catch (err) {
+      setFormMessage(reminderForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  document.querySelectorAll("[data-reminder-complete]").forEach((button) => {
+    button.addEventListener("click", () => completeReminder(button));
+  });
+  document.querySelectorAll("[data-reminder-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteReminder(button));
+  });
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;
@@ -1201,6 +1249,53 @@ async function bookmarkPage() {
   document.querySelectorAll("[data-annotation-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteAnnotation(button));
   });
+}
+
+function reminderList(reminders) {
+  if (!reminders.length) return `<p class="meta">No reminders set.</p>`;
+  return `<div class="stack">${reminders.map((reminder) => `<article class="annotation">
+    <p><strong>${escapeHTML(formatDate(reminder.due_at))}</strong> <span class="meta">${escapeHTML(reminder.status || "pending")}</span></p>
+    ${reminder.note ? `<p>${escapeHTML(reminder.note)}</p>` : ""}
+    <p class="button-row">
+      ${reminder.status === "completed" ? "" : `<button type="button" data-reminder-complete="${escapeHTML(reminder.id)}">Done</button>`}
+      <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete</button>
+    </p>
+  </article>`).join("")}</div>`;
+}
+
+function localDateTimeToRFC3339(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString();
+}
+
+async function completeReminder(button) {
+  const done = setButtonBusy(button, "Completing");
+  try {
+    await api(`/reminders/${button.dataset.reminderComplete}/complete`, { method: "POST", body: "{}" });
+    ui.toast("Reminder completed", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+async function deleteReminder(button) {
+  const confirmed = await ui.confirmDestructive({ title: "Delete reminder", body: "This removes the reminder only.", confirm: "Delete reminder", cancel: "Keep reminder" });
+  if (!confirmed) return;
+  const done = setButtonBusy(button, "Deleting");
+  try {
+    await api(`/reminders/${button.dataset.reminderDelete}`, { method: "DELETE" });
+    ui.toast("Reminder deleted", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 function noteOptions(notes, linkedNotes) {

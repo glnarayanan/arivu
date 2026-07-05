@@ -206,6 +206,7 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bm["notes"] = s.bookmarkNotes(r.Context(), user.ID, r.PathValue("id"))
 	bm["item_state"] = s.itemState(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	bm["links"] = s.itemLinks(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	bm["reminders"] = s.itemReminders(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	writeJSON(w, http.StatusOK, bm)
 }
 

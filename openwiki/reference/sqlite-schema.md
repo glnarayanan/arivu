@@ -22,6 +22,8 @@ with foreign keys.
   and note inbox workflows.
 - `item_links`: explicit per-user bookmark/note relationships with labels and
   source provenance.
+- `reminders`: one-time due reminders for bookmarks and notes with pending or
+  completed status.
 - `import_sources`: source metadata for migration/import reports, grouped into
   per-import source reports for the Settings import status view.
 - `import_jobs`: user-facing import progress with fetched, AI-processed,
@@ -44,6 +46,9 @@ with foreign keys.
 - `item_links` is polymorphic, so API handlers must validate that both endpoints
   belong to the authenticated user before inserts or reads expose relationship
   metadata.
+- Reminder due times are stored as UTC RFC3339 strings. API handlers validate
+  item ownership before creating, completing, deleting, exporting, or restoring
+  reminder rows.
 - Tags are user-scoped and normalized by slug. Aliases are also user-scoped and
   unique by normalized alias slug.
 - Annotation selectors and saved-search filters are stored as bounded JSON

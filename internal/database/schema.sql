@@ -214,6 +214,20 @@ CREATE TABLE IF NOT EXISTS item_links (
 CREATE INDEX IF NOT EXISTS idx_item_links_from ON item_links(user_id, from_type, from_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_item_links_to ON item_links(user_id, to_type, to_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS reminders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK (item_type IN ('bookmark','note')),
+  item_id TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('pending','completed')) DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_user_due ON reminders(user_id, status, due_at);
+
 CREATE TABLE IF NOT EXISTS collections (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
