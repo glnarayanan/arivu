@@ -6,7 +6,8 @@ to `glnarayanan/arivu.wiki.git`.
 
 ## Page Map
 
-- `Home.md`: summarize `README.md` plus `openwiki/user-guide.md`.
+- `Home.md`: summarize the README product overview and the self-hosting shape,
+  with user workflow links from `openwiki/user-guide.md`.
 - `Getting-Started.md`: use `openwiki/user-guide.md` and
   `openwiki/operations/deployment.md`.
 - `Using-Arivu.md`: use `openwiki/user-guide.md` and
