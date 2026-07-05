@@ -10,7 +10,7 @@ import (
 )
 
 func TestValidateDocumentRejectsUnknownFields(t *testing.T) {
-	manifest := baselineManifest(Options{DBName: "arivu_db", DryRun: true})
+	manifest := baselineManifest(Options{DryRun: true})
 	err := ValidateDocument(manifest, "bookmarks", map[string]any{
 		"id":       "bookmark-1",
 		"user_id":  "user-1",
@@ -23,9 +23,9 @@ func TestValidateDocumentRejectsUnknownFields(t *testing.T) {
 }
 
 func TestValidateDocumentAllowsManifestFields(t *testing.T) {
-	manifest := baselineManifest(Options{DBName: "arivu_db", DryRun: true})
+	manifest := baselineManifest(Options{DryRun: true})
 	err := ValidateDocument(manifest, "collections", map[string]any{
-		"_id":          "mongo-id",
+		"_id":          "legacy-id",
 		"id":           "collection-1",
 		"user_id":      "user-1",
 		"name":         "Research",
@@ -37,7 +37,7 @@ func TestValidateDocumentAllowsManifestFields(t *testing.T) {
 }
 
 func TestValidateDocumentRejectsMissingRequiredFields(t *testing.T) {
-	manifest := baselineManifest(Options{DBName: "arivu_db", DryRun: true})
+	manifest := baselineManifest(Options{DryRun: true})
 	err := ValidateDocument(manifest, "bookmarks", map[string]any{
 		"id":         "bookmark-1",
 		"user_id":    "user-1",
@@ -49,15 +49,15 @@ func TestValidateDocumentRejectsMissingRequiredFields(t *testing.T) {
 	}
 }
 
-func TestDiscoverMongoSchemaRequiresExportPath(t *testing.T) {
-	err := DiscoverMongoSchema(context.Background(), Options{DBName: "arivu_db", OutPath: filepath.Join(t.TempDir(), "manifest.json"), DryRun: true})
+func TestDiscoverLegacyExportRequiresExportPath(t *testing.T) {
+	err := DiscoverLegacyExport(context.Background(), Options{OutPath: filepath.Join(t.TempDir(), "manifest.json"), DryRun: true})
 	if err == nil || !strings.Contains(err.Error(), "export path") {
 		t.Fatalf("expected export path error, got %v", err)
 	}
 }
 
 func TestValidateExportFromCollectionObject(t *testing.T) {
-	manifest := baselineManifest(Options{DBName: "arivu_db", DryRun: true})
+	manifest := baselineManifest(Options{DryRun: true})
 	export := map[string]any{
 		"users": []map[string]any{{
 			"id":            "user-1",
@@ -157,7 +157,7 @@ func TestValidateExportFromCollectionObject(t *testing.T) {
 }
 
 func TestValidateExportDirectorySupportsJSONLinesAndSampleLimit(t *testing.T) {
-	manifest := baselineManifest(Options{DBName: "arivu_db", DryRun: true})
+	manifest := baselineManifest(Options{DryRun: true})
 	dir := t.TempDir()
 	data := strings.Join([]string{
 		`{"id":"user-1","email":"one@example.com","created_at":"2026-01-01T00:00:00Z"}`,
@@ -176,7 +176,7 @@ func TestValidateExportDirectorySupportsJSONLinesAndSampleLimit(t *testing.T) {
 }
 
 func TestValidateExportRejectsUnknownCollection(t *testing.T) {
-	manifest := baselineManifest(Options{DBName: "arivu_db", DryRun: true})
+	manifest := baselineManifest(Options{DryRun: true})
 	path := writeJSONFixture(t, map[string]any{
 		"surprise_collection": []map[string]any{{"id": "1"}},
 	})
@@ -186,15 +186,15 @@ func TestValidateExportRejectsUnknownCollection(t *testing.T) {
 	}
 }
 
-func TestDiscoverMongoSchemaWritesJSONExportSamples(t *testing.T) {
+func TestDiscoverLegacyExportWritesJSONExportSamples(t *testing.T) {
 	dir := t.TempDir()
 	exportPath := writeJSONFixture(t, map[string]any{
 		"users": []map[string]any{{"id": "user-1", "email": "user@example.com", "created_at": "2026-01-01T00:00:00Z"}},
 	})
 	out := filepath.Join(dir, "manifest.json")
-	err := DiscoverMongoSchema(context.Background(), Options{ExportPath: exportPath, DBName: "arivu_db", OutPath: out, DryRun: true})
+	err := DiscoverLegacyExport(context.Background(), Options{ExportPath: exportPath, OutPath: out, DryRun: true})
 	if err != nil {
-		t.Fatalf("DiscoverMongoSchema error = %v", err)
+		t.Fatalf("DiscoverLegacyExport error = %v", err)
 	}
 	raw, err := os.ReadFile(out)
 	if err != nil {

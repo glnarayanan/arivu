@@ -22,6 +22,7 @@ import (
 
 	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/ids"
+	"github.com/glnarayanan/arivu/internal/runtimeconfig"
 	"github.com/glnarayanan/arivu/internal/sanitize"
 	"github.com/glnarayanan/arivu/internal/secrets"
 )
@@ -38,18 +39,21 @@ type ApplyOptions struct {
 }
 
 type ApplyReport struct {
-	Users                 int      `json:"users"`
-	Bookmarks             int      `json:"bookmarks"`
-	Summaries             int      `json:"summaries"`
-	Collections           int      `json:"collections"`
-	CollectionMemberships int      `json:"collection_memberships"`
-	AccessEvents          int      `json:"access_events"`
-	Entities              int      `json:"entities"`
-	Concepts              int      `json:"concepts"`
-	XConnections          int      `json:"x_connections"`
-	Settings              int      `json:"settings"`
-	LegacySessionsDropped int      `json:"legacy_sessions_dropped"`
-	Warnings              []string `json:"warnings,omitempty"`
+	Users                 int            `json:"users"`
+	Bookmarks             int            `json:"bookmarks"`
+	Summaries             int            `json:"summaries"`
+	Collections           int            `json:"collections"`
+	CollectionMemberships int            `json:"collection_memberships"`
+	AccessEvents          int            `json:"access_events"`
+	Entities              int            `json:"entities"`
+	Concepts              int            `json:"concepts"`
+	XConnections          int            `json:"x_connections"`
+	Settings              int            `json:"settings"`
+	LegacySessionsDropped int            `json:"legacy_sessions_dropped"`
+	SourceDocuments       map[string]int `json:"source_documents,omitempty"`
+	Skipped               map[string]int `json:"skipped,omitempty"`
+	Errors                []string       `json:"errors,omitempty"`
+	Warnings              []string       `json:"warnings,omitempty"`
 }
 
 func ApplyExport(ctx context.Context, opts ApplyOptions) (ApplyReport, error) {
@@ -115,10 +119,14 @@ func assertEmptyTarget(ctx context.Context, tx *sql.Tx) error {
 }
 
 func applyCollections(ctx context.Context, tx *sql.Tx, export map[string][]map[string]any, opts ApplyOptions) (ApplyReport, error) {
-	report := ApplyReport{}
+	report := ApplyReport{SourceDocuments: map[string]int{}, Skipped: map[string]int{}}
 	now := time.Now().UTC().Format(time.RFC3339)
+	for collection, docs := range export {
+		report.SourceDocuments[collection] = len(docs)
+	}
 	if sessions, ok := export["sessions"]; ok {
 		report.LegacySessionsDropped = len(sessions)
+		report.Skipped["sessions"] = len(sessions)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions`); err != nil {
 		return report, err
@@ -425,27 +433,30 @@ func insertXConnection(ctx context.Context, tx *sql.Tx, doc map[string]any, opts
 
 func insertSettings(ctx context.Context, tx *sql.Tx, docs []map[string]any, opts ApplyOptions, now string) (int, error) {
 	count := 0
-	encryptedKeys := map[string]bool{"gemini_api_key": true, "x_client_id": true, "x_client_secret": true, "resend_api_key": true}
 	for _, doc := range docs {
-		for _, key := range []string{"gemini_api_key", "resend_api_key", "resend_from_email", "x_client_id", "x_client_secret", "x_redirect_uri", "x_integration_enabled"} {
+		for _, key := range runtimeconfig.Keys {
 			value, ok := doc[key]
 			if !ok || value == nil || value == "" {
 				continue
 			}
 			raw := settingString(value)
 			var err error
-			if encryptedKeys[key] {
+			if runtimeconfig.IsSecret(key) {
 				raw, err = decryptLegacySecret(raw, opts.OldSecretKey)
 				if err != nil {
 					return count, fmt.Errorf("setting %s: %w", key, err)
 				}
-			}
-			ciphertext, err := secrets.Seal(opts.NewSecretKey, raw)
-			if err != nil {
-				return count, err
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,key_id,updated_by,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, opts.KeyID, "migration", now); err != nil {
-				return count, err
+				ciphertext, err := secrets.Seal(opts.NewSecretKey, raw)
+				if err != nil {
+					return count, err
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,value_plain=NULL,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, nil, opts.KeyID, "migration", now); err != nil {
+					return count, err
+				}
+			} else {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, "migration", now); err != nil {
+					return count, err
+				}
 			}
 			count++
 		}

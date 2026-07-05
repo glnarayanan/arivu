@@ -21,3 +21,4 @@ migration-manifest.json
 .DS_Store
 /tmp/
 .cache/
+.codegraph/

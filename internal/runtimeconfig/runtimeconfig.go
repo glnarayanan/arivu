@@ -1,0 +1,321 @@
+package runtimeconfig
+
+import (
+	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"time"
+
+	"github.com/glnarayanan/arivu/internal/config"
+	"github.com/glnarayanan/arivu/internal/secrets"
+)
+
+const (
+	KeyGeminiAPIKey       = "gemini_api_key"
+	KeyResendAPIKey       = "resend_api_key"
+	KeyResendFromEmail    = "resend_from_email"
+	KeyXClientID          = "x_client_id"
+	KeyXClientSecret      = "x_client_secret"
+	KeyXRedirectURI       = "x_redirect_uri"
+	KeyXIntegrationEnable = "x_integration_enabled"
+)
+
+var Keys = []string{
+	KeyGeminiAPIKey,
+	KeyResendAPIKey,
+	KeyResendFromEmail,
+	KeyXClientID,
+	KeyXClientSecret,
+	KeyXRedirectURI,
+	KeyXIntegrationEnable,
+}
+
+var SecretKeys = map[string]bool{
+	KeyGeminiAPIKey:  true,
+	KeyResendAPIKey:  true,
+	KeyXClientID:     true,
+	KeyXClientSecret: true,
+}
+
+type Service struct {
+	db  *sql.DB
+	cfg config.Config
+}
+
+type Effective struct {
+	GeminiAPIKey        string
+	ResendAPIKey        string
+	ResendFromEmail     string
+	XClientID           string
+	XClientSecret       string
+	XRedirectURI        string
+	XIntegrationEnabled bool
+}
+
+type Value struct {
+	Configured  bool   `json:"configured"`
+	MaskedValue string `json:"masked_value,omitempty"`
+	Value       any    `json:"value,omitempty"`
+	Source      string `json:"source"`
+	KeyID       string `json:"key_id,omitempty"`
+	UpdatedAt   string `json:"updated_at,omitempty"`
+}
+
+type resolvedValue struct {
+	key       string
+	value     string
+	source    string
+	keyID     string
+	updatedAt string
+}
+
+func New(db *sql.DB, cfg config.Config) *Service {
+	return &Service{db: db, cfg: cfg}
+}
+
+func FromConfig(cfg config.Config) Effective {
+	return Effective{
+		GeminiAPIKey:        cfg.GeminiAPIKey,
+		ResendAPIKey:        cfg.ResendAPIKey,
+		ResendFromEmail:     cfg.ResendFrom,
+		XClientID:           cfg.XClientID,
+		XClientSecret:       cfg.XClientSecret,
+		XRedirectURI:        defaultXRedirectURI(cfg),
+		XIntegrationEnabled: cfg.XEnabled,
+	}
+}
+
+func Allowed(key string) bool {
+	for _, candidate := range Keys {
+		if key == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+func IsSecret(key string) bool {
+	return SecretKeys[key]
+}
+
+func (s *Service) Effective(ctx context.Context) (Effective, error) {
+	gemini, err := s.resolve(ctx, KeyGeminiAPIKey)
+	if err != nil {
+		return Effective{}, err
+	}
+	resendKey, err := s.resolve(ctx, KeyResendAPIKey)
+	if err != nil {
+		return Effective{}, err
+	}
+	resendFrom, err := s.resolve(ctx, KeyResendFromEmail)
+	if err != nil {
+		return Effective{}, err
+	}
+	xClientID, err := s.resolve(ctx, KeyXClientID)
+	if err != nil {
+		return Effective{}, err
+	}
+	xClientSecret, err := s.resolve(ctx, KeyXClientSecret)
+	if err != nil {
+		return Effective{}, err
+	}
+	xRedirect, err := s.resolve(ctx, KeyXRedirectURI)
+	if err != nil {
+		return Effective{}, err
+	}
+	xEnabled, err := s.resolve(ctx, KeyXIntegrationEnable)
+	if err != nil {
+		return Effective{}, err
+	}
+	return Effective{
+		GeminiAPIKey:        gemini.value,
+		ResendAPIKey:        resendKey.value,
+		ResendFromEmail:     resendFrom.value,
+		XClientID:           xClientID.value,
+		XClientSecret:       xClientSecret.value,
+		XRedirectURI:        xRedirect.value,
+		XIntegrationEnabled: parseBool(xEnabled.value),
+	}, nil
+}
+
+func (s *Service) Status(ctx context.Context) (map[string]Value, error) {
+	result := map[string]Value{}
+	for _, key := range Keys {
+		value, err := s.resolve(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		item := Value{Source: value.source, KeyID: value.keyID, UpdatedAt: value.updatedAt}
+		if IsSecret(key) {
+			item.Configured = value.value != ""
+			item.MaskedValue = Mask(value.value)
+		} else if key == KeyXIntegrationEnable {
+			item.Configured = value.source != "unset"
+			item.Value = parseBool(value.value)
+		} else {
+			item.Configured = value.value != ""
+			item.Value = value.value
+		}
+		result[key] = item
+	}
+	return result, nil
+}
+
+func (s *Service) Set(ctx context.Context, key string, value any, updatedBy string, keyID string) error {
+	if !Allowed(key) {
+		return fmt.Errorf("unknown setting key %s", key)
+	}
+	raw := settingString(value)
+	now := nowRFC3339()
+	if IsSecret(key) {
+		ciphertext, err := secrets.Seal(s.cfg.SecretKey, raw)
+		if err != nil {
+			return err
+		}
+		if keyID == "" {
+			keyID = "primary"
+		}
+		_, err = s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,value_plain=NULL,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, nil, keyID, updatedBy, now)
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, updatedBy, now)
+	return err
+}
+
+func (s *Service) Delete(ctx context.Context, key string) error {
+	if !Allowed(key) {
+		return fmt.Errorf("unknown setting key %s", key)
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM settings WHERE key=?`, key)
+	return err
+}
+
+func (s *Service) resolve(ctx context.Context, key string) (resolvedValue, error) {
+	if !Allowed(key) {
+		return resolvedValue{}, fmt.Errorf("unknown setting key %s", key)
+	}
+	var cipher, plain, keyID, updatedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT value_cipher,value_plain,key_id,updated_at FROM settings WHERE key=?`, key).Scan(&cipher, &plain, &keyID, &updatedAt)
+	if err == nil {
+		if IsSecret(key) {
+			if !cipher.Valid || cipher.String == "" {
+				return resolvedValue{key: key, source: "database", keyID: keyID.String, updatedAt: updatedAt.String}, nil
+			}
+			opened, err := secrets.Open(s.cfg.SecretKey, cipher.String)
+			if err != nil {
+				return resolvedValue{}, err
+			}
+			return resolvedValue{key: key, value: opened, source: "database", keyID: keyID.String, updatedAt: updatedAt.String}, nil
+		}
+		return resolvedValue{key: key, value: normalizeStoredPlain(plain.String), source: "database", keyID: keyID.String, updatedAt: updatedAt.String}, nil
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return resolvedValue{}, err
+	}
+	return s.fallback(key), nil
+}
+
+func (s *Service) fallback(key string) resolvedValue {
+	value := ""
+	source := "unset"
+	switch key {
+	case KeyGeminiAPIKey:
+		value, source = envFallback("GEMINI_API_KEY", s.cfg.GeminiAPIKey)
+	case KeyResendAPIKey:
+		value, source = envFallback("RESEND_API_KEY", s.cfg.ResendAPIKey)
+	case KeyResendFromEmail:
+		value, source = envFallback("RESEND_FROM_EMAIL", s.cfg.ResendFrom)
+	case KeyXClientID:
+		value, source = envFallback("X_CLIENT_ID", s.cfg.XClientID)
+	case KeyXClientSecret:
+		value, source = envFallback("X_CLIENT_SECRET", s.cfg.XClientSecret)
+	case KeyXRedirectURI:
+		value, source = envFallback("X_REDIRECT_URI", s.cfg.XRedirectURI)
+		if value == "" {
+			value, source = defaultXRedirectURI(s.cfg), "default"
+		}
+	case KeyXIntegrationEnable:
+		if _, ok := os.LookupEnv("X_INTEGRATION_ENABLED"); ok || s.cfg.XEnabled {
+			value, source = boolString(s.cfg.XEnabled), "environment"
+		} else {
+			value, source = "false", "default"
+		}
+	}
+	return resolvedValue{key: key, value: value, source: source}
+}
+
+func envFallback(envKey string, cfgValue string) (string, string) {
+	if _, ok := os.LookupEnv(envKey); ok || cfgValue != "" {
+		return cfgValue, "environment"
+	}
+	return "", "unset"
+}
+
+func defaultXRedirectURI(cfg config.Config) string {
+	return strings.TrimRight(cfg.AppURL, "/") + "/settings?section=connections"
+}
+
+func settingString(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case bool:
+		return boolString(typed)
+	case float64:
+		return fmt.Sprintf("%g", typed)
+	case int:
+		return fmt.Sprintf("%d", typed)
+	default:
+		raw, err := json.Marshal(value)
+		if err != nil || string(raw) == "null" {
+			return ""
+		}
+		return strings.TrimSpace(string(raw))
+	}
+}
+
+func normalizeStoredPlain(value string) string {
+	value = strings.TrimSpace(value)
+	var decoded string
+	if err := json.Unmarshal([]byte(value), &decoded); err == nil {
+		return strings.TrimSpace(decoded)
+	}
+	return value
+}
+
+func boolString(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
+}
+
+func parseBool(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func Mask(value string) string {
+	if value == "" {
+		return ""
+	}
+	if len(value) <= 4 {
+		return "****"
+	}
+	return "****" + value[len(value)-4:]
+}
+
+func nowRFC3339() string {
+	if value := strings.TrimSpace(os.Getenv("ARIVU_TEST_NOW")); value != "" {
+		return strings.ReplaceAll(value, "\n", "")
+	}
+	return time.Now().UTC().Format(time.RFC3339)
+}

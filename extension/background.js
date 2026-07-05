@@ -1,16 +1,177 @@
-chrome.commands.onCommand.addListener((command) => {
-  if (command === 'save-bookmark') {
-    chrome.action.openPopup();
+importScripts('url-utils.js');
+
+const DEFAULT_API_URL = 'https://arivu.app/api';
+const MENU_IDS = {
+  page: 'arivu-save-page',
+  link: 'arivu-save-link',
+  selection: 'arivu-save-selection',
+};
+
+async function getApiUrl() {
+  const result = await chrome.storage.local.get(['apiUrl']);
+  return result.apiUrl || DEFAULT_API_URL;
+}
+
+async function registerCustomApiContentScript(apiUrl) {
+  if (!chrome.scripting?.registerContentScripts) return;
+
+  await chrome.scripting.unregisterContentScripts({ ids: ['arivu-custom-api'] }).catch(() => {});
+
+  let pattern;
+  try {
+    pattern = ArivuExtensionURL.apiOriginPattern(apiUrl);
+  } catch {
+    return;
   }
+
+  if (pattern === 'https://arivu.app/*' || pattern === 'http://localhost/*') return;
+
+  const allowed = await chrome.permissions.contains({ origins: [pattern] });
+  if (!allowed) return;
+
+  await chrome.scripting.registerContentScripts([{
+    id: 'arivu-custom-api',
+    matches: [pattern],
+    js: ['content.js'],
+    runAt: 'document_idle',
+  }]).catch(() => {});
+}
+
+async function tokenSenderAllowed(sender) {
+  if (!sender.url) return false;
+
+  return ArivuExtensionURL.senderOriginAllowed(sender.url, await getApiUrl());
+}
+
+function installContextMenus() {
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: MENU_IDS.page,
+      title: 'Save page to Arivu',
+      contexts: ['page'],
+    });
+    chrome.contextMenus.create({
+      id: MENU_IDS.link,
+      title: 'Save link to Arivu',
+      contexts: ['link'],
+    });
+    chrome.contextMenus.create({
+      id: MENU_IDS.selection,
+      title: 'Save selection to Arivu',
+      contexts: ['selection'],
+    });
+  });
+}
+
+function bookmarkPayload(url, selectionText) {
+  const payload = { url };
+  const text = (selectionText || '').trim();
+
+  if (text) {
+    payload.quote = text.slice(0, 5000);
+  }
+
+  return payload;
+}
+
+async function saveBookmark(url, selectionText) {
+  const apiUrl = await getApiUrl();
+  const tokenResult = await chrome.storage.session.get(['accessToken']);
+
+  if (!tokenResult.accessToken) {
+    throw new Error('Missing extension token');
+  }
+
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${tokenResult.accessToken}`,
+  };
+  const payload = bookmarkPayload(url, selectionText);
+  const response = await fetch(`${apiUrl}/extension/bookmarks`, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(payload),
+  });
+
+  if (response.ok) return;
+
+  if (payload.quote && (response.status === 400 || response.status === 422)) {
+    const fallback = await fetch(`${apiUrl}/extension/bookmarks`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ url }),
+    });
+    if (fallback.ok) return;
+  }
+
+  if (response.status === 401) {
+    await chrome.storage.session.remove(['accessToken', 'refreshToken']);
+  }
+
+  throw new Error(`Save failed: ${response.status}`);
+}
+
+async function showResult(tabId, label) {
+  if (!tabId) return;
+
+  await chrome.action.setBadgeBackgroundColor({ tabId, color: '#116B4F' });
+  await chrome.action.setBadgeText({ tabId, text: label });
+  setTimeout(() => chrome.action.setBadgeText({ tabId, text: '' }), 1600);
+}
+
+async function saveFromTab(tab, selectionText) {
+  if (!tab?.id || !tab.url) return;
+
+  try {
+    await saveBookmark(tab.url, selectionText);
+    await showResult(tab.id, 'OK');
+  } catch (error) {
+    console.error('Arivu save failed:', error);
+    await showResult(tab.id, '!');
+  }
+}
+
+chrome.runtime.onInstalled.addListener(installContextMenus);
+chrome.runtime.onInstalled.addListener(() => getApiUrl().then(registerCustomApiContentScript));
+chrome.runtime.onStartup.addListener(() => {
+  installContextMenus();
+  getApiUrl().then(registerCustomApiContentScript);
+});
+
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  const url = info.linkUrl || info.pageUrl || tab?.url;
+  if (!url) return;
+
+  saveFromTab({ id: tab?.id, url }, info.selectionText);
+});
+
+chrome.commands.onCommand.addListener(async (command) => {
+  if (command !== 'save-bookmark') return;
+
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  await saveFromTab(tab);
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   if (request.action === 'saveTokens') {
-    chrome.storage.session.set({
-      accessToken: request.accessToken,
-      refreshToken: request.refreshToken,
+    tokenSenderAllowed(sender).then((allowed) => {
+      if (!allowed) {
+        sendResponse({ success: false });
+        return;
+      }
+
+      chrome.storage.session.set({
+        accessToken: request.accessToken,
+        refreshToken: request.refreshToken,
+      });
+      sendResponse({ success: true });
     });
-    sendResponse({ success: true });
+  } else if (request.action === 'configureApiOrigin') {
+    registerCustomApiContentScript(request.apiUrl).then(() => {
+      sendResponse({ success: true });
+    }).catch(() => {
+      sendResponse({ success: false });
+    });
   }
   return true;
 });

@@ -4,7 +4,9 @@ Save bookmarks directly into Arivu from Chrome or Firefox.
 
 ## What It Does
 
-- Saves current tab URL to Arivu
+- Saves current tab URL to Arivu with optional quick note and tags
+- Saves from the page, link, or selected-text context menu without opening the popup
+- Sends selected text as a quote annotation
 - Lets users pick a target collection
 - Uses extension session tokens issued by Arivu (`/api/auth/extension-token`)
 - Supports custom/self-hosted API URL through popup settings
@@ -25,43 +27,27 @@ Save bookmarks directly into Arivu from Chrome or Firefox.
 ## Default Endpoints
 
 - Default API URL in popup: `https://arivu.app/api`
-- Local host permission included: `http://localhost:8001/*`
+- Built-in host permissions: `https://arivu.app/*` and `http://localhost/*`
+- Self-hosted origins are requested from the browser when the API URL is saved
 
 ## Self-Hosted Setup
 
-### 1. Update Host Permissions
-
-Edit `extension/manifest.json` and add your domain:
-
-```json
-"host_permissions": [
-  "https://your-domain.example/*",
-  "http://localhost:8001/*"
-],
-"content_scripts": [
-  {
-    "matches": ["https://your-domain.example/*", "http://localhost/*"],
-    "js": ["content.js"],
-    "run_at": "document_idle"
-  }
-]
-```
-
-Reload the extension after saving.
-
-### 2. Set API URL in Popup
+### 1. Set API URL in Popup
 
 1. Open the extension popup
 2. Click `Settings`
 3. Set API URL to `https://your-domain.example/api`
+4. Approve the browser permission prompt for that Arivu origin
 
-This value is stored in `chrome.storage.local` as `apiUrl`.
+This value is stored in `chrome.storage.local` as `apiUrl`. The extension then
+registers the token content script for that origin without requiring a manifest
+edit.
 
-### 3. Authenticate
+### 2. Authenticate
 
 1. Log into your self-hosted Arivu web app
 2. Visit the app in the same browser
-3. The content script requests extension tokens from `/api/auth/extension-token`
+3. The content script requests extension tokens from `/api/auth/extension-token` with the web session's CSRF cookie mirrored into `X-CSRF-Token`
 4. Tokens are stored in `chrome.storage.session`
 
 ## Troubleshooting
@@ -79,13 +65,20 @@ This value is stored in `chrome.storage.local` as `apiUrl`.
 
 ### Save fails on self-hosted domain
 
-- Confirm domain is listed in `host_permissions`
+- Reopen popup settings and confirm the API URL is saved
+- Confirm the browser permission prompt was approved for your Arivu origin
 - Confirm API URL ends with `/api`
-- Reload the extension after `manifest.json` updates
+
+### Context menu save fails
+
+- Open Arivu once while logged in so the content script can refresh extension tokens
+- Selected text is stored as a quote annotation on the saved bookmark
+- Use the popup save path when you need to choose a collection
 
 ## Privacy and Storage
 
 - Access/refresh tokens are stored in `chrome.storage.session`
 - Custom API URL is stored in `chrome.storage.local`
-- Extension only sends data when user submits save action
+- Extension only sends data when the user saves from the popup, keyboard shortcut, or context menu
+- Selected text is sent directly with the save request when available and is not stored by the extension
 - Extension bearer tokens are accepted only by audience-scoped extension API routes, including `/api/extension/bookmarks` and `/api/extension/collections`

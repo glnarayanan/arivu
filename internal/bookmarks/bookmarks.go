@@ -26,7 +26,7 @@ type Service struct {
 	db      *sql.DB
 	jobs    *jobs.Queue
 	fetcher *safefetch.Client
-	gemini  providers.GeminiClient
+	gemini  func(context.Context) providers.GeminiClient
 }
 
 type CountsResult struct {
@@ -37,13 +37,30 @@ type CountsResult struct {
 }
 
 func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, gemini providers.GeminiClient) *Service {
-	return &Service{db: db, jobs: jobs, fetcher: fetcher, gemini: gemini}
+	return &Service{db: db, jobs: jobs, fetcher: fetcher, gemini: func(context.Context) providers.GeminiClient { return gemini }}
+}
+
+func (s *Service) SetGeminiProvider(fn func(context.Context) providers.GeminiClient) {
+	if fn != nil {
+		s.gemini = fn
+	}
+}
+
+func (s *Service) geminiClient(ctx context.Context) providers.GeminiClient {
+	if s.gemini == nil {
+		return providers.GeminiClient{}
+	}
+	return s.gemini(ctx)
 }
 
 func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body struct {
-		URL          string `json:"url"`
-		CollectionID string `json:"collection_id"`
+		URL          string   `json:"url"`
+		CollectionID string   `json:"collection_id"`
+		Note         string   `json:"note"`
+		Quote        string   `json:"quote"`
+		Annotation   string   `json:"annotation"`
+		Tags         []string `json:"tags"`
 	}
 	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.URL) == "" {
 		writeError(w, http.StatusBadRequest, "URL is required")
@@ -54,6 +71,10 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 		return
 	}
 	parsed, _ := url.Parse(body.URL)
+	if body.CollectionID != "" && !s.ownsCollection(r.Context(), user.ID, body.CollectionID) {
+		writeError(w, http.StatusNotFound, "Collection not found")
+		return
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	bookmarkID := ids.New()
 	title := parsed.Hostname()
@@ -66,10 +87,19 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	if body.CollectionID != "" {
 		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, body.CollectionID, bookmarkID, user.ID, now)
 	}
+	for _, tag := range cleanStringList(body.Tags, 20) {
+		_ = s.attachTag(r.Context(), user.ID, bookmarkID, tag, "manual")
+	}
+	quote := fallback(body.Quote, body.Annotation)
+	if strings.TrimSpace(body.Note) != "" || strings.TrimSpace(quote) != "" {
+		selector, _ := jsonObject(nil)
+		tagJSON, _ := json.Marshal(cleanStringList(body.Tags, 20))
+		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
+	}
 	payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": body.URL})
-	_ = s.jobs.Enqueue(r.Context(), user.ID, "bookmark.process", string(payload))
+	jobID, _ := s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", string(payload))
 	bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
-	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "connections": []any{}, "connections_count": 0})
+	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
 }
 
 func (s *Service) Preview(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -97,27 +127,7 @@ func (s *Service) Preview(w http.ResponseWriter, r *http.Request, user auth.User
 }
 
 func (s *Service) List(w http.ResponseWriter, r *http.Request, user auth.User) {
-	query := r.URL.Query()
-	search := strings.TrimSpace(query.Get("search"))
-	args := []any{user.ID}
-	where := "WHERE b.user_id=?"
-	if domain := query.Get("domain"); domain != "" {
-		where += " AND b.domain=?"
-		args = append(args, domain)
-	}
-	if source := query.Get("source"); source != "" {
-		where += " AND b.source=?"
-		args = append(args, source)
-	}
-	if status := query.Get("read_status"); status == "read" || status == "unread" {
-		where += " AND b.read_status=?"
-		args = append(args, status == "read")
-	}
-	if search != "" {
-		where += " AND (b.title LIKE ? OR b.description LIKE ? OR b.text_content LIKE ?)"
-		like := "%" + search + "%"
-		args = append(args, like, like, like)
-	}
+	where, args := s.bookmarkFilter(r, user.ID)
 	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.url,b.title,b.description,b.domain,b.favicon,b.thumbnail,b.reading_time,b.read_status,b.source,b.created_at,b.updated_at,b.last_accessed,b.view_count,b.version,b.sanitized_html,b.text_content FROM bookmarks b `+where+` ORDER BY b.created_at DESC LIMIT 200`, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not list bookmarks")
@@ -131,6 +141,56 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, user auth.User) {
 	writeJSON(w, http.StatusOK, result)
 }
 
+func (s *Service) bookmarkFilter(r *http.Request, userID string) (string, []any) {
+	query := r.URL.Query()
+	search := strings.TrimSpace(query.Get("search"))
+	args := []any{userID}
+	where := "WHERE b.user_id=?"
+	if domain := strings.TrimSpace(query.Get("domain")); domain != "" {
+		where += " AND b.domain=?"
+		args = append(args, domain)
+	}
+	if source := strings.TrimSpace(query.Get("source")); source != "" {
+		where += " AND b.source=?"
+		args = append(args, source)
+	}
+	if status := query.Get("read_status"); status == "read" || status == "unread" {
+		where += " AND b.read_status=?"
+		args = append(args, status == "read")
+	}
+	if from := strings.TrimSpace(query.Get("date_from")); from != "" {
+		where += " AND b.created_at>=?"
+		args = append(args, from)
+	}
+	if to := strings.TrimSpace(query.Get("date_to")); to != "" {
+		where += " AND b.created_at<=?"
+		args = append(args, to)
+	}
+	if tag := tagSlug(query.Get("tag")); tag != "" {
+		where += ` AND EXISTS (
+			SELECT 1 FROM bookmark_tags bt
+			JOIN tags t ON t.id=bt.tag_id AND t.user_id=bt.user_id
+			LEFT JOIN tag_aliases ta ON ta.tag_id=t.id AND ta.user_id=t.user_id
+			WHERE bt.bookmark_id=b.id AND bt.user_id=b.user_id AND (t.slug=? OR ta.alias_slug=?)
+		)`
+		args = append(args, tag, tag)
+	}
+	if search != "" {
+		where += ` AND (
+			b.title LIKE ? OR b.description LIKE ? OR b.text_content LIKE ?
+			OR EXISTS (SELECT 1 FROM annotations a WHERE a.bookmark_id=b.id AND a.user_id=b.user_id AND (a.quote LIKE ? OR a.note LIKE ?))
+			OR EXISTS (
+				SELECT 1 FROM bookmark_notes bn
+				JOIN notes n ON n.id=bn.note_id AND n.user_id=bn.user_id
+				WHERE bn.bookmark_id=b.id AND bn.user_id=b.user_id AND (n.title LIKE ? OR n.body LIKE ?)
+			)
+		)`
+		like := "%" + search + "%"
+		args = append(args, like, like, like, like, like, like, like)
+	}
+	return where, args
+}
+
 func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bm, err := s.getBookmark(r.Context(), user.ID, r.PathValue("id"))
 	if err != nil {
@@ -139,6 +199,9 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	}
 	summary := s.summary(r.Context(), user.ID, r.PathValue("id"))
 	bm["ai_summary"] = summary
+	bm["tags"] = s.bookmarkTags(r.Context(), user.ID, r.PathValue("id"))
+	bm["annotations"] = s.bookmarkAnnotations(r.Context(), user.ID, r.PathValue("id"))
+	bm["notes"] = s.bookmarkNotes(r.Context(), user.ID, r.PathValue("id"))
 	writeJSON(w, http.StatusOK, bm)
 }
 
@@ -184,6 +247,105 @@ func (s *Service) Search(w http.ResponseWriter, r *http.Request, user auth.User)
 	values.Set("search", q)
 	req.URL.RawQuery = values.Encode()
 	s.List(w, req, user)
+}
+
+func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth.User) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		q = strings.TrimSpace(r.URL.Query().Get("query"))
+	}
+	if len(q) < 2 || len(q) > maxSearchLen {
+		writeError(w, http.StatusBadRequest, "query must be between 2 and 2000 characters")
+		return
+	}
+	req := r.Clone(r.Context())
+	values := req.URL.Query()
+	values.Set("search", q)
+	req.URL.RawQuery = values.Encode()
+	where, args := s.bookmarkFilter(req, user.ID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.title,b.url,b.domain,b.description,b.text_content FROM bookmarks b `+where+` ORDER BY b.updated_at DESC, b.id ASC LIMIT 8`, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not answer search")
+		return
+	}
+	defer rows.Close()
+	type citation struct {
+		ID      string `json:"id"`
+		Type    string `json:"type"`
+		Title   string `json:"title"`
+		URL     string `json:"url"`
+		Domain  string `json:"domain"`
+		Snippet string `json:"snippet"`
+	}
+	var citations []citation
+	for rows.Next() {
+		var id, title, rawURL, domain, description, text string
+		_ = rows.Scan(&id, &title, &rawURL, &domain, &description, &text)
+		snippet := searchSnippet(q, firstNonEmpty(text, description, title))
+		citations = append(citations, citation{ID: id, Type: "bookmark", Title: fallback(title, rawURL), URL: rawURL, Domain: domain, Snippet: snippet})
+	}
+	if standaloneNotesMatchFilters(values) {
+		like := "%" + q + "%"
+		noteWhere := `WHERE user_id=? AND NOT EXISTS (SELECT 1 FROM bookmark_notes WHERE note_id=notes.id AND user_id=notes.user_id) AND (title LIKE ? OR body LIKE ?)`
+		noteArgs := []any{user.ID, like, like}
+		if from := strings.TrimSpace(values.Get("date_from")); from != "" {
+			noteWhere += " AND created_at>=?"
+			noteArgs = append(noteArgs, from)
+		}
+		if to := strings.TrimSpace(values.Get("date_to")); to != "" {
+			noteWhere += " AND created_at<=?"
+			noteArgs = append(noteArgs, to)
+		}
+		noteRows, err := s.db.QueryContext(r.Context(), `SELECT id,title,body,source FROM notes `+noteWhere+` ORDER BY updated_at DESC, id ASC LIMIT 8`, noteArgs...)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not answer search")
+			return
+		}
+		defer noteRows.Close()
+		for noteRows.Next() {
+			if len(citations) >= 8 {
+				break
+			}
+			var id, title, body, source string
+			_ = noteRows.Scan(&id, &title, &body, &source)
+			citations = append(citations, citation{ID: id, Type: "note", Title: fallback(title, "Untitled note"), Domain: source, Snippet: searchSnippet(q, firstNonEmpty(body, title))})
+		}
+	}
+	if len(citations) == 0 {
+		writeJSON(w, http.StatusOK, map[string]any{"answer": "No saved items matched this query.", "citations": []any{}})
+		return
+	}
+	seenAnswerParts := map[string]struct{}{}
+	var answerParts []string
+	for _, citation := range citations {
+		if len(answerParts) >= 8 {
+			break
+		}
+		if citation.Type == "bookmark" {
+			summary := s.summary(r.Context(), user.ID, citation.ID)
+			appendAnswerPart(&answerParts, seenAnswerParts, summary["one_sentence"], 8)
+			appendAnswerPart(&answerParts, seenAnswerParts, summary["highlights"], 8)
+			appendAnswerPart(&answerParts, seenAnswerParts, summary["bullet_points"], 8)
+		}
+		appendAnswerPart(&answerParts, seenAnswerParts, citation.Snippet, 8)
+	}
+	answer := "Found " + fmt.Sprint(len(citations)) + " saved item"
+	if len(citations) != 1 {
+		answer += "s"
+	}
+	if len(answerParts) > 0 {
+		answer = "Answer from your saved context: " + strings.Join(answerParts, " ")
+	} else {
+		answer += " that mention this query. Use the citations below to inspect the original saved context."
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "citations": citations})
+}
+
+func standaloneNotesMatchFilters(values url.Values) bool {
+	return strings.TrimSpace(values.Get("tag")) == "" &&
+		strings.TrimSpace(values.Get("domain")) == "" &&
+		strings.TrimSpace(values.Get("source")) == "" &&
+		strings.TrimSpace(values.Get("read_status")) == ""
 }
 
 func (s *Service) Related(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -270,12 +432,26 @@ func (s *Service) AddToCollection(w http.ResponseWriter, r *http.Request, user a
 		writeError(w, http.StatusBadRequest, "bookmark_id is required")
 		return
 	}
+	if !s.ownsCollection(r.Context(), user.ID, r.PathValue("id")) || !s.ownsBookmark(r.Context(), user.ID, body.BookmarkID) {
+		writeError(w, http.StatusNotFound, "Collection or bookmark not found")
+		return
+	}
 	_, err := s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, r.PathValue("id"), body.BookmarkID, user.ID, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Could not add bookmark to collection")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark added"})
+}
+
+func (s *Service) ownsCollection(ctx context.Context, userID, collectionID string) bool {
+	var found string
+	return s.db.QueryRowContext(ctx, `SELECT id FROM collections WHERE id=? AND user_id=?`, collectionID, userID).Scan(&found) == nil
+}
+
+func (s *Service) ownsBookmark(ctx context.Context, userID, bookmarkID string) bool {
+	var found string
+	return s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE id=? AND user_id=?`, bookmarkID, userID).Scan(&found) == nil
 }
 
 func (s *Service) AnalyticsSummary(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -308,7 +484,7 @@ func (s *Service) AnalyticsPatterns(w http.ResponseWriter, r *http.Request, user
 
 func (s *Service) AnalyticsInsights(w http.ResponseWriter, r *http.Request, user auth.User) {
 	insights := s.localInsights(r.Context(), user.ID)
-	if generated, err := s.gemini.GenerateInsight(r.Context(), s.analyticsPrompt(r.Context(), user.ID)); err == nil && strings.TrimSpace(generated) != "" {
+	if generated, err := s.geminiClient(r.Context()).GenerateInsight(r.Context(), s.analyticsPrompt(r.Context(), user.ID)); err == nil && strings.TrimSpace(generated) != "" {
 		insights = append(insights, map[string]any{"type": "ai", "message": strings.TrimSpace(generated), "severity": "info"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"insights": insights})
@@ -472,7 +648,7 @@ func (s *Service) GraphSearch(w http.ResponseWriter, r *http.Request, user auth.
 		return
 	}
 	var queryEmbedding []float64
-	if embedding, err := s.gemini.GenerateEmbedding(r.Context(), query, "retrieval_query"); err == nil {
+	if embedding, err := s.geminiClient(r.Context()).GenerateEmbedding(r.Context(), query, "retrieval_query"); err == nil {
 		queryEmbedding = embedding
 	}
 	results, threshold := rankGraphSearch(query, queryEmbedding, bookmarks)
@@ -783,14 +959,7 @@ func (s *Service) graphTerms(ctx context.Context, userID, table, column string, 
 }
 
 func scanBookmarkWithEmbedding(row scanner, embedding *[]byte) map[string]any {
-	var id, urlv, title, description, domain, favicon, thumbnail, source, created, updated, lastAccessed, html, text sql.NullString
-	var readingTime, viewCount, version sql.NullInt64
-	var readStatus sql.NullBool
-	err := row.Scan(&id, &urlv, &title, &description, &domain, &favicon, &thumbnail, &readingTime, &readStatus, &source, &created, &updated, &lastAccessed, &viewCount, &version, &html, &text, embedding)
-	if err != nil {
-		return map[string]any{"id": ""}
-	}
-	return map[string]any{"id": id.String, "url": urlv.String, "title": title.String, "description": description.String, "domain": domain.String, "favicon": nullString(favicon), "thumbnail": nullString(thumbnail), "reading_time": readingTime.Int64, "read_status": readStatus.Bool, "source": source.String, "created_at": created.String, "updated_at": updated.String, "last_accessed": nullString(lastAccessed), "view_count": viewCount.Int64, "version": version.Int64, "html_content": sanitize.HTML(html.String), "text_content": text.String}
+	return scanBookmarkRow(row, embedding)
 }
 
 func duplicatePayloads(bookmarks []duplicateBookmark) []map[string]any {
@@ -1581,10 +1750,15 @@ type scanner interface {
 }
 
 func scanBookmark(row scanner) map[string]any {
+	return scanBookmarkRow(row)
+}
+
+func scanBookmarkRow(row scanner, extra ...any) map[string]any {
 	var id, urlv, title, description, domain, favicon, thumbnail, source, created, updated, lastAccessed, html, text sql.NullString
 	var readingTime, viewCount, version sql.NullInt64
 	var readStatus sql.NullBool
-	err := row.Scan(&id, &urlv, &title, &description, &domain, &favicon, &thumbnail, &readingTime, &readStatus, &source, &created, &updated, &lastAccessed, &viewCount, &version, &html, &text)
+	dest := []any{&id, &urlv, &title, &description, &domain, &favicon, &thumbnail, &readingTime, &readStatus, &source, &created, &updated, &lastAccessed, &viewCount, &version, &html, &text}
+	err := row.Scan(append(dest, extra...)...)
 	if err != nil {
 		return map[string]any{"id": ""}
 	}
@@ -1624,6 +1798,88 @@ func fallback(value, fallback string) string {
 		return fallback
 	}
 	return strings.TrimSpace(value)
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func appendAnswerPart(parts *[]string, seen map[string]struct{}, value any, maxParts int) {
+	if len(*parts) >= maxParts {
+		return
+	}
+	switch typed := value.(type) {
+	case string:
+		appendAnswerString(parts, seen, typed)
+	case []any:
+		for _, item := range typed {
+			if len(*parts) >= maxParts {
+				return
+			}
+			appendAnswerPart(parts, seen, item, maxParts)
+		}
+	}
+}
+
+func appendAnswerString(parts *[]string, seen map[string]struct{}, value string) {
+	cleaned := strings.TrimSpace(strings.Join(strings.Fields(value), " "))
+	if len(cleaned) < 2 {
+		return
+	}
+	cleaned = truncateAnswerPart(cleaned, 240)
+	key := strings.ToLower(cleaned)
+	if _, ok := seen[key]; ok {
+		return
+	}
+	seen[key] = struct{}{}
+	*parts = append(*parts, cleaned)
+}
+
+func truncateAnswerPart(value string, maxRunes int) string {
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return strings.TrimSpace(string(runes[:maxRunes])) + "..."
+}
+
+func searchSnippet(query, text string) string {
+	text = strings.Join(strings.Fields(text), " ")
+	if len(text) <= 320 {
+		return text
+	}
+	lowerText := strings.ToLower(text)
+	start := 0
+	for _, term := range strings.Fields(strings.ToLower(query)) {
+		if len(term) < 2 {
+			continue
+		}
+		if idx := strings.Index(lowerText, term); idx >= 0 {
+			start = idx - 110
+			if start < 0 {
+				start = 0
+			}
+			break
+		}
+	}
+	end := start + 320
+	if end > len(text) {
+		end = len(text)
+	}
+	prefix := ""
+	if start > 0 {
+		prefix = "..."
+	}
+	suffix := ""
+	if end < len(text) {
+		suffix = "..."
+	}
+	return prefix + strings.TrimSpace(text[start:end]) + suffix
 }
 
 func readingTime(text string) int {

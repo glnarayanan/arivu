@@ -21,6 +21,7 @@ import (
 	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/jobs"
 	"github.com/glnarayanan/arivu/internal/providers"
+	"github.com/glnarayanan/arivu/internal/runtimeconfig"
 	"github.com/glnarayanan/arivu/internal/safefetch"
 )
 
@@ -36,7 +37,10 @@ type App struct {
 	bookmarks *bookmarks.Service
 	jobs      *jobs.Queue
 	fetcher   *safefetch.Client
+	runtime   *runtimeconfig.Service
 	xHTTP     *http.Client
+	startedAt time.Time
+	usage     *providerUsage
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 }
@@ -46,11 +50,14 @@ func New(cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, db: db}
+	a := &App{cfg: cfg, db: db, startedAt: time.Now().UTC(), usage: newProviderUsage()}
+	a.runtime = runtimeconfig.New(db, cfg)
 	a.auth = auth.New(db, cfg)
+	a.auth.SetRuntimeSettings(a.runtime.Effective)
 	a.jobs = jobs.New(db)
 	a.fetcher = safefetch.NewWithUserAgent(cfg.FetchUserAgent)
 	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{APIKey: cfg.GeminiAPIKey})
+	a.bookmarks.SetGeminiProvider(a.geminiClient)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.startWorkers(ctx)
@@ -97,17 +104,35 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/bookmarks/{id}", a.withUser(a.bookmarks.Delete))
 	mux.HandleFunc("PATCH /api/bookmarks/{id}/read-status", a.withUser(a.bookmarks.ReadStatus))
 	mux.HandleFunc("POST /api/bookmarks/{id}/accessed", a.withUser(a.bookmarks.Accessed))
+	mux.HandleFunc("POST /api/bookmarks/{id}/annotations", a.withUser(a.bookmarks.CreateAnnotation))
 	mux.HandleFunc("GET /api/bookmarks/{id}/related", a.withUser(a.bookmarks.Related))
 	mux.HandleFunc("POST /api/bookmarks/import", a.withUser(a.bookmarks.Import))
 	mux.HandleFunc("GET /api/bookmarks/export", a.withUser(a.bookmarks.Export))
 	mux.HandleFunc("POST /api/bookmarks/backup", a.withUser(a.bookmarks.Backup))
+	mux.HandleFunc("GET /api/jobs/{id}", a.withUser(a.bookmarks.JobStatus))
 	mux.HandleFunc("GET /api/import-jobs", a.withUser(a.bookmarks.ImportJobs))
 	mux.HandleFunc("GET /api/import-jobs/{id}", a.withUser(a.bookmarks.ImportJob))
 
 	mux.HandleFunc("GET /api/search", a.withUser(a.bookmarks.Search))
+	mux.HandleFunc("GET /api/search/answer", a.withUser(a.bookmarks.SearchAnswer))
 	mux.HandleFunc("GET /api/collections", a.withUser(a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/collections", a.withUser(a.bookmarks.CreateCollection))
 	mux.HandleFunc("POST /api/collections/{id}/add", a.withUser(a.bookmarks.AddToCollection))
+	mux.HandleFunc("GET /api/notes", a.withUser(a.bookmarks.Notes))
+	mux.HandleFunc("POST /api/notes", a.withUser(a.bookmarks.CreateNote))
+	mux.HandleFunc("GET /api/notes/{id}", a.withUser(a.bookmarks.GetNote))
+	mux.HandleFunc("PATCH /api/notes/{id}", a.withUser(a.bookmarks.UpdateNote))
+	mux.HandleFunc("DELETE /api/notes/{id}", a.withUser(a.bookmarks.DeleteNote))
+	mux.HandleFunc("PATCH /api/annotations/{id}", a.withUser(a.bookmarks.UpdateAnnotation))
+	mux.HandleFunc("DELETE /api/annotations/{id}", a.withUser(a.bookmarks.DeleteAnnotation))
+	mux.HandleFunc("GET /api/tags", a.withUser(a.bookmarks.Tags))
+	mux.HandleFunc("POST /api/tags", a.withUser(a.bookmarks.CreateTag))
+	mux.HandleFunc("POST /api/tags/aliases", a.withUser(a.bookmarks.CreateTagAlias))
+	mux.HandleFunc("GET /api/saved-searches", a.withUser(a.bookmarks.SavedSearches))
+	mux.HandleFunc("POST /api/saved-searches", a.withUser(a.bookmarks.CreateSavedSearch))
+	mux.HandleFunc("GET /api/review", a.withUser(a.bookmarks.Review))
+	mux.HandleFunc("POST /api/review/{item_id}/complete", a.withUser(a.bookmarks.CompleteReview))
+	mux.HandleFunc("POST /api/review/{item_id}/snooze", a.withUser(a.bookmarks.SnoozeReview))
 	mux.HandleFunc("GET /api/cli/bookmarks", a.withAudience("cli", a.bookmarks.List))
 	mux.HandleFunc("POST /api/cli/bookmarks", a.withAudience("cli", a.bookmarks.Create))
 	mux.HandleFunc("POST /api/cli/bookmarks/preview", a.withAudience("cli", a.bookmarks.Preview))
@@ -138,6 +163,11 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/users/{id}", a.withAdmin(a.adminDeleteUser))
 	mux.HandleFunc("GET /api/admin/api-keys", a.withAdmin(a.adminAPIKeys))
 	mux.HandleFunc("PUT /api/admin/api-keys", a.withAdmin(a.adminUpdateAPIKeys))
+	mux.HandleFunc("DELETE /api/admin/api-keys/{key}", a.withAdmin(a.adminDeleteAPIKey))
+	mux.HandleFunc("GET /api/admin/api-usage", a.withAdmin(a.adminAPIUsage))
+	mux.HandleFunc("GET /api/admin/activity", a.withAdmin(a.adminActivity))
+	mux.HandleFunc("GET /api/admin/collections-stats", a.withAdmin(a.adminCollectionsStats))
+	mux.HandleFunc("GET /api/admin/audit-events", a.withAdmin(a.adminAuditEvents))
 
 	mux.HandleFunc("GET /api/auth/x/enabled", a.xEnabled)
 	mux.HandleFunc("GET /api/auth/x/status", a.withUser(a.xStatus))
@@ -149,6 +179,14 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/", a.frontend)
 
 	return a.recoverPanic(a.securityHeaders(a.limitBody(a.requestLog(mux))))
+}
+
+func (a *App) geminiClient(ctx context.Context) providers.GeminiClient {
+	key := a.cfg.GeminiAPIKey
+	if effective, err := a.runtime.Effective(ctx); err == nil {
+		key = effective.GeminiAPIKey
+	}
+	return providers.GeminiClient{APIKey: key, Recorder: a.usage.RecordGemini}
 }
 
 func (a *App) withUser(next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {
@@ -216,6 +254,8 @@ func serveAsset(w http.ResponseWriter, r *http.Request, name string, data []byte
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case strings.HasSuffix(name, ".svg"):
 		w.Header().Set("Content-Type", "image/svg+xml")
+	case strings.HasSuffix(name, ".webmanifest"):
+		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 	default:
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"html"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -19,13 +20,15 @@ import (
 	"github.com/glnarayanan/arivu/internal/config"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
+	"github.com/glnarayanan/arivu/internal/runtimeconfig"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type Service struct {
-	db  *sql.DB
-	cfg config.Config
+	db              *sql.DB
+	cfg             config.Config
+	runtimeSettings func(context.Context) (runtimeconfig.Effective, error)
 }
 
 type User struct {
@@ -64,7 +67,15 @@ type changePasswordRequest struct {
 }
 
 func New(db *sql.DB, cfg config.Config) *Service {
-	return &Service{db: db, cfg: cfg}
+	return &Service{db: db, cfg: cfg, runtimeSettings: func(context.Context) (runtimeconfig.Effective, error) {
+		return runtimeconfig.FromConfig(cfg), nil
+	}}
+}
+
+func (s *Service) SetRuntimeSettings(fn func(context.Context) (runtimeconfig.Effective, error)) {
+	if fn != nil {
+		s.runtimeSettings = fn
+	}
 }
 
 func (s *Service) Signup(w http.ResponseWriter, r *http.Request) {
@@ -110,11 +121,19 @@ func (s *Service) loginWithAudience(w http.ResponseWriter, r *http.Request, audi
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "Invalid request"})
 		return
 	}
+	body.Email = strings.ToLower(strings.TrimSpace(body.Email))
+	limitKey := rateLimitKey("auth:login", audience, body.Email, requestIP(r))
+	if s.rateLimitBlocked(r.Context(), limitKey, 10, 15*time.Minute) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"detail": "Too many login attempts. Try again later."})
+		return
+	}
 	user, scheme, hash, err := s.userByEmail(r.Context(), body.Email)
 	if err != nil || !verifyPassword(body.Password, scheme, hash) {
+		s.recordRateLimit(r.Context(), limitKey, 15*time.Minute)
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"detail": "Invalid credentials"})
 		return
 	}
+	s.clearRateLimit(r.Context(), limitKey)
 	if scheme != "argon2id" {
 		if newHash, err := hashArgon2id(body.Password); err == nil {
 			_, _ = s.db.ExecContext(r.Context(), `UPDATE users SET password_hash=?, password_scheme='argon2id', updated_at=? WHERE id=?`, newHash, time.Now().UTC().Format(time.RFC3339), user.ID)
@@ -182,6 +201,10 @@ func (s *Service) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "Invalid request"})
 		return
 	}
+	if !s.consumeRateLimit(r.Context(), rateLimitKey("auth:forgot-password", requestIP(r)), 3, time.Hour) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"detail": "Too many password reset requests. Try again later."})
+		return
+	}
 	user, _, _, err := s.userByEmail(r.Context(), body.Email)
 	if err == nil {
 		token := randomToken()
@@ -196,6 +219,10 @@ func (s *Service) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	var body resetPasswordRequest
 	if err := decodeJSON(r, &body); err != nil || len(body.NewPassword) < 8 {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "Invalid reset request"})
+		return
+	}
+	if !s.consumeRateLimit(r.Context(), rateLimitKey("auth:reset-password", requestIP(r)), 10, 15*time.Minute) {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"detail": "Too many password reset attempts. Try again later."})
 		return
 	}
 	var userID, expires string
@@ -218,6 +245,7 @@ func (s *Service) ResetPassword(w http.ResponseWriter, r *http.Request) {
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE users SET password_hash=?, password_scheme='argon2id', updated_at=? WHERE id=?`, hash, now, userID)
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE password_reset_tokens SET used_at=? WHERE token_hash=?`, now, tokenHash(body.Token))
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE sessions SET revoked_at=? WHERE user_id=?`, now, userID)
+	s.auditEvent(r.Context(), userID, "auth.password.reset", "user", userID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Password reset successfully"})
 }
 
@@ -240,7 +268,22 @@ func (s *Service) ChangePassword(w http.ResponseWriter, r *http.Request, user Us
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE users SET password_hash=?, password_scheme='argon2id', updated_at=? WHERE id=?`, newHash, now, user.ID)
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE sessions SET revoked_at=? WHERE user_id=? AND audience<>'web'`, now, user.ID)
+	s.auditEvent(r.Context(), user.ID, "auth.password.change", "user", user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Password changed successfully"})
+}
+
+func (s *Service) ResetUserPassword(ctx context.Context, userID string, newPassword string) error {
+	hash, err := hashArgon2id(newPassword)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err = s.db.ExecContext(ctx, `UPDATE users SET password_hash=?, password_scheme='argon2id', invite_pending=0, updated_at=? WHERE id=?`, hash, now, userID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.ExecContext(ctx, `UPDATE sessions SET revoked_at=? WHERE user_id=?`, now, userID)
+	return err
 }
 
 func (s *Service) Profile(w http.ResponseWriter, r *http.Request, user User) {
@@ -368,7 +411,11 @@ func (s *Service) sendResetEmail(ctx context.Context, email string, token string
 	values := url.Values{"token": []string{token}}
 	link := resetURL + "?" + values.Encode()
 	body := `<p>Use this link to reset your Arivu password:</p><p><a href="` + html.EscapeString(link) + `">Reset password</a></p><p>This link expires in one hour.</p>`
-	return providers.ResendClient{APIKey: s.cfg.ResendAPIKey, From: s.cfg.ResendFrom}.Send(ctx, email, "Reset your Arivu password", body)
+	effective, err := s.runtimeSettings(ctx)
+	if err != nil {
+		return err
+	}
+	return providers.ResendClient{APIKey: effective.ResendAPIKey, From: effective.ResendFromEmail}.Send(ctx, email, "Reset your Arivu password", body)
 }
 
 func hashArgon2id(password string) (string, error) {
@@ -412,6 +459,56 @@ func bearerToken(r *http.Request) string {
 func tokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func rateLimitKey(parts ...string) string {
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "rl:" + hex.EncodeToString(sum[:])
+}
+
+func requestIP(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+func (s *Service) consumeRateLimit(ctx context.Context, key string, limit int, window time.Duration) bool {
+	if s.rateLimitBlocked(ctx, key, limit, window) {
+		return false
+	}
+	s.recordRateLimit(ctx, key, window)
+	return true
+}
+
+func (s *Service) rateLimitBlocked(ctx context.Context, key string, limit int, window time.Duration) bool {
+	var count int
+	var expires string
+	if err := s.db.QueryRowContext(ctx, `SELECT count,expires_at FROM rate_limits WHERE key=?`, key).Scan(&count, &expires); err != nil {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expires)
+	if err != nil || !time.Now().UTC().Before(expiresAt) {
+		s.clearRateLimit(ctx, key)
+		return false
+	}
+	return count >= limit
+}
+
+func (s *Service) recordRateLimit(ctx context.Context, key string, window time.Duration) {
+	now := time.Now().UTC()
+	expires := now.Add(window).Format(time.RFC3339)
+	_, _ = s.db.ExecContext(ctx, `INSERT INTO rate_limits(key,window_start,count,expires_at) VALUES(?,?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN rate_limits.expires_at<=? THEN 1 ELSE rate_limits.count+1 END, window_start=CASE WHEN rate_limits.expires_at<=? THEN excluded.window_start ELSE rate_limits.window_start END, expires_at=CASE WHEN rate_limits.expires_at<=? THEN excluded.expires_at ELSE rate_limits.expires_at END`,
+		key, now.Format(time.RFC3339), expires, now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339))
+}
+
+func (s *Service) clearRateLimit(ctx context.Context, key string) {
+	_, _ = s.db.ExecContext(ctx, `DELETE FROM rate_limits WHERE key=?`, key)
+}
+
+func (s *Service) auditEvent(ctx context.Context, actorID, action, targetType, targetID string) {
+	_, _ = s.db.ExecContext(ctx, `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), actorID, action, targetType, targetID, "{}", time.Now().UTC().Format(time.RFC3339))
 }
 
 func randomToken() string {

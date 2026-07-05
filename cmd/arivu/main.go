@@ -98,9 +98,7 @@ func runServe(args []string) {
 func runMigrate(args []string) {
 	fs := flag.NewFlagSet("migrate", flag.ExitOnError)
 	var exportPath string
-	fs.StringVar(&exportPath, "mongo-export", "", "Path to a dependency-free JSON export file or directory to validate")
-	fs.StringVar(&exportPath, "json-export", "", "Alias for --mongo-export")
-	dbName := fs.String("mongo-db", "arivu_db", "MongoDB database name")
+	fs.StringVar(&exportPath, "json-export", "", "Path to a legacy JSON export file or directory to validate")
 	out := fs.String("out", "migration-manifest.json", "Manifest output path")
 	dryRun := fs.Bool("dry-run", true, "Only discover and validate legacy schema")
 	sampleLimit := fs.Int("sample-limit", 1000, "Maximum documents to validate per collection from JSON exports")
@@ -112,7 +110,7 @@ func runMigrate(args []string) {
 	_ = fs.Parse(args)
 
 	if exportPath == "" {
-		log.Fatal("--mongo-export or --json-export is required for migration discovery")
+		log.Fatal("--json-export is required for migration discovery")
 	}
 	if !*dryRun {
 		report, err := migrate.ApplyExport(context.Background(), migrate.ApplyOptions{
@@ -126,15 +124,16 @@ func runMigrate(args []string) {
 			AllowExisting: *allowExisting,
 		})
 		if err != nil {
-			log.Fatalf("migration apply: %v", err)
+			raw, _ := json.MarshalIndent(migrate.ApplyReport{Errors: []string{err.Error()}}, "", "  ")
+			_, _ = fmt.Fprintln(os.Stderr, string(raw))
+			os.Exit(1)
 		}
 		raw, _ := json.MarshalIndent(report, "", "  ")
 		fmt.Println(string(raw))
 		return
 	}
-	if err := migrate.DiscoverMongoSchema(context.Background(), migrate.Options{
+	if err := migrate.DiscoverLegacyExport(context.Background(), migrate.Options{
 		ExportPath:  exportPath,
-		DBName:      *dbName,
 		OutPath:     *out,
 		DryRun:      *dryRun,
 		SampleLimit: *sampleLimit,

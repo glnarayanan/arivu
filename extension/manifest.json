@@ -5,11 +5,17 @@
   "description": "Save and organize web pages with AI-powered summaries",
   "permissions": [
     "activeTab",
+    "contextMenus",
+    "scripting",
     "storage"
   ],
   "host_permissions": [
     "https://arivu.app/*",
-    "http://localhost:8001/*"
+    "http://localhost/*"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://*/*"
   ],
   "action": {
     "default_popup": "popup.html",

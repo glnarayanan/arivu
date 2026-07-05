@@ -15,24 +15,83 @@ All notable changes to this project will be documented in this file.
 - Added an interface quality audit covering accessibility, performance, theming, responsive behavior, and design anti-patterns.
 - Added public password recovery and invite acceptance entrypoints to the embedded frontend.
 - Added a tiny embedded SVG favicon for the browser UI.
+- Added second-brain persistence for notes, bookmark-note links, annotations, normalized tags, tag aliases, saved searches, review events, and import source metadata.
+- Added web APIs for notes, bookmark annotations, tags, tag aliases, saved searches, review completion/snoozing, and per-user background job status.
+- Added cited local answer mode for saved-item search, with citations back to matching bookmarks.
+- Added Markdown/Obsidian-style bookmark export and a real Settings import/export panel.
+- Added Settings tag management for canonical tags and aliases.
+- Added Settings profile and API key panels backed by the existing profile, password-change, and admin key routes.
+- Added Settings connection controls for X status, connect, sync, and disconnect using the existing X routes.
+- Added an admin audit log API and Admin page panel for recent sensitive account, settings, and auth events.
+- Added a standalone Notes screen for creating, editing, and deleting freeform notes.
+- Added deterministic bookmark enrichment for summaries, bullets, highlight quotes, suggested tags, graph entities, and graph concepts when provider AI is not configured.
+- Added real embedded UI routes for review, daily memory, duplicate detection/merge, knowledge graph exploration, bookmark annotations, linked notes, read state, related items, and processing status.
+- Added an installable PWA manifest with a mobile/browser share target that pre-fills dashboard capture.
+- Added a reader control for copying selected archived text into a new quote annotation.
+- Added inline reader controls for editing and deleting saved annotations.
+- Added standalone notes to the daily review queue, with note completion and snooze support.
 
 ### Changed
 
-- Removed the inert `arivu migrate --mongo-uri` discovery path; migration now
-  requires a dependency-free JSON export via `--json-export` or
-  `--mongo-export`.
+- Removed stale Mongo-named migration CLI options; migration now requires a
+  dependency-free legacy JSON export via `--json-export`.
+- Migration apply reports now include source document counts, skipped legacy
+  sessions, and JSON-formatted errors on failed apply runs.
+- Admin API key settings now take effect at runtime through SQLite overrides,
+  with encrypted provider secrets, plain operational settings, source-aware UI
+  status, and per-setting override removal.
+- The Admin page now exposes overview, API usage, users, system, activity,
+  collections, and audit sections backed by SQLite-native admin endpoints.
+- Admin password reset now uses the same Argon2id password storage as user
+  password reset and change-password flows.
+- The embedded frontend admin reset flow now uses the existing accessible dialog
+  system instead of a native browser prompt.
+- The browser extension token bootstrap now sends the web session CSRF token
+  when requesting extension-audience tokens.
+- The embedded frontend visual system is quieter on dense app surfaces, with
+  reduced decorative background patterning and no side-accent blockquote border.
+- Consolidated public project documentation under `openwiki/` and removed the
+  duplicate `documentation/` tree.
 - Consolidated v2 provider-secret sealing/opening in `internal/secrets` and
   removed unused internal helpers and inert frontend state.
 - Polished the embedded frontend with stronger interaction states, route loading feedback, semantic toasts, accessible search and navigation affordances, safer mobile layout behavior, and refined design tokens.
 - Resolved the frontend audit findings with explicit route access metadata, inline form errors, assertive error toasts, and a quieter OKLCH-based visual system.
 - Optimized embedded frontend asset delivery with content ETags, cache revalidation headers, zero-copy byte readers, and offscreen grid rendering containment.
+- Bookmark saves now accept quick notes, selected quotes, and manual tags, and return a `job_id` so the UI can show enrichment progress.
+- Extension selected-text saves now persist as quote annotations, with a backend compatibility alias for the older `annotation` payload field.
+- Extension popup saves now accept quick notes and comma-separated tags.
+- Extension self-hosted setup now requests browser host permission for the saved API origin and registers the token content script dynamically, avoiding manual manifest edits for custom domains.
+- CI now checks embedded frontend and extension JavaScript syntax and runs the extension URL/origin self-test.
+- Removed the extension popup's remote Google Fonts import in favor of native system font stacks.
+- Bookmark list and search now support normalized tag, domain, source, read-status, and created-date filters, and text search includes linked annotations and notes.
+- Cited answer mode now synthesizes deterministic answer text from saved summaries, highlights, snippets, and standalone notes while preserving citations back to the source items.
+- Bookmark import now accepts safe URLs from JSON arrays, object-wrapped exports, browser/Netscape HTML, and newline URL lists while recording source hints for inserted bookmarks.
+- Imported bookmarks now create summary placeholders before processing and use safer duplicate counting for import reports.
+- Imported bookmark processing now updates the visible import job counters for fetched, AI-processed, and failed items.
+- Import jobs now include source reports and bounded item provenance so migration status can show where imported items came from.
+- Imported bookmarks now persist their detected source for source filtering.
+- JSON export now includes second-brain backup data: bookmark details, summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, import jobs, and import provenance.
+- Full JSON backups can now be restored through bookmark import, remapping IDs under the authenticated user while preserving summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, and import provenance.
+- Added an Obsidian ZIP export that writes bookmark and standalone note Markdown files into vault-ready folders without adding production dependencies.
 
 ### Security
 
 - Web, CLI, and extension tokens are audience-isolated.
+- Login, forgot-password, and reset-password endpoints now use the existing SQLite `rate_limits` table to throttle repeated auth attempts.
+- Sensitive admin/account mutations now write `audit_events` rows, and provider setting updates are restricted to known keys.
+- CI now verifies module checksums, runs pinned `govulncheck`, and enables Dependabot for Go modules and GitHub Actions.
+- CI now uploads a short-lived release evidence bundle with the Linux build, Go build info, module inventory, and SHA-256 checksums.
+- Updated the Go baseline to 1.25 and upgraded `golang.org/x/net` to a release that fixes reachable HTML parser vulnerabilities in the sanitizer path.
 - Server-side URL fetching pins connections to vetted IPs and blocks private/reserved targets.
 - Archived HTML is sanitized by the backend before storage/display.
 - GitHub Actions CI now declares least-privilege `contents: read` token permissions.
 - Updated vulnerable Go modules to patched `golang.org/x/crypto` and `golang.org/x/net` releases.
 - Derived new encrypted provider-secret keys with HKDF before AES-256-GCM sealing.
+- Audit metadata is redacted before storage so token-, password-, secret-, and
+  API-key-like values are not persisted in audit rows.
 - Made web access and refresh cookie setters explicitly HttpOnly while keeping the CSRF double-submit cookie readable.
+- Validated imported URLs with the same SSRF-aware safe-fetch policy used for normal saves.
+- Full JSON backup restore writes every restored row with the authenticated user ID and remaps cross-references instead of trusting exported ownership.
+- Escaped formula-like CSV export cells to reduce spreadsheet injection risk.
+- Obsidian ZIP export sanitizes generated filenames and reuses existing Markdown escaping for file content.
+- Covered new second-brain routes with CSRF, audience isolation, and cross-user isolation tests.

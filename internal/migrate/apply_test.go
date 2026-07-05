@@ -100,6 +100,9 @@ func TestApplyExportMigratesRowsAndRekeysSecrets(t *testing.T) {
 	if report.Users != 1 || report.Bookmarks != 1 || report.XConnections != 1 || report.Settings != 7 || report.LegacySessionsDropped != 1 {
 		t.Fatalf("unexpected report: %#v", report)
 	}
+	if report.SourceDocuments["users"] != 1 || report.SourceDocuments["bookmarks"] != 1 || report.Skipped["sessions"] != 1 {
+		t.Fatalf("report missing source/skipped counts: %#v", report)
+	}
 	db, err := database.Open(context.Background(), dbPath)
 	if err != nil {
 		t.Fatal(err)
@@ -132,18 +135,24 @@ func TestApplyExportMigratesRowsAndRekeysSecrets(t *testing.T) {
 	if got := openMigratedSecretForTest(t, newSecret, accessCipher); got != "x-access" {
 		t.Fatalf("x token was not rekeyed: %q", got)
 	}
-	var settingCipher, keyID string
-	if err := db.QueryRowContext(context.Background(), `SELECT value_cipher,key_id FROM settings WHERE key='gemini_api_key'`).Scan(&settingCipher, &keyID); err != nil {
+	var settingCipher, settingPlain, keyID string
+	if err := db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,''),COALESCE(key_id,'') FROM settings WHERE key='gemini_api_key'`).Scan(&settingCipher, &settingPlain, &keyID); err != nil {
 		t.Fatal(err)
 	}
-	if keyID != "migration-2026" || openMigratedSecretForTest(t, newSecret, settingCipher) != "gemini-key" {
-		t.Fatalf("setting was not rekeyed with key id: keyID=%q", keyID)
+	if settingPlain != "" || keyID != "migration-2026" || openMigratedSecretForTest(t, newSecret, settingCipher) != "gemini-key" {
+		t.Fatalf("secret setting was not rekeyed with key id: keyID=%q plain=%q", keyID, settingPlain)
 	}
-	if err := db.QueryRowContext(context.Background(), `SELECT value_cipher,key_id FROM settings WHERE key='x_integration_enabled'`).Scan(&settingCipher, &keyID); err != nil {
+	if err := db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,''),COALESCE(key_id,'') FROM settings WHERE key='x_integration_enabled'`).Scan(&settingCipher, &settingPlain, &keyID); err != nil {
 		t.Fatal(err)
 	}
-	if keyID != "migration-2026" || openMigratedSecretForTest(t, newSecret, settingCipher) != "true" {
-		t.Fatalf("boolean setting was not preserved: keyID=%q value=%q", keyID, openMigratedSecretForTest(t, newSecret, settingCipher))
+	if settingCipher != "" || keyID != "" || settingPlain != "true" {
+		t.Fatalf("boolean setting was not preserved plainly: keyID=%q cipher=%q plain=%q", keyID, settingCipher, settingPlain)
+	}
+	if err := db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='x_redirect_uri'`).Scan(&settingCipher, &settingPlain); err != nil {
+		t.Fatal(err)
+	}
+	if settingCipher != "" || settingPlain != "https://example.com/callback" {
+		t.Fatalf("redirect setting was not preserved plainly: cipher=%q plain=%q", settingCipher, settingPlain)
 	}
 }
 

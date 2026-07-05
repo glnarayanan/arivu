@@ -17,23 +17,30 @@ import (
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
+	"github.com/glnarayanan/arivu/internal/runtimeconfig"
 	"github.com/glnarayanan/arivu/internal/secrets"
 )
 
 const xScopes = "bookmark.read tweet.read users.read offline.access"
 
 func (a *App) xEnabled(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"enabled": a.cfg.XEnabled})
+	effective, err := a.runtime.Effective(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load X settings")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": effective.XIntegrationEnabled})
 }
 
 func (a *App) xConnect(w http.ResponseWriter, r *http.Request, user auth.User) {
-	if !a.xReady(w) {
+	xCfg, ok := a.xReady(w, r)
+	if !ok {
 		return
 	}
 	verifier := randomURLToken(64)
 	state := randomURLToken(32)
 	challenge := pkceChallenge(verifier)
-	redirectURI := a.xRedirectURI()
+	redirectURI := xCfg.XRedirectURI
 	verifierCipher, err := secrets.Seal(a.cfg.SecretKey, verifier)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not start X connection")
@@ -48,7 +55,7 @@ func (a *App) xConnect(w http.ResponseWriter, r *http.Request, user auth.User) {
 	}
 	values := url.Values{}
 	values.Set("response_type", "code")
-	values.Set("client_id", a.cfg.XClientID)
+	values.Set("client_id", xCfg.XClientID)
 	values.Set("redirect_uri", redirectURI)
 	values.Set("scope", xScopes)
 	values.Set("state", state)
@@ -62,7 +69,8 @@ func (a *App) xConnect(w http.ResponseWriter, r *http.Request, user auth.User) {
 }
 
 func (a *App) xCallback(w http.ResponseWriter, r *http.Request, user auth.User) {
-	if !a.xReady(w) {
+	xCfg, ok := a.xReady(w, r)
+	if !ok {
 		return
 	}
 	var body struct {
@@ -90,7 +98,7 @@ func (a *App) xCallback(w http.ResponseWriter, r *http.Request, user auth.User) 
 		writeError(w, http.StatusBadRequest, "Invalid OAuth state")
 		return
 	}
-	client := a.xClient("")
+	client := a.xClient("", xCfg)
 	token, err := client.ExchangeCode(r.Context(), body.Code, redirectURI, verifier)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "Failed to exchange authorization code")
@@ -129,7 +137,7 @@ ON CONFLICT(user_id) DO UPDATE SET x_user_id=excluded.x_user_id,x_username=exclu
 }
 
 func (a *App) xStatus(w http.ResponseWriter, r *http.Request, user auth.User) {
-	if !a.xReady(w) {
+	if _, ok := a.xReady(w, r); !ok {
 		return
 	}
 	conn, err := a.xConnection(r.Context(), user.ID)
@@ -154,7 +162,8 @@ func (a *App) xStatus(w http.ResponseWriter, r *http.Request, user auth.User) {
 }
 
 func (a *App) xDisconnect(w http.ResponseWriter, r *http.Request, user auth.User) {
-	if !a.xReady(w) {
+	xCfg, ok := a.xReady(w, r)
+	if !ok {
 		return
 	}
 	conn, err := a.xConnection(r.Context(), user.ID)
@@ -167,14 +176,15 @@ func (a *App) xDisconnect(w http.ResponseWriter, r *http.Request, user auth.User
 		return
 	}
 	if access, err := secrets.Open(a.cfg.SecretKey, conn.AccessCipher); err == nil {
-		_ = a.xClient("").Revoke(r.Context(), access)
+		_ = a.xClient("", xCfg).Revoke(r.Context(), access)
 	}
 	_, _ = a.db.ExecContext(r.Context(), `DELETE FROM x_connections WHERE user_id=?`, user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"disconnected": true})
 }
 
 func (a *App) xSync(w http.ResponseWriter, r *http.Request, user auth.User) {
-	if !a.xReady(w) {
+	xCfg, ok := a.xReady(w, r)
+	if !ok {
 		return
 	}
 	conn, err := a.xConnection(r.Context(), user.ID)
@@ -195,7 +205,7 @@ func (a *App) xSync(w http.ResponseWriter, r *http.Request, user auth.User) {
 		return
 	}
 	_, _ = a.db.ExecContext(r.Context(), `UPDATE x_connections SET sync_status='syncing' WHERE user_id=?`, user.ID)
-	result, syncErr := a.syncXBookmarks(r, user, conn)
+	result, syncErr := a.syncXBookmarks(r, user, conn, xCfg)
 	if syncErr != nil {
 		_, _ = a.db.ExecContext(r.Context(), `UPDATE x_connections SET sync_status='error' WHERE user_id=?`, user.ID)
 		writeError(w, http.StatusBadGateway, syncErr.Error())
@@ -226,12 +236,12 @@ func (a *App) xConnection(ctx context.Context, userID string) (xConnectionRow, e
 	return conn, err
 }
 
-func (a *App) syncXBookmarks(r *http.Request, user auth.User, conn xConnectionRow) (map[string]any, error) {
-	access, err := a.xAccessToken(r, conn)
+func (a *App) syncXBookmarks(r *http.Request, user auth.User, conn xConnectionRow, xCfg runtimeconfig.Effective) (map[string]any, error) {
+	access, err := a.xAccessToken(r, conn, xCfg)
 	if err != nil {
 		return nil, err
 	}
-	client := a.xClient(access)
+	client := a.xClient(access, xCfg)
 	existingTweetIDs, existingURLs := a.existingXDedupSets(r, user.ID)
 	var totalFetched, newBookmarks, duplicates int
 	cursor := conn.NextCursor.String
@@ -297,7 +307,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, bookmarkURL, title
 	return nil
 }
 
-func (a *App) xAccessToken(r *http.Request, conn xConnectionRow) (string, error) {
+func (a *App) xAccessToken(r *http.Request, conn xConnectionRow, xCfg runtimeconfig.Effective) (string, error) {
 	access, err := secrets.Open(a.cfg.SecretKey, conn.AccessCipher)
 	if err != nil {
 		return "", err
@@ -313,7 +323,7 @@ func (a *App) xAccessToken(r *http.Request, conn xConnectionRow) (string, error)
 	if err != nil {
 		return "", err
 	}
-	token, err := a.xClient("").Refresh(r.Context(), refresh)
+	token, err := a.xClient("", xCfg).Refresh(r.Context(), refresh)
 	if err != nil {
 		return "", err
 	}
@@ -354,27 +364,25 @@ func (a *App) existingXDedupSets(r *http.Request, userID string) (map[string]boo
 	return tweetIDs, urls
 }
 
-func (a *App) xReady(w http.ResponseWriter) bool {
-	if !a.cfg.XEnabled {
+func (a *App) xReady(w http.ResponseWriter, r *http.Request) (runtimeconfig.Effective, bool) {
+	xCfg, err := a.runtime.Effective(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load X settings")
+		return runtimeconfig.Effective{}, false
+	}
+	if !xCfg.XIntegrationEnabled {
 		writeError(w, http.StatusNotFound, "Not found")
-		return false
+		return runtimeconfig.Effective{}, false
 	}
-	if a.cfg.XClientID == "" {
+	if xCfg.XClientID == "" {
 		writeError(w, http.StatusServiceUnavailable, "X integration not configured")
-		return false
+		return runtimeconfig.Effective{}, false
 	}
-	return true
+	return xCfg, true
 }
 
-func (a *App) xClient(accessToken string) providers.XClient {
-	return providers.XClient{AccessToken: accessToken, ClientID: a.cfg.XClientID, ClientSecret: a.cfg.XClientSecret, APIBaseURL: a.cfg.XAPIBaseURL, HTTP: a.xHTTP}
-}
-
-func (a *App) xRedirectURI() string {
-	if a.cfg.XRedirectURI != "" {
-		return a.cfg.XRedirectURI
-	}
-	return strings.TrimRight(a.cfg.AppURL, "/") + "/settings?section=connections"
+func (a *App) xClient(accessToken string, xCfg runtimeconfig.Effective) providers.XClient {
+	return providers.XClient{AccessToken: accessToken, ClientID: xCfg.XClientID, ClientSecret: xCfg.XClientSecret, APIBaseURL: a.cfg.XAPIBaseURL, HTTP: a.xHTTP}
 }
 
 func bestTweetURL(tweet providers.XBookmark, author providers.XUser) string {
