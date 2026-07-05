@@ -26,7 +26,7 @@ type Service struct {
 	db      *sql.DB
 	jobs    *jobs.Queue
 	fetcher *safefetch.Client
-	gemini  providers.GeminiClient
+	gemini  func(context.Context) providers.GeminiClient
 }
 
 type CountsResult struct {
@@ -37,7 +37,20 @@ type CountsResult struct {
 }
 
 func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, gemini providers.GeminiClient) *Service {
-	return &Service{db: db, jobs: jobs, fetcher: fetcher, gemini: gemini}
+	return &Service{db: db, jobs: jobs, fetcher: fetcher, gemini: func(context.Context) providers.GeminiClient { return gemini }}
+}
+
+func (s *Service) SetGeminiProvider(fn func(context.Context) providers.GeminiClient) {
+	if fn != nil {
+		s.gemini = fn
+	}
+}
+
+func (s *Service) geminiClient(ctx context.Context) providers.GeminiClient {
+	if s.gemini == nil {
+		return providers.GeminiClient{}
+	}
+	return s.gemini(ctx)
 }
 
 func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -471,7 +484,7 @@ func (s *Service) AnalyticsPatterns(w http.ResponseWriter, r *http.Request, user
 
 func (s *Service) AnalyticsInsights(w http.ResponseWriter, r *http.Request, user auth.User) {
 	insights := s.localInsights(r.Context(), user.ID)
-	if generated, err := s.gemini.GenerateInsight(r.Context(), s.analyticsPrompt(r.Context(), user.ID)); err == nil && strings.TrimSpace(generated) != "" {
+	if generated, err := s.geminiClient(r.Context()).GenerateInsight(r.Context(), s.analyticsPrompt(r.Context(), user.ID)); err == nil && strings.TrimSpace(generated) != "" {
 		insights = append(insights, map[string]any{"type": "ai", "message": strings.TrimSpace(generated), "severity": "info"})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"insights": insights})
@@ -635,7 +648,7 @@ func (s *Service) GraphSearch(w http.ResponseWriter, r *http.Request, user auth.
 		return
 	}
 	var queryEmbedding []float64
-	if embedding, err := s.gemini.GenerateEmbedding(r.Context(), query, "retrieval_query"); err == nil {
+	if embedding, err := s.geminiClient(r.Context()).GenerateEmbedding(r.Context(), query, "retrieval_query"); err == nil {
 		queryEmbedding = embedding
 	}
 	results, threshold := rankGraphSearch(query, queryEmbedding, bookmarks)

@@ -11,20 +11,22 @@ import (
 )
 
 type GeminiClient struct {
-	APIKey  string
-	BaseURL string
-	HTTP    *http.Client
+	APIKey   string
+	BaseURL  string
+	HTTP     *http.Client
+	Recorder func(operation string, err error)
 }
 
 func (c GeminiClient) GenerateSummary(ctx context.Context, text string) (string, error) {
-	return c.generate(ctx, "Summarize this saved page in one concise sentence:\n\n"+text)
+	return c.generate(ctx, "summary", "Summarize this saved page in one concise sentence:\n\n"+text)
 }
 
 func (c GeminiClient) GenerateInsight(ctx context.Context, prompt string) (string, error) {
-	return c.generate(ctx, prompt)
+	return c.generate(ctx, "insight", prompt)
 }
 
-func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskType string) ([]float64, error) {
+func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskType string) (values []float64, err error) {
+	defer func() { c.record("embedding", err) }()
 	if c.APIKey == "" {
 		return nil, ErrNotConfigured
 	}
@@ -85,7 +87,8 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskTy
 	return decoded.Embedding.Values, nil
 }
 
-func (c GeminiClient) generate(ctx context.Context, prompt string) (string, error) {
+func (c GeminiClient) generate(ctx context.Context, operation string, prompt string) (result string, err error) {
+	defer func() { c.record(operation, err) }()
 	if c.APIKey == "" {
 		return "", ErrNotConfigured
 	}
@@ -134,6 +137,12 @@ func (c GeminiClient) generate(ctx context.Context, prompt string) (string, erro
 		return "", fmt.Errorf("gemini returned no content")
 	}
 	return decoded.Candidates[0].Content.Parts[0].Text, nil
+}
+
+func (c GeminiClient) record(operation string, err error) {
+	if c.Recorder != nil {
+		c.Recorder(operation, err)
+	}
 }
 
 func (c GeminiClient) endpoint() string {

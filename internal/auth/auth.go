@@ -20,13 +20,15 @@ import (
 	"github.com/glnarayanan/arivu/internal/config"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
+	"github.com/glnarayanan/arivu/internal/runtimeconfig"
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type Service struct {
-	db  *sql.DB
-	cfg config.Config
+	db              *sql.DB
+	cfg             config.Config
+	runtimeSettings func(context.Context) (runtimeconfig.Effective, error)
 }
 
 type User struct {
@@ -65,7 +67,15 @@ type changePasswordRequest struct {
 }
 
 func New(db *sql.DB, cfg config.Config) *Service {
-	return &Service{db: db, cfg: cfg}
+	return &Service{db: db, cfg: cfg, runtimeSettings: func(context.Context) (runtimeconfig.Effective, error) {
+		return runtimeconfig.FromConfig(cfg), nil
+	}}
+}
+
+func (s *Service) SetRuntimeSettings(fn func(context.Context) (runtimeconfig.Effective, error)) {
+	if fn != nil {
+		s.runtimeSettings = fn
+	}
 }
 
 func (s *Service) Signup(w http.ResponseWriter, r *http.Request) {
@@ -387,7 +397,11 @@ func (s *Service) sendResetEmail(ctx context.Context, email string, token string
 	values := url.Values{"token": []string{token}}
 	link := resetURL + "?" + values.Encode()
 	body := `<p>Use this link to reset your Arivu password:</p><p><a href="` + html.EscapeString(link) + `">Reset password</a></p><p>This link expires in one hour.</p>`
-	return providers.ResendClient{APIKey: s.cfg.ResendAPIKey, From: s.cfg.ResendFrom}.Send(ctx, email, "Reset your Arivu password", body)
+	effective, err := s.runtimeSettings(ctx)
+	if err != nil {
+		return err
+	}
+	return providers.ResendClient{APIKey: effective.ResendAPIKey, From: effective.ResendFromEmail}.Send(ctx, email, "Reset your Arivu password", body)
 }
 
 func hashArgon2id(password string) (string, error) {

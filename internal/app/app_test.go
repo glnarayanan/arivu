@@ -21,6 +21,7 @@ import (
 	bookmarksvc "github.com/glnarayanan/arivu/internal/bookmarks"
 	"github.com/glnarayanan/arivu/internal/config"
 	"github.com/glnarayanan/arivu/internal/providers"
+	"github.com/glnarayanan/arivu/internal/secrets"
 )
 
 func TestWebAuthRequiresCSRFForBookmarkCreate(t *testing.T) {
@@ -1204,24 +1205,51 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("api key status = %d body=%s", keyStatus.StatusCode, readBody(keyStatus))
 	}
 	keyStatus.Body.Close()
-	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","x_redirect_uri":"https://example.com/x/callback","unexpected_setting":"nope"}`, accessCookie, csrfCookie)
+	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","x_redirect_uri":"https://example.com/x/callback","x_integration_enabled":true,"resend_from_email":"hello@example.com"}`, accessCookie, csrfCookie)
 	if keyUpdate.StatusCode != http.StatusOK {
 		t.Fatalf("api key update = %d body=%s", keyUpdate.StatusCode, readBody(keyUpdate))
 	}
 	keyUpdate.Body.Close()
-	var stored string
-	if err := a.db.QueryRowContext(context.Background(), `SELECT value_plain FROM settings WHERE key='gemini_api_key'`).Scan(&stored); err != nil {
+	var storedCipher, storedPlain string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='gemini_api_key'`).Scan(&storedCipher, &storedPlain); err != nil {
 		t.Fatalf("stored api key setting: %v", err)
 	}
-	if stored != `"test-gemini"` {
-		t.Fatalf("unexpected stored key payload: %q", stored)
+	if storedCipher == "" || storedPlain != "" {
+		t.Fatalf("secret setting was not stored encrypted: cipher=%q plain=%q", storedCipher, storedPlain)
 	}
+	if opened, err := secrets.Open(a.cfg.SecretKey, storedCipher); err != nil || opened != "test-gemini" {
+		t.Fatalf("secret setting did not decrypt: opened=%q err=%v", opened, err)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='resend_from_email'`).Scan(&storedCipher, &storedPlain); err != nil {
+		t.Fatalf("stored plain setting: %v", err)
+	}
+	if storedCipher != "" || storedPlain != "hello@example.com" {
+		t.Fatalf("plain setting was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
+	}
+	xEnabled := adminRequest(t, handler, http.MethodGet, "/api/auth/x/enabled", "", accessCookie, csrfCookie)
+	var xEnabledBody map[string]any
+	_ = json.NewDecoder(xEnabled.Body).Decode(&xEnabledBody)
+	xEnabled.Body.Close()
+	if xEnabledBody["enabled"] != true {
+		t.Fatalf("runtime X setting was not effective: %#v", xEnabledBody)
+	}
+	deleteKey := adminRequest(t, handler, http.MethodDelete, "/api/admin/api-keys/gemini_api_key", "", accessCookie, csrfCookie)
+	if deleteKey.StatusCode != http.StatusOK {
+		t.Fatalf("api key delete = %d body=%s", deleteKey.StatusCode, readBody(deleteKey))
+	}
+	deleteKey.Body.Close()
+	badKeyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"unexpected_setting":"nope"}`, accessCookie, csrfCookie)
+	if badKeyUpdate.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unexpected api key update status = %d body=%s", badKeyUpdate.StatusCode, readBody(badKeyUpdate))
+	}
+	badKeyUpdate.Body.Close()
 	var unexpected int
 	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM settings WHERE key='unexpected_setting'`).Scan(&unexpected)
 	if unexpected != 0 {
 		t.Fatal("api key update stored an unknown setting")
 	}
 	assertAuditAction(t, a, "admin.settings.update", "settings", "")
+	assertAuditAction(t, a, "admin.settings.delete", "settings", "")
 	if _, err := a.db.ExecContext(context.Background(), `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, "audit-secret", userIDForEmail(t, a, "admin@example.com"), "admin.secret.test", "settings", "", `{"token":"do-not-leak","note":"visible"}`, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatalf("seed secret audit event: %v", err)
 	}
@@ -1239,7 +1267,7 @@ func TestAdminUserMutations(t *testing.T) {
 		if event["action"] == "admin.settings.update" && event["actor_email"] == "admin@example.com" {
 			metadata, _ := event["metadata"].(map[string]any)
 			keys, _ := metadata["keys"].([]any)
-			if len(keys) == 2 && keys[0] == "gemini_api_key" && keys[1] == "x_redirect_uri" {
+			if containsAll(keys, "gemini_api_key", "resend_from_email", "x_integration_enabled", "x_redirect_uri") {
 				sawSettingsAudit = true
 			}
 			if strings.Contains(fmt.Sprint(metadata), "unexpected_setting") {
@@ -1258,6 +1286,13 @@ func TestAdminUserMutations(t *testing.T) {
 	}
 	if !sawSettingsAudit || !sawRedactedAudit {
 		t.Fatalf("audit events missing settings update: %#v", auditBody)
+	}
+	for _, path := range []string{"/api/admin/overview", "/api/admin/system", "/api/admin/api-usage", "/api/admin/activity", "/api/admin/collections-stats"} {
+		resp := adminRequest(t, handler, http.MethodGet, path, "", accessCookie, csrfCookie)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d body=%s", path, resp.StatusCode, readBody(resp))
+		}
+		resp.Body.Close()
 	}
 	badLimit := adminRequest(t, handler, http.MethodGet, "/api/admin/audit-events?limit=500", "", accessCookie, csrfCookie)
 	if badLimit.StatusCode != http.StatusBadRequest {
@@ -1876,6 +1911,21 @@ func assertAuditAction(t *testing.T, a *App, action, targetType, targetID string
 	if count == 0 {
 		t.Fatalf("missing audit action %s target=%s:%s", action, targetType, targetID)
 	}
+}
+
+func containsAll(values []any, expected ...string) bool {
+	seen := map[string]bool{}
+	for _, value := range values {
+		if text, ok := value.(string); ok {
+			seen[text] = true
+		}
+	}
+	for _, value := range expected {
+		if !seen[value] {
+			return false
+		}
+	}
+	return true
 }
 
 func containsString(values []string, expected string) bool {

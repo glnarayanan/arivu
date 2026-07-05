@@ -245,6 +245,14 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 .field { display: grid; gap: var(--space-2); }
 label { font: 700 .875rem/1 var(--font-ui); text-transform: uppercase; }
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.checkbox-row input {
+  width: auto;
+}
 input, select, textarea {
   width: 100%;
   min-height: 44px;

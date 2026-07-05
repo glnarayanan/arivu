@@ -22,6 +22,7 @@ import (
 
 	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/ids"
+	"github.com/glnarayanan/arivu/internal/runtimeconfig"
 	"github.com/glnarayanan/arivu/internal/sanitize"
 	"github.com/glnarayanan/arivu/internal/secrets"
 )
@@ -425,27 +426,30 @@ func insertXConnection(ctx context.Context, tx *sql.Tx, doc map[string]any, opts
 
 func insertSettings(ctx context.Context, tx *sql.Tx, docs []map[string]any, opts ApplyOptions, now string) (int, error) {
 	count := 0
-	encryptedKeys := map[string]bool{"gemini_api_key": true, "x_client_id": true, "x_client_secret": true, "resend_api_key": true}
 	for _, doc := range docs {
-		for _, key := range []string{"gemini_api_key", "resend_api_key", "resend_from_email", "x_client_id", "x_client_secret", "x_redirect_uri", "x_integration_enabled"} {
+		for _, key := range runtimeconfig.Keys {
 			value, ok := doc[key]
 			if !ok || value == nil || value == "" {
 				continue
 			}
 			raw := settingString(value)
 			var err error
-			if encryptedKeys[key] {
+			if runtimeconfig.IsSecret(key) {
 				raw, err = decryptLegacySecret(raw, opts.OldSecretKey)
 				if err != nil {
 					return count, fmt.Errorf("setting %s: %w", key, err)
 				}
-			}
-			ciphertext, err := secrets.Seal(opts.NewSecretKey, raw)
-			if err != nil {
-				return count, err
-			}
-			if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,key_id,updated_by,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, opts.KeyID, "migration", now); err != nil {
-				return count, err
+				ciphertext, err := secrets.Seal(opts.NewSecretKey, raw)
+				if err != nil {
+					return count, err
+				}
+				if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,value_plain=NULL,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, nil, opts.KeyID, "migration", now); err != nil {
+					return count, err
+				}
+			} else {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, "migration", now); err != nil {
+					return count, err
+				}
 			}
 			count++
 		}

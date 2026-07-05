@@ -55,7 +55,7 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 		return err
 	}
 	summary := oneSentence(result.Text)
-	if aiSummary, err := s.gemini.GenerateSummary(ctx, result.Text); err == nil && strings.TrimSpace(aiSummary) != "" {
+	if aiSummary, err := s.geminiClient(ctx).GenerateSummary(ctx, result.Text); err == nil && strings.TrimSpace(aiSummary) != "" {
 		summary = strings.TrimSpace(aiSummary)
 	}
 	title := fallback(result.Title, result.Domain)

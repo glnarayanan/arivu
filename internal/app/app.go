@@ -21,6 +21,7 @@ import (
 	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/jobs"
 	"github.com/glnarayanan/arivu/internal/providers"
+	"github.com/glnarayanan/arivu/internal/runtimeconfig"
 	"github.com/glnarayanan/arivu/internal/safefetch"
 )
 
@@ -36,7 +37,10 @@ type App struct {
 	bookmarks *bookmarks.Service
 	jobs      *jobs.Queue
 	fetcher   *safefetch.Client
+	runtime   *runtimeconfig.Service
 	xHTTP     *http.Client
+	startedAt time.Time
+	usage     *providerUsage
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
 }
@@ -46,11 +50,14 @@ func New(cfg config.Config) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, db: db}
+	a := &App{cfg: cfg, db: db, startedAt: time.Now().UTC(), usage: newProviderUsage()}
+	a.runtime = runtimeconfig.New(db, cfg)
 	a.auth = auth.New(db, cfg)
+	a.auth.SetRuntimeSettings(a.runtime.Effective)
 	a.jobs = jobs.New(db)
 	a.fetcher = safefetch.NewWithUserAgent(cfg.FetchUserAgent)
 	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{APIKey: cfg.GeminiAPIKey})
+	a.bookmarks.SetGeminiProvider(a.geminiClient)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.startWorkers(ctx)
@@ -156,6 +163,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/admin/users/{id}", a.withAdmin(a.adminDeleteUser))
 	mux.HandleFunc("GET /api/admin/api-keys", a.withAdmin(a.adminAPIKeys))
 	mux.HandleFunc("PUT /api/admin/api-keys", a.withAdmin(a.adminUpdateAPIKeys))
+	mux.HandleFunc("DELETE /api/admin/api-keys/{key}", a.withAdmin(a.adminDeleteAPIKey))
+	mux.HandleFunc("GET /api/admin/api-usage", a.withAdmin(a.adminAPIUsage))
+	mux.HandleFunc("GET /api/admin/activity", a.withAdmin(a.adminActivity))
+	mux.HandleFunc("GET /api/admin/collections-stats", a.withAdmin(a.adminCollectionsStats))
 	mux.HandleFunc("GET /api/admin/audit-events", a.withAdmin(a.adminAuditEvents))
 
 	mux.HandleFunc("GET /api/auth/x/enabled", a.xEnabled)
@@ -168,6 +179,14 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("/", a.frontend)
 
 	return a.recoverPanic(a.securityHeaders(a.limitBody(a.requestLog(mux))))
+}
+
+func (a *App) geminiClient(ctx context.Context) providers.GeminiClient {
+	key := a.cfg.GeminiAPIKey
+	if effective, err := a.runtime.Effective(ctx); err == nil {
+		key = effective.GeminiAPIKey
+	}
+	return providers.GeminiClient{APIKey: key, Recorder: a.usage.RecordGemini}
 }
 
 func (a *App) withUser(next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {

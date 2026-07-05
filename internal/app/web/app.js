@@ -1333,9 +1333,11 @@ function apiKeysPanel() {
       <h3>Update keys</h3>
       <div class="field"><label for="gemini-api-key">Gemini API key</label><input id="gemini-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
       <div class="field"><label for="resend-api-key">Resend API key</label><input id="resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="resend-from-email">Resend from email</label><input id="resend-from-email" type="email" autocomplete="off"></div>
       <div class="field"><label for="x-client-id">X client ID</label><input id="x-client-id" type="text" autocomplete="off"></div>
       <div class="field"><label for="x-client-secret">X client secret</label><input id="x-client-secret" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
       <div class="field"><label for="x-redirect-uri">X redirect URI</label><input id="x-redirect-uri" type="url" autocomplete="off"></div>
+      <label class="checkbox-row"><input id="x-integration-enabled" type="checkbox"> X integration enabled</label>
       <p class="form-message" id="api-keys-message" data-form-message hidden></p>
       <button type="submit">Save keys</button>
     </form>
@@ -1350,7 +1352,23 @@ async function bindAPIKeysPanel() {
     try {
       const keys = await api("/admin/api-keys");
       status.innerHTML = apiKeyStatus(keys);
+      status.querySelectorAll("[data-api-key-revert]").forEach((button) => {
+        button.addEventListener("click", async () => {
+          const done = setButtonBusy(button, "Reverting");
+          try {
+            await api(`/admin/api-keys/${button.dataset.apiKeyRevert}`, { method: "DELETE" });
+            await refresh();
+            ui.toast("Override removed", "success");
+          } catch (err) {
+            ui.toast(err.message, "error");
+          } finally {
+            done();
+          }
+        });
+      });
       document.querySelector("#x-redirect-uri").value = keys.x_redirect_uri?.value || "";
+      document.querySelector("#x-integration-enabled").checked = Boolean(keys.x_integration_enabled?.value);
+      document.querySelector("#resend-from-email").value = keys.resend_from_email?.value || "";
     } catch (err) {
       status.innerHTML = `<p class="meta">${escapeHTML(err.status === 403 ? "Admin access required." : err.message)}</p>`;
     }
@@ -1366,11 +1384,13 @@ async function bindAPIKeysPanel() {
       resend_api_key: "#resend-api-key",
       x_client_id: "#x-client-id",
       x_client_secret: "#x-client-secret",
+      resend_from_email: "#resend-from-email",
       x_redirect_uri: "#x-redirect-uri",
     })) {
       const value = document.querySelector(selector).value.trim();
       if (value) body[key] = value;
     }
+    body.x_integration_enabled = document.querySelector("#x-integration-enabled").checked;
     try {
       await api("/admin/api-keys", { method: "PUT", body: JSON.stringify(body) });
       form.reset();
@@ -1386,12 +1406,24 @@ async function bindAPIKeysPanel() {
 }
 
 function apiKeyStatus(keys) {
-  return ["gemini_api_key", "resend_api_key", "x_client_id", "x_client_secret", "x_redirect_uri"]
+  const labels = {
+    gemini_api_key: "Gemini API key",
+    resend_api_key: "Resend API key",
+    resend_from_email: "Resend from email",
+    x_client_id: "X client ID",
+    x_client_secret: "X client secret",
+    x_redirect_uri: "X redirect URI",
+    x_integration_enabled: "X enabled",
+  };
+  return ["gemini_api_key", "resend_api_key", "resend_from_email", "x_client_id", "x_client_secret", "x_redirect_uri", "x_integration_enabled"]
     .map((key) => {
       const item = keys[key] || {};
-      const label = key.replaceAll("_", " ");
-      const value = item.masked_value || item.value || "";
-      return `<p><strong>${escapeHTML(label)}</strong> <span class="meta">${item.configured || value ? "configured" : "not configured"} · ${escapeHTML(item.source || "none")} ${value ? `· ${escapeHTML(value)}` : ""}</span></p>`;
+      const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
+      const configured = item.configured || value;
+      return `<article class="annotation">
+        <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
+        ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-api-key-revert="${escapeHTML(key)}">Remove override</button></p>` : ""}
+      </article>`;
     })
     .join("");
 }
