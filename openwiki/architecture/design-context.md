@@ -14,6 +14,8 @@ The interface should feel opinionated, durable, and tactile. It should project c
 
 The current frontend uses a warm-paper brutalist direction: ink-heavy borders, condensed display type, serif reading text, mono UI labels, and a small set of utility colors. Preserve that physical archive quality. Avoid purple gradients, glass panels, generic card grids, stock SaaS composition, and npm-heavy UI patterns.
 
+The brutalist system should stay calm on dense app surfaces. Use hard borders and tactile shadows for orientation, but reserve the heaviest weight for primary work surfaces. Secondary tools should sit behind native disclosure panels instead of competing with capture, reader, Focus, or Review work.
+
 ## Quality Bar
 
 Treat the embedded browser UI as flagship polish for a self-hosted app: small enough to remain dependency-free, but finished enough that interaction states, keyboard paths, empty states, loading feedback, and mobile layouts feel intentional.
@@ -25,3 +27,4 @@ Treat the embedded browser UI as flagship polish for a self-hosted app: small en
 - Make controls reliable under keyboard, touch, slow network, long text, and narrow viewport conditions.
 - Reinforce the warm archive aesthetic through tokens and layout rhythm, not one-off styling.
 - Prefer compact, useful product copy over marketing language.
+- Keep mobile navigation compact enough that the current work surface appears quickly; use horizontal overflow or grouped controls rather than tall stacked route menus.

@@ -56,6 +56,7 @@ func (s *Service) geminiClient(ctx context.Context) providers.GeminiClient {
 func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body struct {
 		URL          string   `json:"url"`
+		Title        string   `json:"title"`
 		CollectionID string   `json:"collection_id"`
 		Note         string   `json:"note"`
 		Quote        string   `json:"quote"`
@@ -77,13 +78,14 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	bookmarkID := ids.New()
-	title := parsed.Hostname()
+	title := fallback(strings.TrimSpace(body.Title), parsed.Hostname())
 	_, err := s.db.ExecContext(r.Context(), `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, body.URL, title, parsed.Hostname(), now, now)
 	if err != nil {
 		writeError(w, http.StatusConflict, "Bookmark already exists")
 		return
 	}
 	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
+	_ = s.upsertItemState(r.Context(), user.ID, "bookmark", bookmarkID, "inbox", 0, strings.TrimSpace(body.Note), now)
 	if body.CollectionID != "" {
 		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, body.CollectionID, bookmarkID, user.ID, now)
 	}
@@ -99,6 +101,7 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": body.URL})
 	jobID, _ := s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", string(payload))
 	bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
 }
 
@@ -136,7 +139,7 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, user auth.User) {
 	defer rows.Close()
 	result := []map[string]any{}
 	for rows.Next() {
-		result = append(result, scanBookmark(rows))
+		result = append(result, scanBookmarkRow(rows))
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -202,6 +205,10 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bm["tags"] = s.bookmarkTags(r.Context(), user.ID, r.PathValue("id"))
 	bm["annotations"] = s.bookmarkAnnotations(r.Context(), user.ID, r.PathValue("id"))
 	bm["notes"] = s.bookmarkNotes(r.Context(), user.ID, r.PathValue("id"))
+	bm["item_state"] = s.itemState(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	bm["links"] = s.itemLinks(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	bm["reminders"] = s.itemReminders(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	bm["action_items"] = s.itemActionItems(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	writeJSON(w, http.StatusOK, bm)
 }
 
@@ -211,6 +218,9 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request, user auth.User)
 		writeError(w, http.StatusNotFound, "Bookmark not found")
 		return
 	}
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE user_id=? AND item_type='bookmark' AND item_id=?`, user.ID, r.PathValue("id"))
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM reminders WHERE user_id=? AND item_type='bookmark' AND item_id=?`, user.ID, r.PathValue("id"))
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark deleted"})
 }
 
@@ -258,17 +268,11 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		writeError(w, http.StatusBadRequest, "query must be between 2 and 2000 characters")
 		return
 	}
-	req := r.Clone(r.Context())
-	values := req.URL.Query()
-	values.Set("search", q)
-	req.URL.RawQuery = values.Encode()
-	where, args := s.bookmarkFilter(req, user.ID)
-	rows, err := s.db.QueryContext(r.Context(), `SELECT b.id,b.title,b.url,b.domain,b.description,b.text_content FROM bookmarks b `+where+` ORDER BY b.updated_at DESC, b.id ASC LIMIT 8`, args...)
+	results, _, err := s.searchIndex(r.Context(), user.ID, q, r.URL.Query(), 8)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not answer search")
 		return
 	}
-	defer rows.Close()
 	type citation struct {
 		ID      string `json:"id"`
 		Type    string `json:"type"`
@@ -278,38 +282,17 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		Snippet string `json:"snippet"`
 	}
 	var citations []citation
-	for rows.Next() {
-		var id, title, rawURL, domain, description, text string
-		_ = rows.Scan(&id, &title, &rawURL, &domain, &description, &text)
-		snippet := searchSnippet(q, firstNonEmpty(text, description, title))
-		citations = append(citations, citation{ID: id, Type: "bookmark", Title: fallback(title, rawURL), URL: rawURL, Domain: domain, Snippet: snippet})
-	}
-	if standaloneNotesMatchFilters(values) {
-		like := "%" + q + "%"
-		noteWhere := `WHERE user_id=? AND NOT EXISTS (SELECT 1 FROM bookmark_notes WHERE note_id=notes.id AND user_id=notes.user_id) AND (title LIKE ? OR body LIKE ?)`
-		noteArgs := []any{user.ID, like, like}
-		if from := strings.TrimSpace(values.Get("date_from")); from != "" {
-			noteWhere += " AND created_at>=?"
-			noteArgs = append(noteArgs, from)
+	for _, result := range results {
+		itemType := stringValue(result["item_type"])
+		id := stringValue(result["item_id"])
+		title := stringValue(result["title"])
+		source := stringValue(result["source"])
+		snippet := stringValue(result["snippet"])
+		cite := citation{ID: id, Type: itemType, Title: title, Domain: source, Snippet: snippet}
+		if itemType == "bookmark" {
+			_ = s.db.QueryRowContext(r.Context(), `SELECT url,domain FROM bookmarks WHERE id=? AND user_id=?`, id, user.ID).Scan(&cite.URL, &cite.Domain)
 		}
-		if to := strings.TrimSpace(values.Get("date_to")); to != "" {
-			noteWhere += " AND created_at<=?"
-			noteArgs = append(noteArgs, to)
-		}
-		noteRows, err := s.db.QueryContext(r.Context(), `SELECT id,title,body,source FROM notes `+noteWhere+` ORDER BY updated_at DESC, id ASC LIMIT 8`, noteArgs...)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Could not answer search")
-			return
-		}
-		defer noteRows.Close()
-		for noteRows.Next() {
-			if len(citations) >= 8 {
-				break
-			}
-			var id, title, body, source string
-			_ = noteRows.Scan(&id, &title, &body, &source)
-			citations = append(citations, citation{ID: id, Type: "note", Title: fallback(title, "Untitled note"), Domain: source, Snippet: searchSnippet(q, firstNonEmpty(body, title))})
-		}
+		citations = append(citations, cite)
 	}
 	if len(citations) == 0 {
 		writeJSON(w, http.StatusOK, map[string]any{"answer": "No saved items matched this query.", "citations": []any{}})
@@ -339,13 +322,6 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		answer += " that mention this query. Use the citations below to inspect the original saved context."
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "citations": citations})
-}
-
-func standaloneNotesMatchFilters(values url.Values) bool {
-	return strings.TrimSpace(values.Get("tag")) == "" &&
-		strings.TrimSpace(values.Get("domain")) == "" &&
-		strings.TrimSpace(values.Get("source")) == "" &&
-		strings.TrimSpace(values.Get("read_status")) == ""
 }
 
 func (s *Service) Related(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -756,6 +732,7 @@ func (s *Service) Merge(w http.ResponseWriter, r *http.Request, user auth.User) 
 		return
 	}
 	kept, _ := s.getBookmark(r.Context(), user.ID, keepID)
+	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmarks merged", "kept_bookmark": kept, "merged_count": len(deleteIDs)})
 }
 func (s *Service) BulkDelete(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -772,6 +749,9 @@ func (s *Service) BulkDelete(w http.ResponseWriter, r *http.Request, user auth.U
 		if n, _ := res.RowsAffected(); n > 0 {
 			deleted++
 		}
+	}
+	if deleted > 0 {
+		s.refreshSearchIndex(r.Context(), user.ID)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted_count": deleted})
 }
@@ -800,7 +780,7 @@ func (s *Service) Counts(ctx context.Context) CountsResult {
 
 func (s *Service) getBookmark(ctx context.Context, userID, id string) (map[string]any, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content FROM bookmarks WHERE id=? AND user_id=?`, id, userID)
-	bm := scanBookmark(row)
+	bm := scanBookmarkRow(row)
 	if bm["id"] == "" {
 		return nil, errors.New("not found")
 	}
@@ -1305,10 +1285,10 @@ func expandGraphQuery(query string, maxExpansions int, bookmarks []graphBookmark
 	topEntities := topCountTerms(coEntities, maxExpansions)
 	topConcepts := topCountTerms(coConcepts, maxExpansions)
 	for _, term := range firstStrings(topEntities, 5) {
-		expansions = append(expansions, map[string]any{"term": term, "type": "entity", "source": "co_occurrence", "relevance": roundFloat(minFloat(float64(coEntities[term])/5, 0.8), 2)})
+		expansions = append(expansions, map[string]any{"term": term, "type": "entity", "source": "co_occurrence", "relevance": roundFloat(min(float64(coEntities[term])/5, 0.8), 2)})
 	}
 	for _, term := range firstStrings(topConcepts, 5) {
-		expansions = append(expansions, map[string]any{"term": term, "type": "concept", "source": "co_occurrence", "relevance": roundFloat(minFloat(float64(coConcepts[term])/5, 0.8), 2)})
+		expansions = append(expansions, map[string]any{"term": term, "type": "concept", "source": "co_occurrence", "relevance": roundFloat(min(float64(coConcepts[term])/5, 0.8), 2)})
 	}
 	sort.SliceStable(expansions, func(i, j int) bool {
 		return numberValue(expansions[i]["relevance"]) > numberValue(expansions[j]["relevance"])
@@ -1473,7 +1453,7 @@ func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID 
 	mergedText := preferString(keepText, dupText)
 	mergedLast := maxTimeString(keepLast, dupLast)
 	mergedRead := keepRead.Bool || dupRead.Bool
-	mergedReading := maxInt64(keepReading.Int64, dupReading.Int64)
+	mergedReading := max(keepReading.Int64, dupReading.Int64)
 	mergedViews := keepViews.Int64 + dupViews.Int64
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET title=?,description=?,favicon=?,thumbnail=?,sanitized_html=?,text_content=?,last_accessed=?,read_status=?,reading_time=?,view_count=?,version=version+1,updated_at=? WHERE id=? AND user_id=?`, mergedTitle, mergedDescription, nullableStringValue(mergedFavicon), nullableStringValue(mergedThumbnail), nullableStringValue(mergedHTML), nullableStringValue(mergedText), nullableStringValue(mergedLast), mergedRead, mergedReading, mergedViews, now, keepID, userID); err != nil {
@@ -1552,13 +1532,6 @@ func maxTimeString(a, b sql.NullString) string {
 	return a.String
 }
 
-func maxInt64(a, b int64) int64 {
-	if b > a {
-		return b
-	}
-	return a
-}
-
 type resurfacingCandidate struct {
 	Bookmark        map[string]any
 	Score           float64
@@ -1573,7 +1546,7 @@ func (s *Service) resurfacingCandidates(ctx context.Context, userID string, capC
 	}
 	var bookmarks []map[string]any
 	for rows.Next() {
-		bm := scanBookmark(rows)
+		bm := scanBookmarkRow(rows)
 		bookmarks = append(bookmarks, bm)
 	}
 	scanErr := rows.Err()
@@ -1614,13 +1587,13 @@ func resurfacingScore(bookmark map[string]any, summary map[string]any, daysSince
 	breakdown := map[string]float64{}
 	ageScore := 0.0
 	if daysSinceAccess >= 7 && daysSinceAccess <= 90 {
-		ageScore = minFloat(float64(daysSinceAccess)/10, 10)
+		ageScore = min(float64(daysSinceAccess)/10, 10)
 	} else if daysSinceAccess > 90 {
 		ageScore = 10
 	}
 	breakdown["age"] = ageScore
 	viewCount := numberValue(bookmark["view_count"])
-	breakdown["engagement"] = minFloat(viewCount*2, 10)
+	breakdown["engagement"] = min(viewCount*2, 10)
 	quality := 0.0
 	if one, _ := summary["one_sentence"].(string); one != "" {
 		quality += 3
@@ -1738,19 +1711,8 @@ func numberValue(value any) float64 {
 	}
 }
 
-func minFloat(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 type scanner interface {
 	Scan(dest ...any) error
-}
-
-func scanBookmark(row scanner) map[string]any {
-	return scanBookmarkRow(row)
 }
 
 func scanBookmarkRow(row scanner, extra ...any) map[string]any {

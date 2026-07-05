@@ -16,6 +16,7 @@ Use the following section pages to explore specific areas of the repository:
 - **[Frontend & Extensions](architecture/frontend.md)**: embedded UI, WebExtension layout, CLI client, and asset caching.
 - **[Frontend Runtime](architecture/frontend-runtime.md)**: browser runtime rules, route behavior, and smoke checks.
 - **[Domain & Processing Workflows](domain/bookmarks-sync.md)**: semantic graph generation, collections, duplicate grouping, and direct-HTTP providers.
+- **[Second-Brain Loop](workflows/second-brain-loop.md)**: Capture, Inbox, Focus, Review, Notes, and bulk triage workflow.
 - **[Legacy Migration](domain/migration.md)**: legacy JSON export parser, Fernet secret decryption, validation rules, and SQLite ingestion.
 - **[Migration Guide](domain/migration-guide.md)**: command reference and cutover guarantees.
 - **[Deployment](operations/deployment.md)**: local, container, and systemd deployment.

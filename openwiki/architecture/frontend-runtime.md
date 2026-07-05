@@ -31,6 +31,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - A single refresh retry is attempted after a protected API route returns 401.
 - Interactive controls are native elements unless custom behavior is required.
 - Route changes expose a top progress marker while async page work is pending.
+- Route changes update the document title, announce the active route, and move
+  focus to the main content after internal navigation or browser history
+  navigation.
 - Form actions disable the initiating button and swap to specific busy labels.
 - Form failures render inline messages linked to the affected fields with
   `aria-describedby`.
@@ -47,16 +50,21 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   synthesize from saved summaries, highlights, snippets, and standalone notes
   while keeping citations back to the source items. Bookmark-only filters such
   as tag, domain, source, and read status keep results bookmark-scoped.
-- `/notes` exposes standalone notes for ideas and snippets that are not tied to
-  a URL, including create, edit, and delete flows.
+- `/notes` is the compact standalone-note list. `/notes/:id` is the full note
+  workspace for editing, action items, reminders, explicit links, backlinks,
+  note-to-note links, and note-to-bookmark links. Link selectors call
+  `/api/link-targets` for slim id/title target rows instead of loading full note
+  bodies or bookmark archive content. `/notes?note=<id>` redirects to
+  `/notes/:id` for compatibility.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
   AI-processed, failed, completed status counters, source report chips, and
   bounded item provenance for the import just submitted, download or restore
   full JSON backups with second-brain data, or download CSV, browser HTML, and
   Markdown bookmark interchange exports. Obsidian ZIP export downloads
-  vault-ready bookmark and standalone note folders from the same export route.
-- Settings tags uses native forms to create canonical tags and add aliases to
+  vault-ready bookmark and note folders with explicit graph links as wikilinks
+  from the same export route.
+- Settings tags uses native forms to create primary tags and add aliases to
   existing tags through the normalized tag APIs.
 - Settings profile uses the existing profile and password-change routes; Settings
   API keys uses the existing admin key status/update routes and shows an
@@ -75,11 +83,13 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   current browser selection into the quote field when the selection is fully
   inside the sanitized reader content, and existing annotations can be edited or
   deleted inline.
-- `/review` includes the daily memory card from `/api/memory-jogger`, the due
-  review queue from `/api/review`, and complete, snooze, and archive actions
-  using the existing review/resurfacing APIs. Standalone notes appear in the
-  queue when they are due, support complete and snooze actions, open the Notes
-  screen, and do not expose bookmark-only archive controls.
+- `/focus` keeps the pending default and adds overdue, today, upcoming, and
+  completed views over action items and reminders.
+- `/review` includes the daily memory card from `/api/memory-jogger`, the
+  priority-sorted review queue from `/api/review`, complete and snooze actions,
+  reason labels, priority metadata, and inline task/reminder controls.
+  Standalone notes open in `/notes/:id` and do not expose bookmark-only archive
+  controls.
 - `/review`, `/duplicates`, `/knowledge-graph`, and `/analytics` are real
   product routes, not placeholders.
 - Custom dialogs use `role="dialog"`, `aria-modal`, focus restoration, Escape
@@ -98,16 +108,15 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   the running binary.
 - Use a temporary SQLite database and `SIGNUPS_ENABLED=true` when checking
   first-run browser flows.
-- Cover `/auth`, signup to `/dashboard`, settings tabs, Actions menu keyboard
-  movement, save/search/detail/delete, reset-password, invite copy, and a
-  390x844 mobile viewport.
+- Cover `/dashboard`, `/inbox`, `/focus`, `/review`, `/assistant`, `/notes`,
+  `/notes/:id`, `/bookmark/:id`, and `/settings` at desktop and 390x844 mobile
+  sizes after second-brain route changes.
 - Keep console warning/error collection empty during completed checks.
 - Keep screenshot artifacts out of the repository unless a test needs them.
 
-## Remaining Frontend Work
+## Ongoing Frontend Verification
 
-- Browser workflow tests for dashboard, settings, import, admin, annotation,
-  review, duplicate merge, PWA share prefill, mobile, and keyboard shortcuts.
-- Visual comparison against the legacy brutalist UX.
-- Run `impeccable document` when the team wants a generated `DESIGN.md` to
-  complement the existing `PRODUCT.md` context.
+- Keep source-contract tests in `/internal/app/app_test.go` aligned with every
+  route-level UI capability that is not yet covered by a dedicated browser test.
+- Re-run browser smoke checks whenever route structure, dense controls, or
+  keyboard shortcuts change.

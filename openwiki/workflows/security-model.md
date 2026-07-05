@@ -24,6 +24,13 @@
 - Second-brain routes use the same web-audience boundary as bookmarks. Notes,
   annotations, tags, saved searches, review actions, and job status are all
   scoped by `user_id`.
+- Action items validate bookmark/note ownership before creation and restore.
+  Completes and deletes require `WHERE id=? AND user_id=?`; deleting a bookmark
+  or note also deletes its polymorphic action-item rows.
+- Assistant actions are proposal records, not generic tool calls. The server
+  allowlists action types, stores bounded JSON payloads, requires explicit
+  approval, atomically claims pending rows before execution, and revalidates
+  ownership at approval time.
 - Collection membership writes verify both the collection and bookmark belong
   to the authenticated user before inserting relationship rows.
 - Extension and CLI tokens cannot call web-audience second-brain routes.
@@ -68,4 +75,17 @@
 
 - The HTTP server has explicit read, write, idle, and header timeouts.
 - Request bodies are globally bounded.
+- High-risk authenticated write routes use SQLite mutation quotas keyed by
+  hashed namespace, audience, user ID, and quota name. Web, CLI, and extension
+  buckets are separated so one client cannot drain another client's quota.
 - Background work is leased through SQLite jobs with retry state.
+- Reminder create, update, and snooze routes are authenticated web mutations
+  behind CSRF and mutation quota checks. Reminder email jobs re-check the owning
+  user, exact due timestamp, pending status, email notification channel, and
+  empty `last_notified_at` before sending through Resend.
+- Assistant suggestions are ephemeral and do not insert into `assistant_actions`.
+  Suggestions and proposal creation both validate allowlisted action payloads
+  against current user-owned items; approval revalidates again before executing.
+- Inbox bulk triage validates every `bookmark:<id>` and `note:<id>` target
+  against the authenticated user. Valid owned rows can update while stale or
+  cross-user entries are returned as per-item failures.

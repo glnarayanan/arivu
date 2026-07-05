@@ -29,7 +29,10 @@ These ensure updates to rendering mechanics do not introduce drift or semantic m
 
 Frontend smoke checks stay outside the checked-in dependency tree. Use the
 running Go binary plus a temporary SQLite database, then cover the flows listed
-in `../architecture/frontend-runtime.md`.
+in `../architecture/frontend-runtime.md`. For second-brain route changes, capture
+desktop and mobile screenshots for `/dashboard`, `/inbox`, `/focus`, `/review`,
+`/assistant`, `/notes`, `/notes/:id`, `/bookmark/:id`, and `/settings`, and
+keep console errors empty.
 
 ---
 

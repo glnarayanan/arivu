@@ -83,6 +83,34 @@ CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
   content_rowid='rowid'
 );
 
+CREATE TABLE IF NOT EXISTS search_index (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK(item_type IN ('bookmark','note')),
+  item_id TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  tags TEXT NOT NULL DEFAULT '',
+  links TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, item_type, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_search_index_user_updated ON search_index(user_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_search_index_user_type ON search_index(user_id, item_type, updated_at DESC);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
+  user_id UNINDEXED,
+  item_type UNINDEXED,
+  item_id UNINDEXED,
+  title,
+  body,
+  tags,
+  links,
+  source,
+  updated_at UNINDEXED
+);
+
 CREATE TABLE IF NOT EXISTS ai_summaries (
   id TEXT PRIMARY KEY,
   bookmark_id TEXT NOT NULL UNIQUE REFERENCES bookmarks(id) ON DELETE CASCADE,
@@ -183,6 +211,86 @@ CREATE TABLE IF NOT EXISTS review_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_events_item ON review_events(user_id, item_type, item_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS item_states (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK (item_type IN ('bookmark','note')),
+  item_id TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('inbox','processing','processed','archived')),
+  importance INTEGER NOT NULL DEFAULT 0 CHECK (importance BETWEEN 0 AND 5),
+  next_action TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, item_type, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_states_user_stage ON item_states(user_id, stage, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS item_links (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  from_type TEXT NOT NULL CHECK (from_type IN ('bookmark','note')),
+  from_id TEXT NOT NULL,
+  to_type TEXT NOT NULL CHECK (to_type IN ('bookmark','note')),
+  to_id TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, from_type, from_id, to_type, to_id, label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_links_from ON item_links(user_id, from_type, from_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_item_links_to ON item_links(user_id, to_type, to_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS reminders (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK (item_type IN ('bookmark','note')),
+  item_id TEXT NOT NULL,
+  due_at TEXT NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  recurrence TEXT NOT NULL CHECK (recurrence IN ('none','daily','weekly','monthly','custom')) DEFAULT 'none',
+  recurrence_interval_days INTEGER NOT NULL DEFAULT 0,
+  notification_channel TEXT NOT NULL CHECK (notification_channel IN ('in_app','email')) DEFAULT 'in_app',
+  note TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK (status IN ('pending','completed')) DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  completed_at TEXT,
+  last_notified_at TEXT,
+  last_completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_user_due ON reminders(user_id, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_reminders_notification_due ON reminders(status, notification_channel, due_at, last_notified_at);
+
+CREATE TABLE IF NOT EXISTS action_items (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK (item_type IN ('bookmark','note')),
+  item_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','completed')) DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_items_user_status ON action_items(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_action_items_item ON action_items(user_id, item_type, item_id, status);
+
+CREATE TABLE IF NOT EXISTS assistant_actions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  action_type TEXT NOT NULL CHECK (action_type IN ('update_item_state','create_link','create_reminder','create_action_item')),
+  payload_json TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL CHECK (status IN ('pending','executed','rejected','failed')) DEFAULT 'pending',
+  result_json TEXT NOT NULL DEFAULT '{}',
+  error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  decided_at TEXT,
+  executed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_actions_user_status ON assistant_actions(user_id, status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS collections (
   id TEXT PRIMARY KEY,

@@ -68,5 +68,52 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("schema statement %q: %w", stmt, err)
 		}
 	}
+	if err := ensureReminderColumns(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureReminderColumns(ctx context.Context, db *sql.DB) error {
+	columns := map[string]string{
+		"timezone":                 "TEXT NOT NULL DEFAULT 'UTC'",
+		"recurrence":               "TEXT NOT NULL DEFAULT 'none'",
+		"recurrence_interval_days": "INTEGER NOT NULL DEFAULT 0",
+		"notification_channel":     "TEXT NOT NULL DEFAULT 'in_app'",
+		"last_notified_at":         "TEXT",
+		"last_completed_at":        "TEXT",
+	}
+	for name, definition := range columns {
+		if err := ensureColumn(ctx, db, "reminders", name, definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureColumn(ctx context.Context, db *sql.DB, table, column, definition string) error {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+table+")")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid int
+		var name, columnType string
+		var notNull, pk int
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == column {
+			return rows.Err()
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column, definition)); err != nil {
+		return fmt.Errorf("add %s.%s: %w", table, column, err)
+	}
 	return nil
 }

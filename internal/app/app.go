@@ -31,19 +31,42 @@ var webFS embed.FS
 var webAssetModTime = time.Unix(0, 0).UTC()
 
 type App struct {
-	cfg       config.Config
-	db        *sql.DB
-	auth      *auth.Service
-	bookmarks *bookmarks.Service
-	jobs      *jobs.Queue
-	fetcher   *safefetch.Client
-	runtime   *runtimeconfig.Service
-	xHTTP     *http.Client
-	startedAt time.Time
-	usage     *providerUsage
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	cfg        config.Config
+	db         *sql.DB
+	auth       *auth.Service
+	bookmarks  *bookmarks.Service
+	jobs       *jobs.Queue
+	fetcher    *safefetch.Client
+	runtime    *runtimeconfig.Service
+	xHTTP      *http.Client
+	resendHTTP *http.Client
+	startedAt  time.Time
+	usage      *providerUsage
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
+
+type mutationQuota struct {
+	name   string
+	limit  int
+	window time.Duration
+}
+
+var (
+	quotaBookmarkCreate   = mutationQuota{name: "bookmarks.create", limit: 120, window: time.Hour}
+	quotaBookmarkPreview  = mutationQuota{name: "bookmarks.preview", limit: 30, window: 10 * time.Minute}
+	quotaBookmarkImport   = mutationQuota{name: "bookmarks.import", limit: 3, window: time.Hour}
+	quotaNotesWrite       = mutationQuota{name: "notes.write", limit: 240, window: time.Hour}
+	quotaInboxUpdate      = mutationQuota{name: "inbox.update", limit: 600, window: time.Hour}
+	quotaLinksCreate      = mutationQuota{name: "links.create", limit: 300, window: time.Hour}
+	quotaRemindersCreate  = mutationQuota{name: "reminders.create", limit: 120, window: time.Hour}
+	quotaRemindersUpdate  = mutationQuota{name: "reminders.update", limit: 240, window: time.Hour}
+	quotaActionItemCreate = mutationQuota{name: "action_items.create", limit: 240, window: time.Hour}
+	quotaAssistantSuggest = mutationQuota{name: "assistant.suggest", limit: 60, window: time.Hour}
+	quotaAssistantPropose = mutationQuota{name: "assistant.propose", limit: 60, window: time.Hour}
+	quotaAssistantApprove = mutationQuota{name: "assistant.approve", limit: 60, window: time.Hour}
+	quotaSearchRebuild    = mutationQuota{name: "search.rebuild", limit: 12, window: time.Hour}
+)
 
 func New(cfg config.Config) (*App, error) {
 	db, err := database.Open(context.Background(), cfg.DBPath)
@@ -93,8 +116,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/user/profile", a.withUser(a.auth.UpdateProfile))
 
 	mux.HandleFunc("GET /api/bookmarks", a.withUser(a.bookmarks.List))
-	mux.HandleFunc("POST /api/bookmarks", a.withUser(a.bookmarks.Create))
-	mux.HandleFunc("POST /api/bookmarks/preview", a.withUser(a.bookmarks.Preview))
+	mux.HandleFunc("POST /api/bookmarks", a.withUserQuota(quotaBookmarkCreate, a.bookmarks.Create))
+	mux.HandleFunc("POST /api/bookmarks/preview", a.withUserQuota(quotaBookmarkPreview, a.bookmarks.Preview))
 	mux.HandleFunc("GET /api/bookmarks/aged", a.withUser(a.bookmarks.Aged))
 	mux.HandleFunc("GET /api/bookmarks/duplicates/detect", a.withUser(a.bookmarks.Duplicates))
 	mux.HandleFunc("POST /api/bookmarks/bulk-delete", a.withUser(a.bookmarks.BulkDelete))
@@ -106,7 +129,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/bookmarks/{id}/accessed", a.withUser(a.bookmarks.Accessed))
 	mux.HandleFunc("POST /api/bookmarks/{id}/annotations", a.withUser(a.bookmarks.CreateAnnotation))
 	mux.HandleFunc("GET /api/bookmarks/{id}/related", a.withUser(a.bookmarks.Related))
-	mux.HandleFunc("POST /api/bookmarks/import", a.withUser(a.bookmarks.Import))
+	mux.HandleFunc("POST /api/bookmarks/import", a.withUserQuota(quotaBookmarkImport, a.bookmarks.Import))
 	mux.HandleFunc("GET /api/bookmarks/export", a.withUser(a.bookmarks.Export))
 	mux.HandleFunc("POST /api/bookmarks/backup", a.withUser(a.bookmarks.Backup))
 	mux.HandleFunc("GET /api/jobs/{id}", a.withUser(a.bookmarks.JobStatus))
@@ -114,14 +137,16 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/import-jobs/{id}", a.withUser(a.bookmarks.ImportJob))
 
 	mux.HandleFunc("GET /api/search", a.withUser(a.bookmarks.Search))
+	mux.HandleFunc("GET /api/search/items", a.withUser(a.bookmarks.SearchItems))
 	mux.HandleFunc("GET /api/search/answer", a.withUser(a.bookmarks.SearchAnswer))
+	mux.HandleFunc("POST /api/search/rebuild", a.withUserQuota(quotaSearchRebuild, a.bookmarks.RebuildSearch))
 	mux.HandleFunc("GET /api/collections", a.withUser(a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/collections", a.withUser(a.bookmarks.CreateCollection))
 	mux.HandleFunc("POST /api/collections/{id}/add", a.withUser(a.bookmarks.AddToCollection))
 	mux.HandleFunc("GET /api/notes", a.withUser(a.bookmarks.Notes))
-	mux.HandleFunc("POST /api/notes", a.withUser(a.bookmarks.CreateNote))
+	mux.HandleFunc("POST /api/notes", a.withUserQuota(quotaNotesWrite, a.bookmarks.CreateNote))
 	mux.HandleFunc("GET /api/notes/{id}", a.withUser(a.bookmarks.GetNote))
-	mux.HandleFunc("PATCH /api/notes/{id}", a.withUser(a.bookmarks.UpdateNote))
+	mux.HandleFunc("PATCH /api/notes/{id}", a.withUserQuota(quotaNotesWrite, a.bookmarks.UpdateNote))
 	mux.HandleFunc("DELETE /api/notes/{id}", a.withUser(a.bookmarks.DeleteNote))
 	mux.HandleFunc("PATCH /api/annotations/{id}", a.withUser(a.bookmarks.UpdateAnnotation))
 	mux.HandleFunc("DELETE /api/annotations/{id}", a.withUser(a.bookmarks.DeleteAnnotation))
@@ -133,11 +158,33 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/review", a.withUser(a.bookmarks.Review))
 	mux.HandleFunc("POST /api/review/{item_id}/complete", a.withUser(a.bookmarks.CompleteReview))
 	mux.HandleFunc("POST /api/review/{item_id}/snooze", a.withUser(a.bookmarks.SnoozeReview))
+	mux.HandleFunc("GET /api/inbox", a.withUser(a.bookmarks.Inbox))
+	mux.HandleFunc("PATCH /api/inbox/{item_id}", a.withUserQuota(quotaInboxUpdate, a.bookmarks.UpdateInboxItem))
+	mux.HandleFunc("POST /api/inbox/bulk", a.withUserQuota(quotaInboxUpdate, a.bookmarks.BulkUpdateInboxItems))
+	mux.HandleFunc("GET /api/links", a.withUser(a.bookmarks.Links))
+	mux.HandleFunc("GET /api/link-targets", a.withUser(a.bookmarks.LinkTargets))
+	mux.HandleFunc("POST /api/links", a.withUserQuota(quotaLinksCreate, a.bookmarks.CreateLink))
+	mux.HandleFunc("DELETE /api/links/{id}", a.withUser(a.bookmarks.DeleteLink))
+	mux.HandleFunc("GET /api/reminders", a.withUser(a.bookmarks.Reminders))
+	mux.HandleFunc("POST /api/reminders", a.withUserQuota(quotaRemindersCreate, a.bookmarks.CreateReminder))
+	mux.HandleFunc("PATCH /api/reminders/{id}", a.withUserQuota(quotaRemindersUpdate, a.bookmarks.UpdateReminder))
+	mux.HandleFunc("POST /api/reminders/{id}/snooze", a.withUserQuota(quotaRemindersUpdate, a.bookmarks.SnoozeReminder))
+	mux.HandleFunc("POST /api/reminders/{id}/complete", a.withUser(a.bookmarks.CompleteReminder))
+	mux.HandleFunc("DELETE /api/reminders/{id}", a.withUser(a.bookmarks.DeleteReminder))
+	mux.HandleFunc("GET /api/action-items", a.withUser(a.bookmarks.ActionItems))
+	mux.HandleFunc("POST /api/action-items", a.withUserQuota(quotaActionItemCreate, a.bookmarks.CreateActionItem))
+	mux.HandleFunc("POST /api/action-items/{id}/complete", a.withUser(a.bookmarks.CompleteActionItem))
+	mux.HandleFunc("DELETE /api/action-items/{id}", a.withUser(a.bookmarks.DeleteActionItem))
+	mux.HandleFunc("GET /api/assistant/actions", a.withUser(a.bookmarks.AssistantActions))
+	mux.HandleFunc("POST /api/assistant/suggestions", a.withUserQuota(quotaAssistantSuggest, a.bookmarks.AssistantSuggestions))
+	mux.HandleFunc("POST /api/assistant/actions", a.withUserQuota(quotaAssistantPropose, a.bookmarks.ProposeAssistantAction))
+	mux.HandleFunc("POST /api/assistant/actions/{id}/approve", a.withUserQuota(quotaAssistantApprove, a.bookmarks.ApproveAssistantAction))
+	mux.HandleFunc("POST /api/assistant/actions/{id}/reject", a.withUser(a.bookmarks.RejectAssistantAction))
 	mux.HandleFunc("GET /api/cli/bookmarks", a.withAudience("cli", a.bookmarks.List))
-	mux.HandleFunc("POST /api/cli/bookmarks", a.withAudience("cli", a.bookmarks.Create))
-	mux.HandleFunc("POST /api/cli/bookmarks/preview", a.withAudience("cli", a.bookmarks.Preview))
+	mux.HandleFunc("POST /api/cli/bookmarks", a.withAudienceQuota("cli", quotaBookmarkCreate, a.bookmarks.Create))
+	mux.HandleFunc("POST /api/cli/bookmarks/preview", a.withAudienceQuota("cli", quotaBookmarkPreview, a.bookmarks.Preview))
 	mux.HandleFunc("GET /api/extension/collections", a.withAudience("extension", a.bookmarks.Collections))
-	mux.HandleFunc("POST /api/extension/bookmarks", a.withAudience("extension", a.bookmarks.Create))
+	mux.HandleFunc("POST /api/extension/bookmarks", a.withAudienceQuota("extension", quotaBookmarkCreate, a.bookmarks.Create))
 	mux.HandleFunc("GET /api/analytics/summary", a.withUser(a.bookmarks.AnalyticsSummary))
 	mux.HandleFunc("GET /api/analytics/reading-stats", a.withUser(a.bookmarks.AnalyticsSummary))
 	mux.HandleFunc("GET /api/analytics/topics", a.withUser(a.bookmarks.AnalyticsTopics))
@@ -193,6 +240,20 @@ func (a *App) withUser(next func(http.ResponseWriter, *http.Request, auth.User))
 	return a.withAudience("web", next)
 }
 
+func (a *App) withUserQuota(q mutationQuota, next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {
+	return a.withAudienceQuota("web", q, next)
+}
+
+func (a *App) withAudienceQuota(audience string, q mutationQuota, next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {
+	return a.withAudience(audience, func(w http.ResponseWriter, r *http.Request, user auth.User) {
+		if !a.consumeMutationQuota(r.Context(), user.ID, audience, q) {
+			writeJSON(w, http.StatusTooManyRequests, map[string]any{"detail": "Too many requests. Try again later."})
+			return
+		}
+		next(w, r, user)
+	})
+}
+
 func (a *App) withAudience(audience string, next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		session, err := a.auth.AuthenticateSession(r)
@@ -206,6 +267,44 @@ func (a *App) withAudience(audience string, next func(http.ResponseWriter, *http
 		}
 		next(w, r, session.User)
 	}
+}
+
+func (a *App) consumeMutationQuota(ctx context.Context, userID, audience string, q mutationQuota) bool {
+	if q.limit <= 0 || q.window <= 0 {
+		return true
+	}
+	key := mutationQuotaKey(userID, audience, q.name)
+	if a.mutationQuotaBlocked(ctx, key, q.limit) {
+		return false
+	}
+	a.recordMutationQuota(ctx, key, q.window)
+	return true
+}
+
+func (a *App) mutationQuotaBlocked(ctx context.Context, key string, limit int) bool {
+	var count int
+	var expires string
+	if err := a.db.QueryRowContext(ctx, `SELECT count,expires_at FROM rate_limits WHERE key=?`, key).Scan(&count, &expires); err != nil {
+		return false
+	}
+	expiresAt, err := time.Parse(time.RFC3339, expires)
+	if err != nil || !time.Now().UTC().Before(expiresAt) {
+		_, _ = a.db.ExecContext(ctx, `DELETE FROM rate_limits WHERE key=?`, key)
+		return false
+	}
+	return count >= limit
+}
+
+func (a *App) recordMutationQuota(ctx context.Context, key string, window time.Duration) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	expires := time.Now().UTC().Add(window).Format(time.RFC3339)
+	_, _ = a.db.ExecContext(ctx, `INSERT INTO rate_limits(key,window_start,count,expires_at) VALUES(?,?,1,?) ON CONFLICT(key) DO UPDATE SET count=CASE WHEN rate_limits.expires_at<=? THEN 1 ELSE rate_limits.count+1 END, window_start=CASE WHEN rate_limits.expires_at<=? THEN excluded.window_start ELSE rate_limits.window_start END, expires_at=CASE WHEN rate_limits.expires_at<=? THEN excluded.expires_at ELSE rate_limits.expires_at END`,
+		key, now, expires, now, now, now)
+}
+
+func mutationQuotaKey(userID, audience, name string) string {
+	sum := sha256.Sum256([]byte(strings.Join([]string{"mutation", audience, userID, name}, "\x00")))
+	return "rl:" + hex.EncodeToString(sum[:])
 }
 
 func (a *App) withAdmin(next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {

@@ -67,6 +67,7 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='completed', one_sentence=?, updated_at=? WHERE bookmark_id=?`, summary, now, bookmarkID)
 	s.storeEnrichment(ctx, bookmarkID, userID, s.enrichText(ctx, bookmarkID, userID, title, result.Description, result.Text))
+	s.refreshSearchIndex(ctx, userID)
 	return nil
 }
 
@@ -117,6 +118,9 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 		count++
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE import_jobs SET total_bookmarks=?, updated_at=? WHERE id=?`, count, time.Now().UTC().Format(time.RFC3339), jobID)
+	if count > 0 {
+		s.refreshSearchIndex(r.Context(), user.ID)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Import started", "count": count, "import_job_id": jobID, "source_report": s.importSourceReport(r.Context(), user.ID, jobID)})
 }
 
@@ -176,8 +180,13 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreTags(ctx, userID, backup["tags"], now)
 	s.restoreSavedSearches(ctx, userID, backup["saved_searches"], now)
 	s.restoreReviewEvents(ctx, userID, backup["review_events"], oldBookmarks, oldNotes, now)
+	s.restoreItemStates(ctx, userID, backup["item_states"], oldBookmarks, oldNotes, now)
+	s.restoreItemLinks(ctx, userID, backup["item_links"], oldBookmarks, oldNotes, now)
+	s.restoreReminders(ctx, userID, backup["reminders"], oldBookmarks, oldNotes, now)
+	s.restoreActionItems(ctx, userID, backup["action_items"], oldBookmarks, oldNotes, now)
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
+	s.refreshSearchIndex(ctx, userID)
 	return map[string]any{"message": "Backup restored", "count": restored, "import_job_id": jobID, "source_report": s.importSourceReport(ctx, userID, jobID)}, true, nil
 }
 
@@ -453,21 +462,27 @@ func (s *Service) writeObsidianExport(ctx context.Context, w http.ResponseWriter
 	w.Header().Set("Content-Disposition", `attachment; filename="arivu-obsidian-vault.zip"`)
 	vault := zip.NewWriter(w)
 	defer vault.Close()
-	for _, bookmark := range mapList(export["bookmarks"]) {
-		name := "Bookmarks/" + obsidianFileName(stringValue(bookmark["title"]), stringValue(bookmark["id"]))
+	bookmarks := mapList(export["bookmarks"])
+	notes := obsidianNotes(export)
+	itemLinks := mapList(export["item_links"])
+	index := obsidianIndex(bookmarks, notes)
+	for _, bookmark := range bookmarks {
+		id := stringValue(bookmark["id"])
+		name := index[obsidianItemKey("bookmark", id)].Path + ".md"
 		file, err := vault.Create(name)
 		if err != nil {
 			return err
 		}
-		writeObsidianBookmark(file, bookmark)
+		writeObsidianBookmark(file, bookmark, index, itemLinks)
 	}
-	for _, note := range mapList(export["notes"]) {
-		name := "Notes/" + obsidianFileName(stringValue(note["title"]), stringValue(note["id"]))
+	for _, note := range notes {
+		id := stringValue(note["id"])
+		name := index[obsidianItemKey("note", id)].Path + ".md"
 		file, err := vault.Create(name)
 		if err != nil {
 			return err
 		}
-		writeObsidianNote(file, note)
+		writeObsidianNote(file, note, index, itemLinks)
 	}
 	return nil
 }
@@ -479,7 +494,7 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 	}
 	bookmarks := []map[string]any{}
 	for rows.Next() {
-		bookmarks = append(bookmarks, scanBookmark(rows))
+		bookmarks = append(bookmarks, scanBookmarkRow(rows))
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -503,6 +518,10 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"import_jobs":    s.exportImportJobs(ctx, userID),
 		"import_sources": s.exportImportSources(ctx, userID),
 		"review_events":  s.exportReviewEvents(ctx, userID),
+		"item_states":    s.exportItemStates(ctx, userID),
+		"item_links":     s.exportItemLinks(ctx, userID),
+		"reminders":      s.exportReminders(ctx, userID),
+		"action_items":   s.exportActionItems(ctx, userID),
 	}, nil
 }
 
@@ -623,7 +642,239 @@ func (s *Service) exportReviewEvents(ctx context.Context, userID string) []map[s
 	return events
 }
 
-func writeObsidianBookmark(w io.Writer, bookmark map[string]any) {
+func (s *Service) exportItemStates(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT item_type,item_id,stage,importance,next_action,created_at,updated_at FROM item_states WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	states := []map[string]any{}
+	for rows.Next() {
+		var itemType, itemID, stage, nextAction, created, updated string
+		var importance int
+		_ = rows.Scan(&itemType, &itemID, &stage, &importance, &nextAction, &created, &updated)
+		states = append(states, map[string]any{"item_type": itemType, "item_id": itemID, "stage": stage, "importance": importance, "next_action": nextAction, "created_at": created, "updated_at": updated})
+	}
+	return states
+}
+
+func (s *Service) exportItemLinks(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,from_type,from_id,to_type,to_id,label,source,created_at FROM item_links WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	links := []map[string]any{}
+	for rows.Next() {
+		links = append(links, scanLink(rows))
+	}
+	return links
+}
+
+func (s *Service) exportReminders(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,COALESCE(completed_at,''),COALESCE(last_notified_at,''),COALESCE(last_completed_at,'') FROM reminders WHERE user_id=? ORDER BY due_at ASC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	reminders, err := s.scanReminders(ctx, userID, rows)
+	if err != nil {
+		return []map[string]any{}
+	}
+	return reminders
+}
+
+func (s *Service) exportActionItems(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,title,status,created_at,COALESCE(completed_at,'') FROM action_items WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	items, err := s.scanActionItems(ctx, userID, rows)
+	if err != nil {
+		return []map[string]any{}
+	}
+	return items
+}
+
+func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawState := range listValue(raw) {
+		state, ok := rawState.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(state["item_type"])
+		itemID := stringValue(state["item_id"])
+		if itemType == "bookmark" {
+			itemID = oldBookmarks[itemID]
+		} else if itemType == "note" {
+			itemID = oldNotes[itemID]
+		}
+		stage := stringValue(state["stage"])
+		if itemID == "" || !validItemStage(stage) {
+			continue
+		}
+		importance := intValue(state["importance"])
+		if importance < 0 || importance > 5 {
+			importance = 0
+		}
+		nextAction := strings.TrimSpace(stringValue(state["next_action"]))
+		if len(nextAction) > 500 {
+			nextAction = nextAction[:500]
+		}
+		_ = s.upsertItemState(ctx, userID, itemType, itemID, stage, importance, nextAction, fallback(stringValue(state["updated_at"]), now))
+	}
+}
+
+func (s *Service) restoreReminders(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawReminder := range listValue(raw) {
+		reminder, ok := rawReminder.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(reminder["item_type"])
+		itemID := remapItemID(itemType, stringValue(reminder["item_id"]), oldBookmarks, oldNotes)
+		due, err := time.Parse(time.RFC3339, stringValue(reminder["due_at"]))
+		if itemID == "" || err != nil || !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			continue
+		}
+		status := stringValue(reminder["status"])
+		if status != "completed" {
+			status = "pending"
+		}
+		note := strings.TrimSpace(stringValue(reminder["note"]))
+		if len(note) > 500 {
+			note = note[:500]
+		}
+		timezoneName := fallback(stringValue(reminder["timezone"]), "UTC")
+		if _, err := time.LoadLocation(timezoneName); err != nil {
+			timezoneName = "UTC"
+		}
+		recurrence := fallback(stringValue(reminder["recurrence"]), "none")
+		if !validReminderRecurrence(recurrence) {
+			recurrence = "none"
+		}
+		interval := intValue(reminder["recurrence_interval_days"])
+		if recurrence != "custom" || interval < 1 || interval > 365 {
+			interval = 0
+		}
+		channel := fallback(stringValue(reminder["notification_channel"]), "in_app")
+		if channel != "email" {
+			channel = "in_app"
+		}
+		completed := nullableStringValue(stringValue(reminder["completed_at"]))
+		lastCompleted := nullableStringValue(stringValue(reminder["last_completed_at"]))
+		reminderID := ids.New()
+		dueUTC := due.UTC().Format(time.RFC3339)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,completed_at,last_completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, reminderID, userID, itemType, itemID, dueUTC, timezoneName, recurrence, interval, channel, note, status, fallback(stringValue(reminder["created_at"]), now), completed, lastCompleted)
+		if status == "pending" && channel == "email" && due.After(time.Now().UTC()) {
+			s.scheduleReminderNotification(ctx, userID, reminderID, dueUTC, channel)
+		}
+	}
+}
+
+func (s *Service) restoreActionItems(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawItem := range listValue(raw) {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(item["item_type"])
+		itemID := remapItemID(itemType, stringValue(item["item_id"]), oldBookmarks, oldNotes)
+		if itemID == "" || !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			continue
+		}
+		title := strings.TrimSpace(stringValue(item["title"]))
+		if title == "" {
+			continue
+		}
+		if len(title) > 300 {
+			title = title[:300]
+		}
+		status := stringValue(item["status"])
+		if status != "completed" {
+			status = "pending"
+		}
+		completed := nullableStringValue(stringValue(item["completed_at"]))
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO action_items(id,user_id,item_type,item_id,title,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?)`, ids.New(), userID, itemType, itemID, title, status, fallback(stringValue(item["created_at"]), now), completed)
+	}
+}
+
+func (s *Service) restoreItemLinks(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawLink := range listValue(raw) {
+		link, ok := rawLink.(map[string]any)
+		if !ok {
+			continue
+		}
+		fromType := stringValue(link["from_type"])
+		toType := stringValue(link["to_type"])
+		fromID := remapItemID(fromType, stringValue(link["from_id"]), oldBookmarks, oldNotes)
+		toID := remapItemID(toType, stringValue(link["to_id"]), oldBookmarks, oldNotes)
+		label := strings.TrimSpace(stringValue(link["label"]))
+		if fromID == "" || toID == "" || !s.reviewItemExists(ctx, userID, fromType, fromID) || !s.reviewItemExists(ctx, userID, toType, toID) || len(label) > 80 {
+			continue
+		}
+		_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), userID, fromType, fromID, toType, toID, label, fallback(stringValue(link["source"]), "restore"), fallback(stringValue(link["created_at"]), now))
+	}
+}
+
+func remapItemID(itemType, itemID string, oldBookmarks, oldNotes map[string]string) string {
+	if itemType == "bookmark" {
+		return oldBookmarks[itemID]
+	}
+	if itemType == "note" {
+		return oldNotes[itemID]
+	}
+	return ""
+}
+
+type obsidianItem struct {
+	Path  string
+	Title string
+}
+
+func obsidianNotes(export map[string]any) []map[string]any {
+	seen := map[string]bool{}
+	var notes []map[string]any
+	for _, note := range mapList(export["notes"]) {
+		id := stringValue(note["id"])
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		notes = append(notes, note)
+	}
+	for _, bookmark := range mapList(export["bookmarks"]) {
+		for _, note := range mapList(bookmark["notes"]) {
+			id := stringValue(note["id"])
+			if id == "" || seen[id] {
+				continue
+			}
+			seen[id] = true
+			notes = append(notes, note)
+		}
+	}
+	return notes
+}
+
+func obsidianIndex(bookmarks, notes []map[string]any) map[string]obsidianItem {
+	index := map[string]obsidianItem{}
+	for _, bookmark := range bookmarks {
+		id := stringValue(bookmark["id"])
+		title := fallback(stringValue(bookmark["title"]), stringValue(bookmark["url"]))
+		index[obsidianItemKey("bookmark", id)] = obsidianItem{Path: "Bookmarks/" + strings.TrimSuffix(obsidianFileName(title, id), ".md"), Title: title}
+	}
+	for _, note := range notes {
+		id := stringValue(note["id"])
+		title := fallback(stringValue(note["title"]), "Untitled Note")
+		index[obsidianItemKey("note", id)] = obsidianItem{Path: "Notes/" + strings.TrimSuffix(obsidianFileName(title, id), ".md"), Title: title}
+	}
+	return index
+}
+
+func obsidianItemKey(itemType, itemID string) string {
+	return itemType + ":" + itemID
+}
+
+func writeObsidianBookmark(w io.Writer, bookmark map[string]any, index map[string]obsidianItem, links []map[string]any) {
 	title := fallback(stringValue(bookmark["title"]), stringValue(bookmark["url"]))
 	fmt.Fprintf(w, "# %s\n\n", markdownText(title))
 	fmt.Fprintf(w, "Source: %s\n", markdownURL(stringValue(bookmark["url"])))
@@ -678,16 +929,53 @@ func writeObsidianBookmark(w io.Writer, bookmark map[string]any) {
 	if text := strings.TrimSpace(stringValue(bookmark["text_content"])); text != "" {
 		fmt.Fprintf(w, "## Archived Text\n\n%s\n", markdownText(text))
 	}
+	writeObsidianLinks(w, "bookmark", stringValue(bookmark["id"]), index, links)
 }
 
-func writeObsidianNote(w io.Writer, note map[string]any) {
+func writeObsidianNote(w io.Writer, note map[string]any, index map[string]obsidianItem, links []map[string]any) {
 	fmt.Fprintf(w, "# %s\n\n", markdownText(fallback(stringValue(note["title"]), "Untitled Note")))
 	if created := stringValue(note["created_at"]); created != "" {
 		fmt.Fprintf(w, "Created: %s\n\n", markdownText(created))
 	}
 	if body := stringValue(note["body"]); body != "" {
-		fmt.Fprintf(w, "%s\n", markdownText(body))
+		fmt.Fprintf(w, "%s\n\n", markdownText(body))
 	}
+	writeObsidianLinks(w, "note", stringValue(note["id"]), index, links)
+}
+
+func writeObsidianLinks(w io.Writer, itemType, itemID string, index map[string]obsidianItem, links []map[string]any) {
+	var outgoing, incoming []string
+	for _, link := range links {
+		label := fallback(stringValue(link["label"]), "linked")
+		if stringValue(link["from_type"]) == itemType && stringValue(link["from_id"]) == itemID {
+			target := index[obsidianItemKey(stringValue(link["to_type"]), stringValue(link["to_id"]))]
+			if target.Path != "" {
+				outgoing = append(outgoing, fmt.Sprintf("- %s: %s", markdownText(label), obsidianWikiLink(target)))
+			}
+		}
+		if stringValue(link["to_type"]) == itemType && stringValue(link["to_id"]) == itemID {
+			source := index[obsidianItemKey(stringValue(link["from_type"]), stringValue(link["from_id"]))]
+			if source.Path != "" {
+				incoming = append(incoming, fmt.Sprintf("- %s from %s", markdownText(label), obsidianWikiLink(source)))
+			}
+		}
+	}
+	if len(outgoing) == 0 && len(incoming) == 0 {
+		return
+	}
+	fmt.Fprintln(w, "## Links")
+	fmt.Fprintln(w)
+	for _, line := range outgoing {
+		fmt.Fprintln(w, line)
+	}
+	for _, line := range incoming {
+		fmt.Fprintln(w, line)
+	}
+	fmt.Fprintln(w)
+}
+
+func obsidianWikiLink(item obsidianItem) string {
+	return fmt.Sprintf("[[%s|%s]]", item.Path, markdownText(item.Title))
 }
 
 func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, processErr error) {

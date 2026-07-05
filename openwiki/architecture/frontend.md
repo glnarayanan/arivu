@@ -17,10 +17,34 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 
 ### Product Routes
 
-- `/dashboard`: bookmark list, search, URL capture, quick note, manual tags, PWA share-target prefill, and visible processing status.
-- `/bookmark/:id`: sanitized reader view, summaries, read state, tags, related items, annotations, linked notes, and review actions.
-- `/notes`: standalone notes for ideas and snippets that are not tied to a URL.
-- `/review`: resurfacing-backed daily review queue with complete and snooze actions.
+- `/dashboard`: capture-first cockpit for URL saves, quick notes, manual tags,
+  PWA share-target prefill, visible processing status, saved-page search,
+  collapsible filters, and collapsible saved-search management.
+- `/inbox`: capture triage for bookmarks and notes, with per-item stage,
+  priority, next action controls, inline action items, bulk selection, and
+  keyboard triage for stage changes.
+- `/focus`: daily work surface combining action items and reminders with links
+  back to their source items plus quick reminder completion, snooze, and delete
+  actions. Views include pending, overdue, today, upcoming, and completed.
+- `/assistant`: guided planner for inert assistant drafts plus pending
+  proposals for allowlisted actions, with payload/result inspection and
+  explicit execute/reject controls. Draft cards expose the source item and JSON
+  payload before they can be queued as proposals.
+- `/bookmark/:id`: sanitized reader-first workspace with summaries, read
+  state, tags, a compact next-step workflow panel, and collapsed workbench
+  groups for annotations, linked notes, explicit note links/backlinks, action
+  items, reminders, related items, and review actions. Reminder controls include
+  timezone-aware due times, recurrence, in-app/email channel selection, inline
+  edits, snooze, completion, and deletion. Link selectors use slim
+  `/api/link-targets` reads rather than full archive rows.
+- `/notes`: compact standalone-note list. `/notes/:id` is the full note
+  workspace for editing, action items, reminders, explicit links, backlinks,
+  note-to-note links, and note-to-bookmark links. Reminder controls match
+  bookmark reminder controls. Note link selectors also use `/api/link-targets`.
+  `/notes?note=<id>` redirects to `/notes/:id` for compatibility.
+- `/review`: daily review queue with complete and snooze actions, "why this
+  came back" reason labels, priority metadata, and inline task/reminder
+  controls.
 - `/duplicates`: duplicate groups and merge workflow.
 - `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.
 - `/analytics`: summary counts, topics, and actionable insight signals.
@@ -40,7 +64,7 @@ The `/extension/` directory houses a companion, cross-browser compatible WebExte
 Declared in `manifest.json` as a Manifest V3 extension, providing integrations:
 - `background.js`: Listens for action clicks, context-menu saves, keyboard command saves, selected-text capture, and secure token relay from the active Arivu backend instance.
 - `content.js`: Injected scripts to extract selected page content and trigger seamless "Save in Arivu" operations from local tabs.
-- `popup.html` & `popup.js`: Mini utility panel allowing users to connect their active local server instance, capture status flags, and organize tags or collections immediately upon index request.
+- `popup.html` & `popup.js`: Mini utility panel allowing users to connect their active local server instance, preserve page title, capture notes/tags/collections, and open the saved item or Inbox immediately after capture.
 
 ---
 

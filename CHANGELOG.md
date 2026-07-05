@@ -30,6 +30,21 @@ All notable changes to this project will be documented in this file.
 - Added a reader control for copying selected archived text into a new quote annotation.
 - Added inline reader controls for editing and deleting saved annotations.
 - Added standalone notes to the daily review queue, with note completion and snooze support.
+- Added a durable Inbox processing loop for bookmarks and notes, including per-item stage, priority, next action, reader controls, review context, and JSON backup/restore support.
+- Added explicit bookmark/note links with backlink reads, bookmark-page controls, per-user ownership validation, and JSON backup/restore support.
+- Added reminders for bookmarks and notes with due-time reads, completion/deletion APIs, bookmark-page controls, ownership validation, and JSON backup/restore support.
+- Added an assistant action approval ledger for bounded second-brain mutations, with proposal, approve, reject, failed-action tracking, and an embedded Assistant review page.
+- Added durable action items for bookmarks and notes, with inline Inbox/bookmark controls, completion/deletion APIs, ownership validation, and JSON backup/restore support.
+- Added a Focus page that gathers pending action items and reminders without adding backend dependencies.
+- Added note-side action item and reminder controls so standalone notes can carry the same open loops as bookmarks from the Notes page.
+- Added note-side explicit links and backlinks, including note-to-note link creation from the Notes page.
+- Added a unified per-user search index for bookmarks and notes, a typed `/api/search/items` retrieval API, and a quota-protected `/api/search/rebuild` repair path.
+- Added timezone-aware recurring reminders with custom day intervals, notification channels, edit and snooze APIs, due-state response metadata, and idempotent scheduled Resend email jobs.
+- Added an Assistant planning endpoint and guided UI that generate inert, reviewable drafts from Inbox, Review, search, or a specific saved item before queueing any proposal.
+- Added a `/notes/:id` note workspace, note-to-bookmark links, Inbox bulk triage, keyboard Inbox stage shortcuts, Review reason labels, and Focus views for pending, overdue, today, upcoming, and completed open loops.
+- Added a slim `/api/link-targets` route for bookmark/note link pickers so
+  detail pages can populate relationship selectors without fetching note bodies
+  or bookmark archive text.
 
 ### Changed
 
@@ -57,14 +72,19 @@ All notable changes to this project will be documented in this file.
 - Polished the embedded frontend with stronger interaction states, route loading feedback, semantic toasts, accessible search and navigation affordances, safer mobile layout behavior, and refined design tokens.
 - Resolved the frontend audit findings with explicit route access metadata, inline form errors, assertive error toasts, and a quieter OKLCH-based visual system.
 - Optimized embedded frontend asset delivery with content ETags, cache revalidation headers, zero-copy byte readers, and offscreen grid rendering containment.
+- Refined the embedded second-brain workflow UI so Dashboard is capture-first
+  with collapsible filters and saved searches, bookmark detail is reader-first
+  with collapsed workbench groups, Inbox/Focus/Review use clearer user-facing
+  labels, and the mobile shell keeps brutalist navigation compact.
 - Bookmark saves now accept quick notes, selected quotes, and manual tags, and return a `job_id` so the UI can show enrichment progress.
 - Extension selected-text saves now persist as quote annotations, with a backend compatibility alias for the older `annotation` payload field.
 - Extension popup saves now accept quick notes and comma-separated tags.
+- Extension popup saves now persist page titles and offer direct post-save links to the Inbox or saved bookmark instead of closing immediately.
 - Extension self-hosted setup now requests browser host permission for the saved API origin and registers the token content script dynamically, avoiding manual manifest edits for custom domains.
 - CI now checks embedded frontend and extension JavaScript syntax and runs the extension URL/origin self-test.
 - Removed the extension popup's remote Google Fonts import in favor of native system font stacks.
 - Bookmark list and search now support normalized tag, domain, source, read-status, and created-date filters, and text search includes linked annotations and notes.
-- Cited answer mode now synthesizes deterministic answer text from saved summaries, highlights, snippets, and standalone notes while preserving citations back to the source items.
+- Cited answer mode now uses the unified retrieval layer and synthesizes deterministic answer text from saved summaries, highlights, snippets, linked context, and notes while preserving citations back to the source items.
 - Bookmark import now accepts safe URLs from JSON arrays, object-wrapped exports, browser/Netscape HTML, and newline URL lists while recording source hints for inserted bookmarks.
 - Imported bookmarks now create summary placeholders before processing and use safer duplicate counting for import reports.
 - Imported bookmark processing now updates the visible import job counters for fetched, AI-processed, and failed items.
@@ -73,6 +93,16 @@ All notable changes to this project will be documented in this file.
 - JSON export now includes second-brain backup data: bookmark details, summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, import jobs, and import provenance.
 - Full JSON backups can now be restored through bookmark import, remapping IDs under the authenticated user while preserving summaries, tags and aliases, annotations, linked and standalone notes, saved searches, review events, and import provenance.
 - Added an Obsidian ZIP export that writes bookmark and standalone note Markdown files into vault-ready folders without adding production dependencies.
+- Direct `/notes/:id` URLs now route to the full note workspace instead of the dashboard fallback.
+- The embedded frontend now restores focus and announces route changes after
+  SPA navigation, labels dense dashboard filters for assistive technology,
+  clarifies destructive/assistant/import copy, and uses slimmer link-target
+  reads on bookmark and note detail pages.
+- Assistant proposal UI now uses pending/execution language instead of approval
+  ledger wording, and Settings tag copy now describes primary tags and aliases
+  in user-facing terms.
+- Trimmed dead bookmark helper code while preserving the compatibility
+  `/api/bookmarks/aged` route and runtime clock override.
 
 ### Security
 
@@ -94,4 +124,12 @@ All notable changes to this project will be documented in this file.
 - Full JSON backup restore writes every restored row with the authenticated user ID and remaps cross-references instead of trusting exported ownership.
 - Escaped formula-like CSV export cells to reduce spreadsheet injection risk.
 - Obsidian ZIP export sanitizes generated filenames and reuses existing Markdown escaping for file content.
+- Obsidian ZIP export now emits bookmark/note graph links as vault-ready wikilinks and writes linked notes as note files.
 - Covered new second-brain routes with CSRF, audience isolation, and cross-user isolation tests.
+- Assistant actions are inert until explicit approval, revalidate item ownership during execution, and record failed stale proposals without running arbitrary tools.
+- Authenticated mutation quotas now throttle high-risk write paths with hashed per-user, per-audience keys in SQLite.
+- Search index rebuilds are explicit CSRF-protected mutations; read-only search routes do not mutate server state and typed search results remain user-scoped.
+- Reminder update and snooze routes are CSRF-protected, quota-limited, and user-scoped; reminder email jobs re-check ownership, due timestamp, pending status, and `last_notified_at` before sending.
+- Assistant suggestions are CSRF-protected, quota-limited, user-scoped, and ephemeral; queueing and approval continue to validate allowlisted proposal payloads before any mutation runs.
+- Inbox bulk triage is CSRF-protected, quota-limited, user-scoped, and returns per-item failures for stale or cross-user targets.
+- Bookmark cards now escape saved titles, domains, and descriptions before inserting them into the embedded frontend.
