@@ -342,6 +342,34 @@ input::placeholder, textarea::placeholder {
 .compact-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
 }
+.table-wrap {
+  border: 2px solid var(--ink);
+  box-shadow: var(--shadow);
+  overflow-x: auto;
+  margin-top: var(--space-5);
+  background: var(--panel);
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+.data-table th,
+.data-table td {
+  border-bottom: 2px solid var(--line-soft);
+  padding: var(--space-3);
+  text-align: left;
+  vertical-align: top;
+}
+.data-table th {
+  background: var(--ink);
+  color: var(--accent-ink);
+  font: 700 .75rem/1.2 var(--font-ui);
+  text-transform: uppercase;
+}
+.data-table td {
+  font: 600 .875rem/1.35 var(--font-ui);
+}
 .chips {
   display: flex;
   flex-wrap: wrap;

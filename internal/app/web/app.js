@@ -1703,20 +1703,243 @@ function insightList(items) {
 
 async function adminPage() {
   await requireUser();
-  const [overview, audit] = await Promise.all([
+  const params = new URLSearchParams(location.search);
+  const active = params.get("section") || "overview";
+  const sort = params.get("sort") || "created_at";
+  const order = params.get("order") || "desc";
+  const [overview, usage, users, system, activity, collections, audit] = await Promise.all([
     api("/admin/overview"),
+    api("/admin/api-usage"),
+    api(`/admin/users?sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}`),
+    api("/admin/system"),
+    api("/admin/activity"),
+    api("/admin/collections-stats"),
     api("/admin/audit-events?limit=12").catch(() => ({ events: [] })),
   ]);
-  setRoot(shell("Admin", `<section class="grid">
-    <div class="panel"><span class="meta">Users</span><h2>${overview.users?.total || 0}</h2></div>
-    <div class="panel"><span class="meta">Bookmarks</span><h2>${overview.bookmarks?.total || 0}</h2></div>
-    <div class="panel"><span class="meta">Database</span><h2>SQLite</h2></div>
-  </section>
-  <section class="panel">
-    <span class="meta">Security</span>
-    <h2>Audit log</h2>
-    <div class="stack">${auditEvents(audit.events || [])}</div>
+  const tabs = [
+    ["overview", "Overview"],
+    ["api", "API Usage"],
+    ["users", "Users"],
+    ["system", "System"],
+    ["activity", "Activity"],
+    ["collections", "Collections"],
+    ["audit", "Audit"],
+  ];
+  const selected = tabs.some(([id]) => id === active) ? active : "overview";
+  setRoot(shell("Admin", `<section class="panel tabs" id="admin-tabs">
+    <div class="tab-list" role="tablist" aria-label="Admin sections">
+      ${tabs.map(([id, label]) => `<button type="button" role="tab" id="tab-${id}" aria-controls="panel-${id}" aria-selected="${id === selected}">${label}</button>`).join("")}
+    </div>
+    <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview">${adminOverviewPanel(overview)}</div>
+    <div role="tabpanel" id="panel-api" aria-labelledby="tab-api">${adminUsagePanel(usage)}</div>
+    <div role="tabpanel" id="panel-users" aria-labelledby="tab-users">${adminUsersPanel(users, sort, order)}</div>
+    <div role="tabpanel" id="panel-system" aria-labelledby="tab-system">${adminSystemPanel(system)}</div>
+    <div role="tabpanel" id="panel-activity" aria-labelledby="tab-activity">${adminActivityPanel(activity)}</div>
+    <div role="tabpanel" id="panel-collections" aria-labelledby="tab-collections">${adminCollectionsPanel(collections)}</div>
+    <div role="tabpanel" id="panel-audit" aria-labelledby="tab-audit"><section class="stack">${auditEvents(audit.events || [])}</section></div>
   </section>`));
+  ui.tabs(document.querySelector("#admin-tabs"));
+  bindAdminUsersPanel();
+}
+
+function adminOverviewPanel(data) {
+  return `<section class="grid compact-grid">
+    ${adminStat("Users", data.users?.total, `Today ${formatCount(data.users?.today)} · Week ${formatCount(data.users?.this_week)} · Month ${formatCount(data.users?.this_month)}`)}
+    ${adminStat("Bookmarks", data.bookmarks?.total, `Today ${formatCount(data.bookmarks?.today)} · Week ${formatCount(data.bookmarks?.this_week)} · Month ${formatCount(data.bookmarks?.this_month)}`)}
+    ${adminStat("Collections", data.collections?.total, "User-owned collections")}
+    ${adminStat("AI summaries", data.ai_summaries?.total, "Summary rows")}
+    ${adminStat("Avg saves/user", Number(data.bookmarks?.avg_per_user || 0).toFixed(1), "Bookmark density")}
+    ${adminStat("Uptime", formatUptime(data.server?.uptime_seconds), data.server?.started_at || "")}
+    ${adminStat("SQLite", formatBytes(data.sqlite?.size_bytes), data.sqlite?.path || "")}
+    ${adminStat("WAL", formatBytes(data.sqlite?.wal_size_bytes), "Current write-ahead log")}
+  </section>`;
+}
+
+function adminUsagePanel(data) {
+  const ops = data.provider_usage?.gemini || {};
+  return `<section class="grid compact-grid">
+    ${adminStat("Gemini calls", data.requests_today, data.gemini_configured ? "Configured" : "Not configured")}
+    ${adminStat("Gemini errors", data.provider_usage?.errors_total || 0, data.provider_usage?.since || "")}
+    ${adminStat("Summaries done", data.summaries_completed, `Pending ${formatCount(data.summaries_pending)} · Failed ${formatCount(data.summaries_failed)}`)}
+    ${adminStat("Jobs queued", data.background_jobs_queued, `Running ${formatCount(data.background_jobs_running)} · Failed ${formatCount(data.background_jobs_failed)}`)}
+  </section>
+  <section class="stack">${Object.entries(ops).map(([name, item]) => `<article class="annotation">
+    <p><strong>${escapeHTML(name)}</strong> <span class="meta">${formatCount(item.requests)} calls · ${formatCount(item.errors)} errors</span></p>
+    ${item.last_error ? `<p class="meta">${escapeHTML(item.last_error)}</p>` : ""}
+  </article>`).join("") || `<p class="meta">No Gemini calls recorded for this process.</p>`}</section>`;
+}
+
+function adminUsersPanel(users, sort, order) {
+  return `<form class="toolbar" id="admin-user-sort">
+    <select id="admin-user-sort-field" aria-label="Sort users">
+      ${["created_at", "email", "name", "bookmarks", "last_bookmark_at"].map((value) => `<option value="${value}"${value === sort ? " selected" : ""}>${value.replaceAll("_", " ")}</option>`).join("")}
+    </select>
+    <select id="admin-user-sort-order" aria-label="Sort order">
+      <option value="desc"${order !== "asc" ? " selected" : ""}>Descending</option>
+      <option value="asc"${order === "asc" ? " selected" : ""}>Ascending</option>
+    </select>
+    <button type="submit" class="secondary">Sort</button>
+  </form>
+  <form class="panel form" id="admin-invite-form">
+    <h3>Invite user</h3>
+    <div class="field"><label for="admin-invite-email">Email</label><input id="admin-invite-email" type="email" required></div>
+    <div class="field"><label for="admin-invite-name">Name</label><input id="admin-invite-name" type="text"></div>
+    <p class="form-message" data-form-message hidden></p>
+    <button type="submit">Invite</button>
+  </form>
+  <div class="table-wrap"><table class="data-table">
+    <thead><tr><th>Name</th><th>Email</th><th>Bookmarks</th><th>Collections</th><th>Joined</th><th>Last save</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody>${(users || []).map(adminUserRow).join("")}</tbody>
+  </table></div>`;
+}
+
+function adminUserRow(user) {
+  const action = user.banned ? "unban" : "ban";
+  return `<tr>
+    <td>${escapeHTML(user.name || "")}</td>
+    <td>${escapeHTML(user.email || "")}</td>
+    <td>${formatCount(user.bookmark_count)}</td>
+    <td>${formatCount(user.collection_count)}</td>
+    <td>${formatDate(user.created_at)}</td>
+    <td>${formatDate(user.last_bookmark_at)}</td>
+    <td>${user.is_admin ? "Admin" : user.invite_pending ? "Invited" : user.banned ? "Banned" : "Active"}</td>
+    <td><div class="button-row">
+      <button type="button" class="secondary" data-admin-user-detail="${escapeHTML(user.id)}">View</button>
+      <button type="button" class="secondary" data-admin-user-action="${action}" data-user-id="${escapeHTML(user.id)}">${action === "ban" ? "Ban" : "Unban"}</button>
+      <button type="button" class="secondary" data-admin-user-action="reset-password" data-user-id="${escapeHTML(user.id)}">Reset</button>
+      <button type="button" class="danger" data-admin-user-action="delete" data-user-id="${escapeHTML(user.id)}">Delete</button>
+    </div></td>
+  </tr>`;
+}
+
+function adminSystemPanel(data) {
+  return `<section class="grid compact-grid">
+    ${adminStat("Go", data.system?.go || "", `${formatCount(data.system?.goroutines)} goroutines`)}
+    ${adminStat("Alloc", formatBytes(data.system?.alloc_bytes), `Heap ${formatBytes(data.system?.heap_alloc_bytes)}`)}
+    ${adminStat("SQLite", formatBytes(data.sqlite?.size_bytes), data.sqlite?.path || "")}
+    ${adminStat("Open conns", data.db?.OpenConnections || 0, `In use ${formatCount(data.db?.InUse)} · Idle ${formatCount(data.db?.Idle)}`)}
+  </section>
+  <div class="table-wrap"><table class="data-table">
+    <thead><tr><th>Table</th><th>Rows</th></tr></thead>
+    <tbody>${Object.entries(data.tables || {}).map(([name, item]) => `<tr><td>${escapeHTML(name)}</td><td>${formatCount(item.count)}</td></tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function adminActivityPanel(data) {
+  return `<section class="split">
+    <section class="panel"><h3>Recent bookmarks</h3><div class="stack">${(data.recent_bookmarks || []).map((item) => `<article class="annotation"><p><strong>${escapeHTML(item.title || item.url || "Untitled")}</strong> <span class="meta">${escapeHTML(item.user_email || "")}</span></p><p class="meta">${formatDate(item.created_at)} · ${escapeHTML(item.domain || "")}</p></article>`).join("") || `<p class="meta">No bookmarks yet.</p>`}</div></section>
+    <section class="panel"><h3>Recent registrations</h3><div class="stack">${(data.recent_registrations || []).map((item) => `<article class="annotation"><p><strong>${escapeHTML(item.email || "")}</strong></p><p class="meta">${formatDate(item.created_at)} · ${escapeHTML(item.name || "")}</p></article>`).join("") || `<p class="meta">No users yet.</p>`}</div></section>
+  </section>`;
+}
+
+function adminCollectionsPanel(items) {
+  return `<div class="table-wrap"><table class="data-table">
+    <thead><tr><th>Collection</th><th>Owner</th><th>Bookmarks</th><th>Latest add</th><th>Created</th></tr></thead>
+    <tbody>${(items || []).map((item) => `<tr><td>${escapeHTML(item.name || "")}</td><td>${escapeHTML(item.user_email || "")}</td><td>${formatCount(item.bookmark_count)}</td><td>${formatDate(item.latest_added_at)}</td><td>${formatDate(item.created_at)}</td></tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function adminStat(label, value, meta) {
+  return `<article class="panel"><span class="meta">${escapeHTML(label)}</span><h2>${escapeHTML(value === undefined || value === null || value === "" ? "0" : String(value))}</h2>${meta ? `<p class="meta">${escapeHTML(meta)}</p>` : ""}</article>`;
+}
+
+function bindAdminUsersPanel() {
+  const sortForm = document.querySelector("#admin-user-sort");
+  sortForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    navigate(`/admin?section=users&sort=${encodeURIComponent(document.querySelector("#admin-user-sort-field").value)}&order=${encodeURIComponent(document.querySelector("#admin-user-sort-order").value)}`);
+  });
+  const inviteForm = document.querySelector("#admin-invite-form");
+  inviteForm?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Inviting");
+    setFormMessage(inviteForm);
+    try {
+      await api("/admin/users/invite", { method: "POST", body: JSON.stringify({ email: document.querySelector("#admin-invite-email").value, name: document.querySelector("#admin-invite-name").value }) });
+      ui.toast("Invite created", "success");
+      render();
+    } catch (err) {
+      setFormMessage(inviteForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  document.querySelectorAll("[data-admin-user-detail]").forEach((button) => button.addEventListener("click", () => showAdminUser(button.dataset.adminUserDetail)));
+  document.querySelectorAll("[data-admin-user-action]").forEach((button) => button.addEventListener("click", () => runAdminUserAction(button)));
+}
+
+async function showAdminUser(userID) {
+  try {
+    const user = await api(`/admin/users/${userID}`);
+    const body = document.createElement("div");
+    body.className = "stack";
+    body.innerHTML = `<p><strong>${escapeHTML(user.email || "")}</strong> <span class="meta">${escapeHTML(user.name || "")}</span></p>
+      <p class="meta">${formatCount(user.bookmark_count)} bookmarks · ${formatCount(user.collection_count)} collections · ${user.banned ? "Banned" : "Active"}</p>
+      ${(user.recent_bookmarks || []).map((item) => `<p class="meta">${formatDate(item.created_at)} · ${escapeHTML(item.title || item.url || "Untitled")}</p>`).join("")}`;
+    await ui.dialog({ title: "User detail", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
+  } catch (err) {
+    ui.toast(err.message, "error");
+  }
+}
+
+async function runAdminUserAction(button) {
+  const action = button.dataset.adminUserAction;
+  const userID = button.dataset.userId;
+  if (action === "delete") {
+    const ok = await ui.confirmDestructive({ title: "Delete user", body: "This removes the user and their data.", confirm: "Delete", cancel: "Cancel" });
+    if (!ok) return;
+  }
+  let body = "{}";
+  if (action === "reset-password") {
+    const password = prompt("New password");
+    if (!password) return;
+    body = JSON.stringify({ new_password: password });
+  }
+  const done = setButtonBusy(button, "Working");
+  try {
+    const method = action === "delete" ? "DELETE" : "POST";
+    const path = action === "delete" ? `/admin/users/${userID}` : `/admin/users/${userID}/${action}`;
+    await api(path, { method, body: method === "DELETE" ? undefined : body });
+    ui.toast("User updated", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function formatCount(value) {
+  return Number(value || 0).toLocaleString();
+}
+
+function formatBytes(value) {
+  const bytes = Number(value || 0);
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB"];
+  let size = bytes;
+  let unit = 0;
+  while (size >= 1024 && unit < units.length - 1) {
+    size /= 1024;
+    unit++;
+  }
+  return `${size.toFixed(unit ? 1 : 0)} ${units[unit]}`;
+}
+
+function formatUptime(seconds) {
+  const total = Number(seconds || 0);
+  const days = Math.floor(total / 86400);
+  const hours = Math.floor((total % 86400) / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+function formatDate(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  return date.toLocaleString();
 }
 
 function auditEvents(events) {
