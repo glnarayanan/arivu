@@ -365,6 +365,104 @@ func TestAuthRateLimitsSensitiveEndpoints(t *testing.T) {
 	assertAuditAction(t, a, "auth.password.reset", "user", userID)
 }
 
+func TestMutationQuotasAreUserAndAudienceScoped(t *testing.T) {
+	oldBookmarkCreate := quotaBookmarkCreate
+	oldBookmarkImport := quotaBookmarkImport
+	oldNotesWrite := quotaNotesWrite
+	quotaBookmarkCreate = mutationQuota{name: "bookmarks.create", limit: 1, window: time.Hour}
+	quotaBookmarkImport = mutationQuota{name: "bookmarks.import", limit: 1, window: time.Hour}
+	quotaNotesWrite = mutationQuota{name: "notes.write", limit: 1, window: time.Hour}
+	t.Cleanup(func() {
+		quotaBookmarkCreate = oldBookmarkCreate
+		quotaBookmarkImport = oldBookmarkImport
+		quotaNotesWrite = oldNotesWrite
+	})
+
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "quota@example.com")
+	otherAccess, otherCSRF := signupForCookies(t, handler, "quota-other@example.com")
+
+	firstNote := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"First"}`, accessCookie, csrfCookie)
+	if firstNote.StatusCode != http.StatusOK {
+		t.Fatalf("first note status = %d body=%s", firstNote.StatusCode, readBody(firstNote))
+	}
+	firstNote.Body.Close()
+	secondNote := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Second"}`, accessCookie, csrfCookie)
+	if secondNote.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limited note status = %d body=%s", secondNote.StatusCode, readBody(secondNote))
+	}
+	secondNote.Body.Close()
+	otherNote := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Other user"}`, otherAccess, otherCSRF)
+	if otherNote.StatusCode != http.StatusOK {
+		t.Fatalf("other user note status = %d body=%s", otherNote.StatusCode, readBody(otherNote))
+	}
+	otherNote.Body.Close()
+	_, _ = a.db.ExecContext(context.Background(), `DELETE FROM rate_limits`)
+	afterReset := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"After reset"}`, accessCookie, csrfCookie)
+	if afterReset.StatusCode != http.StatusOK {
+		t.Fatalf("note after rate limit reset status = %d body=%s", afterReset.StatusCode, readBody(afterReset))
+	}
+	afterReset.Body.Close()
+
+	_, _ = a.db.ExecContext(context.Background(), `DELETE FROM rate_limits`)
+	webBookmark := adminRequest(t, handler, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com/web-quota-1"}`, accessCookie, csrfCookie)
+	if webBookmark.StatusCode != http.StatusOK {
+		t.Fatalf("web bookmark status = %d body=%s", webBookmark.StatusCode, readBody(webBookmark))
+	}
+	webBookmark.Body.Close()
+	limitedWebBookmark := adminRequest(t, handler, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com/web-quota-2"}`, accessCookie, csrfCookie)
+	if limitedWebBookmark.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limited web bookmark status = %d body=%s", limitedWebBookmark.StatusCode, readBody(limitedWebBookmark))
+	}
+	limitedWebBookmark.Body.Close()
+	extensionResp := adminRequest(t, handler, http.MethodPost, "/api/auth/extension-token", "", accessCookie, csrfCookie)
+	if extensionResp.StatusCode != http.StatusOK {
+		t.Fatalf("extension token status = %d body=%s", extensionResp.StatusCode, readBody(extensionResp))
+	}
+	var extensionBody map[string]any
+	_ = json.NewDecoder(extensionResp.Body).Decode(&extensionBody)
+	extensionResp.Body.Close()
+	extensionToken, _ := extensionBody["access_token"].(string)
+	extensionBookmark := bearerRequest(t, handler, http.MethodPost, "/api/extension/bookmarks", `{"url":"https://example.com/extension-quota"}`, extensionToken)
+	if extensionBookmark.StatusCode != http.StatusOK {
+		t.Fatalf("extension bookmark separate audience status = %d body=%s", extensionBookmark.StatusCode, readBody(extensionBookmark))
+	}
+	extensionBookmark.Body.Close()
+
+	_, _ = a.db.ExecContext(context.Background(), `DELETE FROM rate_limits`)
+	importBody := `<!doctype NETSCAPE-Bookmark-file-1><DT><A HREF="https://example.com/import-quota-1">A</A>`
+	firstImport := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", importBody, accessCookie, csrfCookie)
+	if firstImport.StatusCode != http.StatusOK {
+		t.Fatalf("first import status = %d body=%s", firstImport.StatusCode, readBody(firstImport))
+	}
+	firstImport.Body.Close()
+	var rowsBefore int
+	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE url='https://example.com/import-quota-2'`).Scan(&rowsBefore)
+	limitedImport := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", `<!doctype NETSCAPE-Bookmark-file-1><DT><A HREF="https://example.com/import-quota-2">B</A>`, accessCookie, csrfCookie)
+	if limitedImport.StatusCode != http.StatusTooManyRequests {
+		t.Fatalf("limited import status = %d body=%s", limitedImport.StatusCode, readBody(limitedImport))
+	}
+	limitedImport.Body.Close()
+	var rowsAfter int
+	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE url='https://example.com/import-quota-2'`).Scan(&rowsAfter)
+	if rowsBefore != rowsAfter {
+		t.Fatalf("limited import created rows before handler ran: before=%d after=%d", rowsBefore, rowsAfter)
+	}
+}
+
 func TestExtensionPopupCapturesNoteAndTags(t *testing.T) {
 	html, err := os.ReadFile(filepath.Join("..", "..", "extension", "popup.html"))
 	if err != nil {
@@ -1026,6 +1124,104 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("restore missing standalone note or alias: %#v", restoredExport)
 	}
 
+	unsupportedAction := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"delete_item","payload":{}}`, accessCookie, csrfCookie)
+	if unsupportedAction.StatusCode != http.StatusBadRequest {
+		t.Fatalf("unsupported assistant action status = %d body=%s", unsupportedAction.StatusCode, readBody(unsupportedAction))
+	}
+	unsupportedAction.Body.Close()
+
+	crossUserAction := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"create_link","payload":{"from_type":"bookmark","from_id":"capture","to_type":"note","to_id":"`+otherNoteID+`","label":"leak"}}`, accessCookie, csrfCookie)
+	if crossUserAction.StatusCode != http.StatusBadRequest {
+		t.Fatalf("cross-user assistant proposal status = %d body=%s", crossUserAction.StatusCode, readBody(crossUserAction))
+	}
+	crossUserAction.Body.Close()
+
+	proposeLink := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"create_link","payload":{"from_type":"bookmark","from_id":"capture","to_type":"note","to_id":"`+searchNoteID+`","label":"assistant"}}`, accessCookie, csrfCookie)
+	if proposeLink.StatusCode != http.StatusOK {
+		t.Fatalf("propose assistant link status = %d body=%s", proposeLink.StatusCode, readBody(proposeLink))
+	}
+	var proposedLink struct {
+		Action map[string]any `json:"action"`
+	}
+	_ = json.NewDecoder(proposeLink.Body).Decode(&proposedLink)
+	proposeLink.Body.Close()
+	linkActionID, _ := proposedLink.Action["id"].(string)
+	if linkActionID == "" || proposedLink.Action["status"] != "pending" {
+		t.Fatalf("unexpected assistant proposal: %#v", proposedLink)
+	}
+	approveLink := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+linkActionID+"/approve", `{}`, accessCookie, csrfCookie)
+	if approveLink.StatusCode != http.StatusOK {
+		t.Fatalf("approve assistant link status = %d body=%s", approveLink.StatusCode, readBody(approveLink))
+	}
+	var approvedLink struct {
+		Action map[string]any `json:"action"`
+	}
+	_ = json.NewDecoder(approveLink.Body).Decode(&approvedLink)
+	approveLink.Body.Close()
+	if approvedLink.Action["status"] != "executed" {
+		t.Fatalf("assistant link did not execute: %#v", approvedLink)
+	}
+	approveAgain := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+linkActionID+"/approve", `{}`, accessCookie, csrfCookie)
+	if approveAgain.StatusCode != http.StatusNotFound {
+		t.Fatalf("double assistant approval status = %d body=%s", approveAgain.StatusCode, readBody(approveAgain))
+	}
+	approveAgain.Body.Close()
+	var assistantLinks int
+	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM item_links WHERE user_id=? AND source='assistant' AND label='assistant'`, userID).Scan(&assistantLinks)
+	if assistantLinks != 1 {
+		t.Fatalf("double approval created %d assistant links", assistantLinks)
+	}
+
+	proposeReject := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"update_item_state","payload":{"item_type":"bookmark","item_id":"capture","stage":"archived","importance":1,"next_action":"reject me"}}`, accessCookie, csrfCookie)
+	if proposeReject.StatusCode != http.StatusOK {
+		t.Fatalf("propose reject action status = %d body=%s", proposeReject.StatusCode, readBody(proposeReject))
+	}
+	var rejectBody struct {
+		Action map[string]any `json:"action"`
+	}
+	_ = json.NewDecoder(proposeReject.Body).Decode(&rejectBody)
+	proposeReject.Body.Close()
+	rejectActionID, _ := rejectBody.Action["id"].(string)
+	rejectAction := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+rejectActionID+"/reject", `{}`, accessCookie, csrfCookie)
+	if rejectAction.StatusCode != http.StatusOK {
+		t.Fatalf("reject assistant action status = %d body=%s", rejectAction.StatusCode, readBody(rejectAction))
+	}
+	rejectAction.Body.Close()
+	approveRejected := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+rejectActionID+"/approve", `{}`, accessCookie, csrfCookie)
+	if approveRejected.StatusCode != http.StatusNotFound {
+		t.Fatalf("approve rejected assistant action status = %d body=%s", approveRejected.StatusCode, readBody(approveRejected))
+	}
+	approveRejected.Body.Close()
+
+	staleActionID := "stale-assistant-action"
+	if _, err := a.db.ExecContext(context.Background(), `INSERT INTO assistant_actions(id,user_id,action_type,payload_json,status,result_json,created_at) VALUES(?,?,?,?,?,?,?)`, staleActionID, userID, "update_item_state", `{"item_type":"note","item_id":"`+otherNoteID+`","stage":"processed","importance":5,"next_action":"stale"}`, "pending", "{}", now.Format(time.RFC3339)); err != nil {
+		t.Fatalf("insert stale assistant action: %v", err)
+	}
+	approveStale := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+staleActionID+"/approve", `{}`, accessCookie, csrfCookie)
+	if approveStale.StatusCode != http.StatusBadRequest {
+		t.Fatalf("approve stale assistant action status = %d body=%s", approveStale.StatusCode, readBody(approveStale))
+	}
+	approveStale.Body.Close()
+	var staleStatus, staleError string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT status,error FROM assistant_actions WHERE id=?`, staleActionID).Scan(&staleStatus, &staleError); err != nil {
+		t.Fatalf("read stale assistant action: %v", err)
+	}
+	if staleStatus != "failed" || staleError == "" {
+		t.Fatalf("stale assistant action not recorded as failed: status=%q error=%q", staleStatus, staleError)
+	}
+	failedActions := adminRequest(t, handler, http.MethodGet, "/api/assistant/actions?status=failed", "", accessCookie, csrfCookie)
+	if failedActions.StatusCode != http.StatusOK {
+		t.Fatalf("failed assistant actions status = %d body=%s", failedActions.StatusCode, readBody(failedActions))
+	}
+	var failedActionsBody struct {
+		Actions []map[string]any `json:"actions"`
+	}
+	_ = json.NewDecoder(failedActions.Body).Decode(&failedActionsBody)
+	failedActions.Body.Close()
+	if len(failedActionsBody.Actions) != 1 || failedActionsBody.Actions[0]["id"] != staleActionID || failedActionsBody.Actions[0]["error"] == "" {
+		t.Fatalf("failed assistant actions missing stale failure: %#v", failedActionsBody)
+	}
+
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -1038,6 +1234,8 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		{"other cannot read job", http.MethodGet, "/api/jobs/" + jobID, ""},
 		{"other cannot complete note review", http.MethodPost, "/api/review/note:" + searchNoteID + "/complete", `{}`},
 		{"other cannot complete review", http.MethodPost, "/api/review/bookmark:capture/complete", `{}`},
+		{"other cannot approve assistant action", http.MethodPost, "/api/assistant/actions/" + linkActionID + "/approve", `{}`},
+		{"other cannot reject assistant action", http.MethodPost, "/api/assistant/actions/" + linkActionID + "/reject", `{}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := adminRequest(t, handler, tc.method, tc.path, tc.body, otherAccess, otherCSRF)

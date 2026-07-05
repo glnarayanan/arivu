@@ -24,6 +24,10 @@
 - Second-brain routes use the same web-audience boundary as bookmarks. Notes,
   annotations, tags, saved searches, review actions, and job status are all
   scoped by `user_id`.
+- Assistant actions are proposal records, not generic tool calls. The server
+  allowlists action types, stores bounded JSON payloads, requires explicit
+  approval, atomically claims pending rows before execution, and revalidates
+  ownership at approval time.
 - Collection membership writes verify both the collection and bookmark belong
   to the authenticated user before inserting relationship rows.
 - Extension and CLI tokens cannot call web-audience second-brain routes.
@@ -68,4 +72,7 @@
 
 - The HTTP server has explicit read, write, idle, and header timeouts.
 - Request bodies are globally bounded.
+- High-risk authenticated write routes use SQLite mutation quotas keyed by
+  hashed namespace, audience, user ID, and quota name. Web, CLI, and extension
+  buckets are separated so one client cannot drain another client's quota.
 - Background work is leased through SQLite jobs with retry state.

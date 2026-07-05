@@ -24,6 +24,8 @@ with foreign keys.
   source provenance.
 - `reminders`: one-time due reminders for bookmarks and notes with pending or
   completed status.
+- `assistant_actions`: per-user proposal ledger for allowlisted assistant
+  mutations with pending, executed, rejected, and failed statuses.
 - `import_sources`: source metadata for migration/import reports, grouped into
   per-import source reports for the Settings import status view.
 - `import_jobs`: user-facing import progress with fetched, AI-processed,
@@ -49,6 +51,10 @@ with foreign keys.
 - Reminder due times are stored as UTC RFC3339 strings. API handlers validate
   item ownership before creating, completing, deleting, exporting, or restoring
   reminder rows.
+- `assistant_actions` stores bounded JSON payloads for allowlisted mutations:
+  updating item state, creating explicit links, and creating reminders. Proposal
+  and approval both validate ownership; stale proposals are marked `failed`
+  instead of executing.
 - Tags are user-scoped and normalized by slug. Aliases are also user-scoped and
   unique by normalized alias slug.
 - Annotation selectors and saved-search filters are stored as bounded JSON
@@ -61,6 +67,9 @@ with foreign keys.
   inserting any bookmark or queuing a fetch job. Queued import bookmark jobs
   carry the owning import job ID so background processing can update progress
   without crossing user boundaries.
+- `rate_limits` is shared by public auth throttles and authenticated mutation
+  quotas. Mutation quota keys are SHA-256 hashes of a namespace, audience,
+  user ID, and quota name, so raw user IDs are not stored in the key column.
 
 ## FTS5
 

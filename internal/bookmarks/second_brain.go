@@ -16,6 +16,7 @@ const (
 	maxNoteBody      = 200_000
 	maxAnnotationLen = 20_000
 	maxSearchLen     = 2_000
+	maxActionPayload = 20_000
 )
 
 func (s *Service) Notes(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -436,14 +437,11 @@ func (s *Service) CreateLink(w http.ResponseWriter, r *http.Request, user auth.U
 		writeError(w, http.StatusBadRequest, "Cannot link an item to itself")
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	id := ids.New()
-	_, err := s.db.ExecContext(r.Context(), `INSERT INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, user.ID, body.FromType, body.FromID, body.ToType, body.ToID, label, "manual", now)
+	link, err := s.createItemLink(r.Context(), user.ID, body.FromType, body.FromID, body.ToType, body.ToID, label, "manual", time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		writeError(w, http.StatusConflict, "Link already exists")
 		return
 	}
-	link, _ := s.link(r.Context(), user.ID, id)
 	writeJSON(w, http.StatusOK, map[string]any{"link": link})
 }
 
@@ -511,14 +509,11 @@ func (s *Service) CreateReminder(w http.ResponseWriter, r *http.Request, user au
 		writeError(w, http.StatusBadRequest, "note is too large")
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	id := ids.New()
-	_, err = s.db.ExecContext(r.Context(), `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,note,status,created_at) VALUES(?,?,?,?,?,?,?,?)`, id, user.ID, body.ItemType, body.ItemID, due.UTC().Format(time.RFC3339), note, "pending", now)
+	reminder, err := s.createReminder(r.Context(), user.ID, body.ItemType, body.ItemID, due.UTC().Format(time.RFC3339), note, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not create reminder")
 		return
 	}
-	reminder, _ := s.reminder(r.Context(), user.ID, id)
 	writeJSON(w, http.StatusOK, map[string]any{"reminder": reminder})
 }
 
@@ -539,6 +534,111 @@ func (s *Service) DeleteReminder(w http.ResponseWriter, r *http.Request, user au
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Reminder deleted"})
+}
+
+func (s *Service) AssistantActions(w http.ResponseWriter, r *http.Request, user auth.User) {
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status == "" {
+		status = "pending"
+	}
+	if status != "pending" && status != "executed" && status != "rejected" && status != "failed" && status != "all" {
+		writeError(w, http.StatusBadRequest, "Invalid assistant action status")
+		return
+	}
+	where := "user_id=?"
+	args := []any{user.ID}
+	if status != "all" {
+		where += " AND status=?"
+		args = append(args, status)
+	}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,action_type,payload_json,status,result_json,error,created_at,COALESCE(decided_at,''),COALESCE(executed_at,'') FROM assistant_actions WHERE `+where+` ORDER BY created_at DESC LIMIT 200`, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load assistant actions")
+		return
+	}
+	defer rows.Close()
+	actions := []map[string]any{}
+	for rows.Next() {
+		actions = append(actions, scanAssistantAction(rows))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"actions": actions})
+}
+
+func (s *Service) ProposeAssistantAction(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		ActionType string `json:"action_type"`
+		Payload    any    `json:"payload"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	actionType := strings.TrimSpace(body.ActionType)
+	if !validAssistantAction(actionType) {
+		writeError(w, http.StatusBadRequest, "Unsupported assistant action")
+		return
+	}
+	payload, ok := jsonObject(body.Payload)
+	if !ok || len(payload) > maxActionPayload {
+		writeError(w, http.StatusBadRequest, "payload must be a bounded object")
+		return
+	}
+	if err := s.validateAssistantPayload(r.Context(), user.ID, actionType, jsonObjectValue(payload)); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	id := ids.New()
+	_, err := s.db.ExecContext(r.Context(), `INSERT INTO assistant_actions(id,user_id,action_type,payload_json,status,result_json,created_at) VALUES(?,?,?,?,?,?,?)`, id, user.ID, actionType, payload, "pending", "{}", now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not propose assistant action")
+		return
+	}
+	action, _ := s.assistantAction(r.Context(), user.ID, id)
+	writeJSON(w, http.StatusOK, map[string]any{"action": action})
+}
+
+func (s *Service) ApproveAssistantAction(w http.ResponseWriter, r *http.Request, user auth.User) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	action, err := s.assistantAction(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil || action["status"] != "pending" {
+		writeError(w, http.StatusNotFound, "Pending assistant action not found")
+		return
+	}
+	res, err := s.db.ExecContext(r.Context(), `UPDATE assistant_actions SET status='executed',decided_at=?,executed_at=? WHERE id=? AND user_id=? AND status='pending'`, now, now, r.PathValue("id"), user.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not approve assistant action")
+		return
+	}
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Pending assistant action not found")
+		return
+	}
+	payload, ok := action["payload"].(map[string]any)
+	if !ok {
+		payload = map[string]any{}
+	}
+	result, err := s.executeAssistantAction(r.Context(), user.ID, stringValue(action["action_type"]), payload)
+	if err != nil {
+		_, _ = s.db.ExecContext(r.Context(), `UPDATE assistant_actions SET status='failed',error=?,result_json='{}' WHERE id=? AND user_id=?`, err.Error(), r.PathValue("id"), user.ID)
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	resultJSON, _ := json.Marshal(result)
+	_, _ = s.db.ExecContext(r.Context(), `UPDATE assistant_actions SET result_json=?,error='' WHERE id=? AND user_id=?`, string(resultJSON), r.PathValue("id"), user.ID)
+	updated, _ := s.assistantAction(r.Context(), user.ID, r.PathValue("id"))
+	writeJSON(w, http.StatusOK, map[string]any{"action": updated})
+}
+
+func (s *Service) RejectAssistantAction(w http.ResponseWriter, r *http.Request, user auth.User) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, _ := s.db.ExecContext(r.Context(), `UPDATE assistant_actions SET status='rejected',decided_at=? WHERE id=? AND user_id=? AND status='pending'`, now, r.PathValue("id"), user.ID)
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Pending assistant action not found")
+		return
+	}
+	action, _ := s.assistantAction(r.Context(), user.ID, r.PathValue("id"))
+	writeJSON(w, http.StatusOK, map[string]any{"action": action})
 }
 
 func (s *Service) inboxItems(ctx context.Context, userID, stage string, limit int) ([]map[string]any, error) {
@@ -793,6 +893,15 @@ func (s *Service) link(ctx context.Context, userID, id string) (map[string]any, 
 	return link, nil
 }
 
+func (s *Service) createItemLink(ctx context.Context, userID, fromType, fromID, toType, toID, label, source, now string) (map[string]any, error) {
+	id := ids.New()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, userID, fromType, fromID, toType, toID, label, source, now)
+	if err != nil {
+		return nil, err
+	}
+	return s.link(ctx, userID, id)
+}
+
 func scanLink(row scanner) map[string]any {
 	var id, fromType, fromID, toType, toID, label, source, created string
 	if err := row.Scan(&id, &fromType, &fromID, &toType, &toID, &label, &source, &created); err != nil {
@@ -811,6 +920,19 @@ func (s *Service) reminder(ctx context.Context, userID, id string) (map[string]a
 	return reminder, nil
 }
 
+func (s *Service) createReminder(ctx context.Context, userID, itemType, itemID, dueAt, note, now string) (map[string]any, error) {
+	due, err := time.Parse(time.RFC3339, dueAt)
+	if err != nil {
+		return nil, err
+	}
+	id := ids.New()
+	_, err = s.db.ExecContext(ctx, `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,note,status,created_at) VALUES(?,?,?,?,?,?,?,?)`, id, userID, itemType, itemID, due.UTC().Format(time.RFC3339), note, "pending", now)
+	if err != nil {
+		return nil, err
+	}
+	return s.reminder(ctx, userID, id)
+}
+
 func (s *Service) itemReminders(ctx context.Context, userID, itemType, itemID string) []map[string]any {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,due_at,note,status,created_at,COALESCE(completed_at,'') FROM reminders WHERE user_id=? AND item_type=? AND item_id=? ORDER BY due_at ASC LIMIT 50`, userID, itemType, itemID)
 	if err != nil {
@@ -821,6 +943,99 @@ func (s *Service) itemReminders(ctx context.Context, userID, itemType, itemID st
 		return []map[string]any{}
 	}
 	return reminders
+}
+
+func (s *Service) assistantAction(ctx context.Context, userID, id string) (map[string]any, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,action_type,payload_json,status,result_json,error,created_at,COALESCE(decided_at,''),COALESCE(executed_at,'') FROM assistant_actions WHERE id=? AND user_id=?`, id, userID)
+	action := scanAssistantAction(row)
+	if action["id"] == "" {
+		return nil, sql.ErrNoRows
+	}
+	return action, nil
+}
+
+func scanAssistantAction(row scanner) map[string]any {
+	var id, actionType, payload, status, result, actionError, created, decided, executed string
+	if err := row.Scan(&id, &actionType, &payload, &status, &result, &actionError, &created, &decided, &executed); err != nil {
+		return map[string]any{"id": ""}
+	}
+	return map[string]any{"id": id, "action_type": actionType, "payload": jsonObjectValue(payload), "status": status, "result": jsonObjectValue(result), "error": actionError, "created_at": created, "decided_at": decided, "executed_at": executed}
+}
+
+func validAssistantAction(actionType string) bool {
+	return actionType == "update_item_state" || actionType == "create_link" || actionType == "create_reminder"
+}
+
+func (s *Service) validateAssistantPayload(ctx context.Context, userID, actionType string, payload map[string]any) error {
+	switch actionType {
+	case "update_item_state":
+		itemType, itemID := stringValue(payload["item_type"]), stringValue(payload["item_id"])
+		stage := stringValue(payload["stage"])
+		importance := intValue(payload["importance"])
+		nextAction := strings.TrimSpace(stringValue(payload["next_action"]))
+		if !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			return errInvalid("assistant action item not found")
+		}
+		if !validItemStage(stage) || importance < 0 || importance > 5 || len(nextAction) > 500 {
+			return errInvalid("invalid item state action")
+		}
+	case "create_link":
+		fromType, fromID := stringValue(payload["from_type"]), stringValue(payload["from_id"])
+		toType, toID := stringValue(payload["to_type"]), stringValue(payload["to_id"])
+		label := strings.TrimSpace(stringValue(payload["label"]))
+		if !s.reviewItemExists(ctx, userID, fromType, fromID) || !s.reviewItemExists(ctx, userID, toType, toID) {
+			return errInvalid("assistant link item not found")
+		}
+		if (fromType == toType && fromID == toID) || len(label) > 80 {
+			return errInvalid("invalid link action")
+		}
+	case "create_reminder":
+		itemType, itemID := stringValue(payload["item_type"]), stringValue(payload["item_id"])
+		if !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			return errInvalid("assistant reminder item not found")
+		}
+		if _, err := time.Parse(time.RFC3339, stringValue(payload["due_at"])); err != nil {
+			return errInvalid("invalid reminder due time")
+		}
+		if len(strings.TrimSpace(stringValue(payload["note"]))) > 500 {
+			return errInvalid("invalid reminder note")
+		}
+	default:
+		return errInvalid("unsupported assistant action")
+	}
+	return nil
+}
+
+func (s *Service) executeAssistantAction(ctx context.Context, userID, actionType string, payload map[string]any) (map[string]any, error) {
+	if err := s.validateAssistantPayload(ctx, userID, actionType, payload); err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	switch actionType {
+	case "update_item_state":
+		itemType, itemID := stringValue(payload["item_type"]), stringValue(payload["item_id"])
+		stage := stringValue(payload["stage"])
+		importance := intValue(payload["importance"])
+		nextAction := strings.TrimSpace(stringValue(payload["next_action"]))
+		if err := s.upsertItemState(ctx, userID, itemType, itemID, stage, importance, nextAction, now); err != nil {
+			return nil, err
+		}
+		return map[string]any{"item_type": itemType, "item_id": itemID, "stage": stage}, nil
+	case "create_link":
+		link, err := s.createItemLink(ctx, userID, stringValue(payload["from_type"]), stringValue(payload["from_id"]), stringValue(payload["to_type"]), stringValue(payload["to_id"]), strings.TrimSpace(stringValue(payload["label"])), "assistant", now)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"link_id": link["id"]}, nil
+	case "create_reminder":
+		reminder, err := s.createReminder(ctx, userID, stringValue(payload["item_type"]), stringValue(payload["item_id"]), stringValue(payload["due_at"]), strings.TrimSpace(stringValue(payload["note"])), now)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"reminder_id": reminder["id"]}, nil
+	default:
+		return nil, errInvalid("unsupported assistant action")
+	}
 }
 
 func (s *Service) scanReminders(ctx context.Context, userID string, rows *sql.Rows) ([]map[string]any, error) {

@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - Added a durable Inbox processing loop for bookmarks and notes, including per-item stage, priority, next action, reader controls, review context, and JSON backup/restore support.
 - Added explicit bookmark/note links with backlink reads, bookmark-page controls, per-user ownership validation, and JSON backup/restore support.
 - Added one-time reminders for bookmarks and notes with due-time reads, completion/deletion APIs, bookmark-page controls, ownership validation, and JSON backup/restore support.
+- Added an assistant action approval ledger for bounded second-brain mutations, with proposal, approve, reject, failed-action tracking, and an embedded Assistant review page.
 
 ### Changed
 
@@ -99,3 +100,5 @@ All notable changes to this project will be documented in this file.
 - Escaped formula-like CSV export cells to reduce spreadsheet injection risk.
 - Obsidian ZIP export sanitizes generated filenames and reuses existing Markdown escaping for file content.
 - Covered new second-brain routes with CSRF, audience isolation, and cross-user isolation tests.
+- Assistant actions are inert until explicit approval, revalidate item ownership during execution, and record failed stale proposals without running arbitrary tools.
+- Authenticated mutation quotas now throttle high-risk write paths with hashed per-user, per-audience keys in SQLite.

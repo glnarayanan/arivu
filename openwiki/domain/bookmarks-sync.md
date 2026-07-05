@@ -41,6 +41,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - One-time reminders attach due times and reminder notes to bookmarks or notes.
   Reminder reads decorate each row with the item title while mutations continue
   to validate item ownership.
+- Assistant proposals can suggest only bounded second-brain mutations: item
+  state updates, explicit links, and one-time reminders. The Assistant page
+  presents the proposal ledger; nothing executes until a user approves it.
 - The review queue is powered by resurfacing candidates and records completion or snooze events.
 - Tags are normalized and alias-aware so manual tags and provider suggestions converge.
 - Retrieval filters by query, tag, domain, source, read state, and dates. Query
@@ -48,6 +51,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Cited answer mode summarizes the matching set and returns citations back to
   saved bookmarks instead of producing uncited claims.
 - Job status is visible per user, which makes background import/enrichment progress inspectable without exposing server errors.
+- High-risk writes use lightweight SQLite mutation quotas before expensive work
+  begins, including bookmark preview, import, saves, notes, inbox updates,
+  links, reminders, and assistant proposal/approval.
 
 ## User Imports And Exports
 

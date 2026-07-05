@@ -11,6 +11,7 @@ const routes = [
   { prefix: "/dashboard", page: dashboardPage, access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
   { prefix: "/inbox", page: inboxPage, access: "protected" },
+  { prefix: "/assistant", page: assistantPage, access: "protected" },
   { prefix: "/notes", page: notesPage, access: "protected" },
   { prefix: "/review", page: reviewPage, access: "protected" },
   { prefix: "/duplicates", page: duplicatesPage, access: "protected" },
@@ -318,6 +319,7 @@ function shell(title, content) {
   const nav = [
     ["/dashboard", "Bookmarks"],
     ["/inbox", "Inbox"],
+    ["/assistant", "Assistant"],
     ["/notes", "Notes"],
     ["/review", "Review"],
     ["/knowledge-graph", "Graph"],
@@ -804,6 +806,152 @@ function saveItemState(itemID, stage, importance, nextAction) {
     method: "PATCH",
     body: JSON.stringify({ stage, importance, next_action: nextAction }),
   });
+}
+
+async function assistantPage() {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  const status = params.get("status") || "pending";
+  const result = await api(`/assistant/actions?status=${encodeURIComponent(status)}`);
+  const actions = result.actions || [];
+  setRoot(shell("Assistant actions", `
+    <section class="split">
+      <section class="panel">
+        <span class="meta">Approval ledger</span>
+        <h2>${actions.length} ${escapeHTML(status)} proposals</h2>
+        <p>Assistant suggestions stay inert until you approve them. Each approval rechecks ownership and executes one bounded mutation.</p>
+      </section>
+      <form class="panel form" id="assistant-action-form">
+        <h2>Propose action</h2>
+        <div class="field">
+          <label for="assistant-action-type">Action</label>
+          <select id="assistant-action-type">
+            <option value="update_item_state">Update item state</option>
+            <option value="create_link">Create link</option>
+            <option value="create_reminder">Create reminder</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="assistant-payload">Payload JSON</label>
+          <textarea id="assistant-payload" rows="7" spellcheck="false">{&#10;  "item_type": "bookmark",&#10;  "item_id": "",&#10;  "stage": "processing",&#10;  "importance": 3,&#10;  "next_action": ""&#10;}</textarea>
+        </div>
+        <p class="form-message" id="assistant-message" data-form-message hidden></p>
+        <button type="submit">Add to review</button>
+      </form>
+    </section>
+    <section class="panel">
+      <h2>Queue</h2>
+      <div class="chips stage-tabs">
+        ${["pending", "executed", "failed", "rejected", "all"].map((name) => `<a class="${name === status ? "active" : ""}" href="/assistant?status=${name}">${name}</a>`).join("")}
+      </div>
+    </section>
+    <section class="stack">
+      ${actions.map(assistantActionCard).join("") || `<div class="panel empty-state"><span class="meta">No proposals</span><h2>Nothing waiting</h2><p>Approved assistant work appears here as a ledger.</p></div>`}
+    </section>
+  `));
+  const form = document.querySelector("#assistant-action-form");
+  form.addEventListener("submit", submitAssistantAction);
+  document.querySelector("#assistant-action-type").addEventListener("change", updateAssistantPayloadTemplate);
+  document.querySelectorAll("[data-assistant-approve]").forEach((button) => {
+    button.addEventListener("click", () => decideAssistantAction(button, "approve"));
+  });
+  document.querySelectorAll("[data-assistant-reject]").forEach((button) => {
+    button.addEventListener("click", () => decideAssistantAction(button, "reject"));
+  });
+}
+
+function assistantActionCard(action) {
+  const payload = JSON.stringify(action.payload || {}, null, 2);
+  const result = JSON.stringify(action.result || {}, null, 2);
+  const actionID = escapeHTML(action.id || "");
+  const isPending = action.status === "pending";
+  return `<article class="panel form">
+    <span class="meta">${escapeHTML(action.action_type || "action")} · ${escapeHTML(action.status || "")} · ${escapeHTML(formatDate(action.created_at))}</span>
+    <h2>${escapeHTML(assistantActionTitle(action))}</h2>
+    ${action.error ? `<p class="form-message form-message-error">${escapeHTML(action.error)}</p>` : ""}
+    <div class="split compact-split">
+      <div class="field">
+        <label>Payload</label>
+        <pre class="code-block">${escapeHTML(payload)}</pre>
+      </div>
+      <div class="field">
+        <label>Result</label>
+        <pre class="code-block">${escapeHTML(result)}</pre>
+      </div>
+    </div>
+    <p class="button-row">
+      ${isPending ? `<button type="button" data-assistant-approve="${actionID}">Approve</button><button type="button" class="secondary" data-assistant-reject="${actionID}">Reject</button>` : ""}
+    </p>
+  </article>`;
+}
+
+function assistantActionTitle(action) {
+  const payload = action.payload || {};
+  if (action.action_type === "update_item_state") return `${payload.item_type || "item"}:${payload.item_id || ""} -> ${payload.stage || "stage"}`;
+  if (action.action_type === "create_link") return `${payload.from_type || "item"}:${payload.from_id || ""} links to ${payload.to_type || "item"}:${payload.to_id || ""}`;
+  if (action.action_type === "create_reminder") return `${payload.item_type || "item"}:${payload.item_id || ""} reminder`;
+  return action.action_type || "Assistant action";
+}
+
+async function submitAssistantAction(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const done = setButtonBusy(event.submitter, "Adding");
+  setFormMessage(form);
+  try {
+    const payload = JSON.parse(document.querySelector("#assistant-payload").value || "{}");
+    await api("/assistant/actions", {
+      method: "POST",
+      body: JSON.stringify({ action_type: document.querySelector("#assistant-action-type").value, payload }),
+    });
+    ui.toast("Assistant action queued", "success");
+    navigate("/assistant?status=pending", true);
+  } catch (err) {
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function updateAssistantPayloadTemplate(event) {
+  const templates = {
+    update_item_state: {
+      item_type: "bookmark",
+      item_id: "",
+      stage: "processing",
+      importance: 3,
+      next_action: "",
+    },
+    create_link: {
+      from_type: "bookmark",
+      from_id: "",
+      to_type: "note",
+      to_id: "",
+      label: "supports",
+    },
+    create_reminder: {
+      item_type: "bookmark",
+      item_id: "",
+      due_at: new Date(Date.now() + 86400000).toISOString(),
+      note: "",
+    },
+  };
+  document.querySelector("#assistant-payload").value = JSON.stringify(templates[event.currentTarget.value], null, 2);
+}
+
+async function decideAssistantAction(button, decision) {
+  const id = button.dataset.assistantApprove || button.dataset.assistantReject;
+  const done = setButtonBusy(button, decision === "approve" ? "Approving" : "Rejecting");
+  try {
+    await api(`/assistant/actions/${id}/${decision}`, { method: "POST", body: "{}" });
+    ui.toast(decision === "approve" ? "Assistant action executed" : "Assistant action rejected", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 function selectedReaderText() {

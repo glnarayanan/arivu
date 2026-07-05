@@ -325,6 +325,16 @@ input::placeholder, textarea::placeholder {
   background: color-mix(in oklch, var(--accent-2) 15%, var(--panel));
 }
 .form-message[hidden] { display: none; }
+.code-block {
+  margin: 0;
+  max-width: 100%;
+  overflow: auto;
+  border: 2px solid var(--line);
+  background: var(--field);
+  padding: var(--space-3);
+  font: 600 .8125rem/1.5 var(--font-ui);
+  white-space: pre-wrap;
+}
 .text-link {
   color: var(--ink);
   font: 700 .875rem/1.35 var(--font-ui);
