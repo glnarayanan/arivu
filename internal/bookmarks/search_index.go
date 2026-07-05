@@ -247,7 +247,7 @@ func ftsQuery(query string) string {
 
 func itemHref(itemType, itemID string) string {
 	if itemType == "note" {
-		return "/notes?note=" + url.QueryEscape(itemID)
+		return "/notes/" + url.PathEscape(itemID)
 	}
 	return "/bookmark/" + url.PathEscape(itemID)
 }

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -362,9 +363,6 @@ func (s *Service) reviewItems(ctx context.Context, userID string, limit int) ([]
 	}
 	var items []map[string]any
 	for _, candidate := range candidates {
-		if len(items) >= limit {
-			break
-		}
 		id, _ := candidate.Bookmark["id"].(string)
 		if s.recentReviewEvent(ctx, userID, "bookmark", id) {
 			continue
@@ -372,16 +370,92 @@ func (s *Service) reviewItems(ctx context.Context, userID string, limit int) ([]
 		item := cloneMap(candidate.Bookmark)
 		item["item_type"] = "bookmark"
 		item["item_state"] = s.itemState(ctx, userID, "bookmark", id)
+		s.decorateReviewItem(ctx, userID, item)
 		items = append(items, item)
 	}
-	if len(items) < limit {
-		notes, err := s.reviewNotes(ctx, userID, limit-len(items))
-		if err != nil {
-			return nil, err
-		}
-		items = append(items, notes...)
+	notes, err := s.reviewNotes(ctx, userID, limit)
+	if err != nil {
+		return nil, err
+	}
+	for _, note := range notes {
+		s.decorateReviewItem(ctx, userID, note)
+		items = append(items, note)
+	}
+	sort.SliceStable(items, func(i, j int) bool {
+		return numberValue(items[i]["review_priority"]) > numberValue(items[j]["review_priority"])
+	})
+	if len(items) > limit {
+		items = items[:limit]
 	}
 	return items, nil
+}
+
+func (s *Service) decorateReviewItem(ctx context.Context, userID string, item map[string]any) {
+	itemType := stringValue(item["item_type"])
+	itemID := stringValue(item["id"])
+	state := s.itemState(ctx, userID, itemType, itemID)
+	item["item_state"] = state
+	reminders := s.itemReminders(ctx, userID, itemType, itemID)
+	actions := s.itemActionItems(ctx, userID, itemType, itemID)
+	item["reminders"] = reminders
+	item["action_items"] = actions
+	reasons := []string{}
+	score := numberValue(item["resurfacing_score"])
+	stage := stringValue(state["stage"])
+	importance := intValue(state["importance"])
+	nextAction := strings.TrimSpace(stringValue(state["next_action"]))
+	if stage == "processed" || stage == "processing" {
+		reasons = append(reasons, "active stage: "+stage)
+		score += 20
+	}
+	if importance >= 4 {
+		reasons = append(reasons, fmt.Sprintf("high importance: %d", importance))
+		score += float64(importance * 8)
+	}
+	if nextAction != "" {
+		reasons = append(reasons, "next action: "+nextAction)
+		score += 25
+	}
+	now := time.Now().UTC()
+	for _, reminder := range reminders {
+		if stringValue(reminder["status"]) != "pending" {
+			continue
+		}
+		if boolValue(reminder["is_due"]) {
+			reasons = append(reasons, "due reminder")
+			score += 35
+			break
+		}
+	}
+	for _, action := range actions {
+		if stringValue(action["status"]) != "pending" {
+			continue
+		}
+		created, err := time.Parse(time.RFC3339, stringValue(action["created_at"]))
+		if err == nil && created.Before(now.AddDate(0, 0, -2)) {
+			reasons = append(reasons, "stale action item")
+			score += 20
+			break
+		}
+	}
+	if itemType == "note" {
+		updated, err := time.Parse(time.RFC3339, stringValue(item["updated_at"]))
+		if err == nil {
+			age := int(now.Sub(updated).Hours() / 24)
+			if age >= 1 {
+				reasons = append(reasons, fmt.Sprintf("unreviewed note: %dd", age))
+				score += float64(age)
+			}
+		}
+	}
+	if reason := strings.TrimSpace(stringValue(item["resurfacing_reason"])); reason != "" {
+		reasons = append(reasons, reason)
+	}
+	if len(reasons) == 0 {
+		reasons = append(reasons, "ready for review")
+	}
+	item["review_reasons"] = reasons
+	item["review_priority"] = roundFloat(score, 2)
 }
 
 func (s *Service) Inbox(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -441,6 +515,69 @@ func (s *Service) UpdateInboxItem(w http.ResponseWriter, r *http.Request, user a
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"item_type": itemType, "item_id": itemID, "stage": stage, "importance": body.Importance, "next_action": nextAction, "updated_at": now})
+}
+
+func (s *Service) BulkUpdateInboxItems(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		Items      []string `json:"items"`
+		Stage      string   `json:"stage"`
+		Importance *int     `json:"importance"`
+		NextAction string   `json:"next_action"`
+		ActionItem string   `json:"action_item"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	if len(body.Items) == 0 || len(body.Items) > 100 {
+		writeError(w, http.StatusBadRequest, "items must contain 1 to 100 entries")
+		return
+	}
+	stage := strings.TrimSpace(body.Stage)
+	if stage == "" {
+		stage = "processing"
+	}
+	if !validItemStage(stage) {
+		writeError(w, http.StatusBadRequest, "Invalid inbox stage")
+		return
+	}
+	importance := 0
+	if body.Importance != nil {
+		importance = *body.Importance
+	}
+	if importance < 0 || importance > 5 {
+		writeError(w, http.StatusBadRequest, "importance must be between 0 and 5")
+		return
+	}
+	nextAction := strings.TrimSpace(body.NextAction)
+	if len(nextAction) > 500 {
+		writeError(w, http.StatusBadRequest, "next_action is too large")
+		return
+	}
+	actionTitle := strings.TrimSpace(body.ActionItem)
+	if len(actionTitle) > 300 {
+		writeError(w, http.StatusBadRequest, "action_item is too large")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	updated := []map[string]any{}
+	failed := []map[string]any{}
+	for _, raw := range body.Items {
+		itemType, itemID, ok := splitReviewItem(raw)
+		if !ok || !s.reviewItemExists(r.Context(), user.ID, itemType, itemID) {
+			failed = append(failed, map[string]any{"item": raw, "error": "not found"})
+			continue
+		}
+		if err := s.upsertItemState(r.Context(), user.ID, itemType, itemID, stage, importance, nextAction, now); err != nil {
+			failed = append(failed, map[string]any{"item": raw, "error": "update failed"})
+			continue
+		}
+		if actionTitle != "" {
+			_, _ = s.createActionItem(r.Context(), user.ID, itemType, itemID, actionTitle, now)
+		}
+		updated = append(updated, map[string]any{"item_type": itemType, "item_id": itemID, "stage": stage, "importance": importance, "next_action": nextAction, "updated_at": now})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"updated_count": len(updated), "failed_count": len(failed), "updated": updated, "failed": failed})
 }
 
 func (s *Service) Links(w http.ResponseWriter, r *http.Request, user auth.User) {

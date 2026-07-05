@@ -86,3 +86,6 @@
 - Assistant suggestions are ephemeral and do not insert into `assistant_actions`.
   Suggestions and proposal creation both validate allowlisted action payloads
   against current user-owned items; approval revalidates again before executing.
+- Inbox bulk triage validates every `bookmark:<id>` and `note:<id>` target
+  against the authenticated user. Valid owned rows can update while stale or
+  cross-user entries are returned as per-item failures.

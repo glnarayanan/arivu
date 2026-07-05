@@ -32,6 +32,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - New bookmarks and notes enter the Inbox so users can decide whether each item
   should stay unprocessed, move into active processing, become processed, or be
   archived from the working loop.
+- Inbox bulk triage updates up to 100 bookmark/note items at once and returns
+  partial failures for stale or cross-user targets instead of failing the whole
+  operation.
 - Processing state stores priority and the next action separately from the
   original bookmark or note, so review and exports preserve why an item was kept.
 - Bookmark detail renders summaries, tags, related items, read state, annotations, linked notes, and review completion in one place.
@@ -46,19 +49,20 @@ Second-brain v1 adds user-authored context around bookmarks:
   separate from the single `next_action` processing prompt and from dated
   reminders, so one saved item can carry a checklist without becoming a project
   management system.
-- The Notes page decorates standalone notes with their processing state, action
-  items, reminders, explicit links, and backlinks after closing the note query
-  cursor, so note-side open loops and graph context are visible without adding a
-  separate note detail route.
-- The Focus page reads pending action items and reminders through existing APIs,
-  giving users one working surface for open loops without introducing a new
-  backend workflow.
+- The Notes list is compact. `/notes/:id` owns note editing, action items,
+  reminders, explicit note links, backlinks, note-to-note links, and
+  note-to-bookmark links.
+- The Focus page reads action items and reminders through existing APIs and
+  supports pending, overdue, today, upcoming, and completed views.
 - Assistant suggestions generate inert drafts from an item, search query, Inbox
   stage, or Review queue. Drafts are limited to bounded second-brain mutations:
   item state updates, explicit links, reminders, and action items. Queueing a
   draft creates a normal proposal in the Assistant ledger; nothing executes
   until a user approves it.
-- The review queue is powered by resurfacing candidates and records completion or snooze events.
+- The review queue is powered by resurfacing candidates plus open-loop signals:
+  processed/processing stage, high importance, next action, due reminders, stale
+  action items, and older unreviewed notes. API responses include
+  `review_reasons` and `review_priority`.
 - Tags are normalized and alias-aware so manual tags and provider suggestions converge.
 - Bookmark list retrieval filters by query, tag, domain, source, read state, and
   dates. Query matching includes bookmark text, annotations, and linked notes.

@@ -18,21 +18,24 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 ### Product Routes
 
 - `/dashboard`: bookmark list, search, URL capture, quick note, manual tags, PWA share-target prefill, and visible processing status.
-- `/inbox`: capture triage for bookmarks and notes, with per-item stage, priority, next action controls, and inline action items.
-- `/focus`: daily work surface combining pending action items and reminders
-  with links back to their source items plus quick reminder completion, snooze,
-  and delete actions.
+- `/inbox`: capture triage for bookmarks and notes, with per-item stage,
+  priority, next action controls, inline action items, bulk selection, and
+  keyboard triage for stage changes.
+- `/focus`: daily work surface combining action items and reminders with links
+  back to their source items plus quick reminder completion, snooze, and delete
+  actions. Views include pending, overdue, today, upcoming, and completed.
 - `/assistant`: guided planner for inert assistant drafts plus an approval ledger
   for allowlisted action proposals, with payload/result inspection and
   approve/reject controls. Draft cards expose the source item and JSON payload
   before they can be queued as proposals.
 - `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions. Reminder controls include timezone-aware due times, recurrence, in-app/email channel selection, inline edits, snooze, completion, and deletion.
-- `/notes`: standalone notes for ideas and snippets that are not tied to a URL,
-  including note-side action items, reminders, explicit links, backlinks, and
-  note-to-note link creation. Reminder controls match bookmark reminder
-  controls. `/notes?note=<id>` focuses a specific note from Inbox, backlinks,
-  Focus, or tasks.
-- `/review`: resurfacing-backed daily review queue with complete and snooze actions.
+- `/notes`: compact standalone-note list. `/notes/:id` is the full note
+  workspace for editing, action items, reminders, explicit links, backlinks,
+  note-to-note links, and note-to-bookmark links. Reminder controls match
+  bookmark reminder controls. `/notes?note=<id>` redirects to `/notes/:id` for
+  compatibility.
+- `/review`: resurfacing-backed daily review queue with complete and snooze
+  actions, reason labels, priority metadata, and inline task/reminder controls.
 - `/duplicates`: duplicate groups and merge workflow.
 - `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.
 - `/analytics`: summary counts, topics, and actionable insight signals.

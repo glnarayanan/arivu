@@ -556,7 +556,7 @@ async function dashboardPage() {
     </section>
     <section class="panel" id="answer-panel" hidden></section>
     <section class="grid" aria-label="Bookmarks">
-      ${bookmarkList.map(bookmarkCard).join("") || `<div class="panel empty-state"><span class="meta">First save</span><h2>No bookmarks yet</h2><p>Save a URL above to start building your searchable reading memory.</p></div>`}
+      ${bookmarkList.map(bookmarkCard).join("") || workflowEmptyState()}
     </section>
   `));
   const saveForm = document.querySelector("#save-form");
@@ -630,6 +630,20 @@ async function dashboardPage() {
       done();
     }
   });
+}
+
+function workflowEmptyState() {
+  return `<div class="panel empty-state">
+    <span class="meta">First save</span>
+    <h2>No bookmarks yet</h2>
+    <p>Save a URL above, then process it through the working loop.</p>
+    <div class="chips">
+      <a href="/dashboard">Capture</a>
+      <a href="/inbox">Inbox</a>
+      <a href="/focus">Focus</a>
+      <a href="/review">Review</a>
+    </div>
+  </div>`;
 }
 
 function dashboardFilters() {
@@ -723,10 +737,24 @@ async function inboxPage() {
         </div>
       </section>
     </section>
+    <section class="panel bulk-toolbar" data-inbox-bulk>
+      <span class="meta"><span data-bulk-count>0</span> selected</span>
+      <div class="button-row">
+        <button type="button" class="secondary" data-bulk-stage="processing">Processing</button>
+        <button type="button" class="secondary" data-bulk-stage="processed">Processed</button>
+        <button type="button" class="secondary" data-bulk-stage="archived">Archive</button>
+      </div>
+    </section>
     <section class="stack">
       ${items.map(inboxCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No ${escapeHTML(stage)} items</h2><p>New captures and notes appear in the inbox until you process them.</p></div>`}
     </section>
   `));
+  document.querySelectorAll("[data-inbox-select]").forEach((checkbox) => {
+    checkbox.addEventListener("change", updateBulkSelectionCount);
+  });
+  document.querySelectorAll("[data-bulk-stage]").forEach((button) => {
+    button.addEventListener("click", () => bulkUpdateInbox(button.dataset.bulkStage, button));
+  });
   document.querySelectorAll("[data-inbox-stage]").forEach((button) => {
     button.addEventListener("click", () => updateInboxItem(button, button.dataset.inboxStage));
   });
@@ -735,13 +763,15 @@ async function inboxPage() {
   });
   bindActionItemControls();
   bindPriorityButtons();
+  ui.on(document, "keydown", inboxKeyboardTriage);
+  updateBulkSelectionCount();
 }
 
 function inboxCard(item) {
   const itemID = `${item.item_type}:${item.id}`;
   const isNote = item.item_type === "note";
   return `<article class="panel form" data-inbox-item="${escapeHTML(itemID)}">
-    <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.domain || item.source || item.stage || "")}</span>
+    <label class="meta"><input type="checkbox" data-inbox-select value="${escapeHTML(itemID)}"> ${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.domain || item.source || item.stage || "")}</label>
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
     <p>${escapeHTML(item.description || item.url || "")}</p>
     <div class="split compact-split">
@@ -762,7 +792,7 @@ function inboxCard(item) {
       </div>
     </div>
     <p class="button-row">
-      <a class="button secondary" href="${isNote ? `/notes?note=${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
+      <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
       <button type="button" data-inbox-save="${escapeHTML(itemID)}">Save state</button>
       <button type="button" class="secondary" data-inbox-stage="processing">Processing</button>
       <button type="button" class="secondary" data-inbox-stage="processed">Processed</button>
@@ -770,6 +800,45 @@ function inboxCard(item) {
     </p>
     ${actionItemsPanel(item.item_type, item.id, item.action_items || [])}
   </article>`;
+}
+
+function selectedInboxItems() {
+  return Array.from(document.querySelectorAll("[data-inbox-select]:checked")).map((item) => item.value);
+}
+
+function updateBulkSelectionCount() {
+  const target = document.querySelector("[data-bulk-count]");
+  if (target) target.textContent = String(selectedInboxItems().length);
+}
+
+async function bulkUpdateInbox(stage, button) {
+  const items = selectedInboxItems();
+  if (!items.length) {
+    ui.toast("Select inbox items first.", "error");
+    return;
+  }
+  const done = setButtonBusy(button, "Saving");
+  try {
+    const result = await api("/inbox/bulk", { method: "POST", body: JSON.stringify({ items, stage }) });
+    ui.toast(`${result.updated_count || 0} item${result.updated_count === 1 ? "" : "s"} updated`, result.failed_count ? "error" : "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function inboxKeyboardTriage(event) {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.target.matches("input, textarea, select")) return;
+  const card = event.target.closest?.("[data-inbox-item]");
+  if (!card) return;
+  const shortcuts = { p: "processing", d: "processed", a: "archived" };
+  const stage = shortcuts[event.key.toLowerCase()];
+  if (!stage) return;
+  event.preventDefault();
+  const button = card.querySelector(`[data-inbox-stage="${stage}"]`) || card.querySelector("[data-inbox-save]");
+  updateInboxItem(button, stage);
 }
 
 async function updateInboxItem(button, stage) {
@@ -815,16 +884,18 @@ function saveItemState(itemID, stage, importance, nextAction) {
 
 async function focusPage() {
   await requireUser();
+  const params = new URLSearchParams(location.search);
+  const view = params.get("view") || "pending";
   const [actions, reminders] = await Promise.all([
-    api("/action-items?status=pending"),
-    api("/reminders?status=pending"),
+    api("/action-items?status=all"),
+    api("/reminders?status=all"),
   ]);
-  const actionItems = actions.action_items || [];
-  const reminderItems = reminders.reminders || [];
+  const actionItems = focusActionFilter(actions.action_items || [], view);
+  const reminderItems = focusReminderFilter(reminders.reminders || [], view);
   setRoot(shell("Focus", `
     <section class="split">
       <section class="panel">
-        <span class="meta">Today</span>
+        <span class="meta">${escapeHTML(view)}</span>
         <h2>${actionItems.length + reminderItems.length} open loops</h2>
         <p>Work from concrete tasks first, then timed reminders. Everything here stays tied to the saved item it came from.</p>
       </section>
@@ -836,6 +907,11 @@ async function focusPage() {
           <a href="/assistant">Assistant</a>
         </div>
       </section>
+    </section>
+    <section class="panel">
+      <div class="chips stage-tabs">
+        ${["pending", "overdue", "today", "upcoming", "completed"].map((name) => `<a class="${name === view ? "active" : ""}" ${name === view ? `aria-current="page"` : ""} href="/focus?view=${name}">${name}</a>`).join("")}
+      </div>
     </section>
     <section class="split">
       <section class="panel">
@@ -850,6 +926,18 @@ async function focusPage() {
   `));
   bindActionItemControls();
   bindReminderControls();
+}
+
+function focusActionFilter(items, view) {
+  if (view === "completed") return items.filter((item) => item.status === "completed");
+  if (view === "pending") return items.filter((item) => item.status !== "completed");
+  return [];
+}
+
+function focusReminderFilter(items, view) {
+  if (view === "completed") return items.filter((item) => item.status === "completed");
+  if (view === "pending") return items.filter((item) => item.status !== "completed");
+  return items.filter((item) => item.status !== "completed" && item.due_state === view);
 }
 
 function focusActionItems(items) {
@@ -881,7 +969,7 @@ function focusReminders(items) {
 
 function itemHref(item) {
   const id = encodeURIComponent(item.item_id || "");
-  return item.item_type === "note" ? `/notes?note=${id}` : `/bookmark/${id}`;
+  return item.item_type === "note" ? `/notes/${id}` : `/bookmark/${id}`;
 }
 
 async function assistantPage() {
@@ -1203,6 +1291,16 @@ function relatedList(items) {
 
 async function notesPage() {
   await requireUser();
+  const focusedID = new URLSearchParams(location.search).get("note");
+  if (focusedID) {
+    navigate(`/notes/${encodeURIComponent(focusedID)}`, true);
+    return;
+  }
+  const detailMatch = location.pathname.match(/^\/notes\/([^/]+)$/);
+  if (detailMatch) {
+    await noteDetailPage(decodeURIComponent(detailMatch[1]));
+    return;
+  }
   const result = await api("/notes");
   const notes = result.notes || [];
   setRoot(shell("Notes", `
@@ -1221,7 +1319,7 @@ async function notesPage() {
       </section>
     </section>
     <section class="stack">
-      ${notes.map((note) => standaloneNoteCard(note, notes)).join("") || `<div class="panel empty-state"><span class="meta">No notes</span><h2>Start with one thought</h2><p>Standalone notes can be linked to bookmarks later through the reader workflow.</p></div>`}
+      ${notes.map(noteListItem).join("") || `<div class="panel empty-state"><span class="meta">No notes</span><h2>Start with one thought</h2><p>Standalone notes can be linked to bookmarks later through the reader workflow.</p></div>`}
     </section>
   `));
   const form = document.querySelector("#standalone-note-form");
@@ -1246,6 +1344,27 @@ async function notesPage() {
       done();
     }
   });
+}
+
+function noteListItem(note) {
+  const state = note.item_state || {};
+  return `<a class="panel bookmark" href="/notes/${encodeURIComponent(note.id)}">
+    <span class="meta">${escapeHTML(state.stage || "inbox")} · ${escapeHTML(formatDate(note.updated_at))}</span>
+    <h2>${escapeHTML(note.title || "Untitled note")}</h2>
+    <p>${escapeHTML((note.body || "").slice(0, 220))}</p>
+  </a>`;
+}
+
+async function noteDetailPage(id) {
+  const [note, notesResult, bookmarks] = await Promise.all([
+    api(`/notes/${encodeURIComponent(id)}`),
+    api("/notes").catch(() => ({ notes: [] })),
+    api("/bookmarks").catch(() => []),
+  ]);
+  const notes = notesResult.notes || [];
+  setRoot(shell(note.title || "Note", `
+    ${standaloneNoteCard(note, notes, bookmarks)}
+  `));
   document.querySelectorAll("[data-note-save]").forEach((button) => {
     button.addEventListener("click", () => updateStandaloneNote(button));
   });
@@ -1253,19 +1372,20 @@ async function notesPage() {
     button.addEventListener("click", () => deleteStandaloneNote(button));
   });
   bindNoteLinkForms();
+  bindNoteBookmarkLinkForms();
   bindLinkDeleteControls();
   bindActionItemControls();
   bindReminderControls();
-  focusNoteFromQuery();
 }
 
-function standaloneNoteCard(note, notes) {
+function standaloneNoteCard(note, notes, bookmarks = []) {
   return `<article class="panel form" data-note="${escapeHTML(note.id)}">
     <div class="field"><label for="note-title-${escapeHTML(note.id)}">Title</label><input id="note-title-${escapeHTML(note.id)}" data-note-title value="${escapeHTML(note.title || "")}"></div>
-    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="5">${escapeHTML(note.body || "")}</textarea></div>
+    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="12">${escapeHTML(note.body || "")}</textarea></div>
     <p class="meta">${note.bookmark_id ? `Linked to bookmark ${escapeHTML(note.bookmark_id)}` : "Standalone"} · ${escapeHTML(note.updated_at || "")}</p>
     <p class="button-row">
       ${note.bookmark_id ? `<a class="button secondary" href="/bookmark/${escapeHTML(note.bookmark_id)}">Open bookmark</a>` : ""}
+      <a class="button secondary" href="/notes">All notes</a>
       <button type="button" data-note-save="${escapeHTML(note.id)}">Save changes</button>
       <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete</button>
     </p>
@@ -1281,19 +1401,10 @@ function standaloneNoteCard(note, notes) {
     <section>
       <h3>Links</h3>
       ${noteLinkForm(note, notes)}
+      ${noteBookmarkLinkForm(note, bookmarks)}
       ${linkList(note.links || {})}
     </section>
   </article>`;
-}
-
-function focusNoteFromQuery() {
-  const targetID = new URLSearchParams(location.search).get("note");
-  if (!targetID) return;
-  const target = Array.from(document.querySelectorAll("[data-note]")).find((item) => item.dataset.note === targetID);
-  if (!target) return;
-  target.tabIndex = -1;
-  target.focus({ preventScroll: true });
-  target.scrollIntoView({ block: "center" });
 }
 
 async function updateStandaloneNote(button) {
@@ -1323,7 +1434,7 @@ async function deleteStandaloneNote(button) {
   try {
     await api(`/notes/${button.dataset.noteDelete}`, { method: "DELETE" });
     ui.toast("Note deleted", "success");
-    render();
+    navigate("/notes", true);
   } catch (err) {
     ui.toast(err.message, "error");
   } finally {
@@ -1906,7 +2017,7 @@ function linkCard(link, prefix) {
   const targetType = prefix === "To" ? link.to_type : link.from_type;
   const targetID = prefix === "To" ? link.to_id : link.from_id;
   const title = prefix === "To" ? link.to_title : link.from_title;
-  const href = targetType === "note" ? `/notes?note=${encodeURIComponent(targetID)}` : `/bookmark/${escapeHTML(targetID)}`;
+  const href = targetType === "note" ? `/notes/${encodeURIComponent(targetID)}` : `/bookmark/${escapeHTML(targetID)}`;
   return `<article class="annotation">
     <p><strong>${prefix} ${escapeHTML(title || targetID)}</strong> <span class="meta">${escapeHTML(link.label || "linked")} · ${escapeHTML(targetType)}</span></p>
     <p class="button-row">
@@ -1943,6 +2054,12 @@ function bindNoteLinkForms() {
   });
 }
 
+function bindNoteBookmarkLinkForms() {
+  document.querySelectorAll("[data-note-bookmark-link-form]").forEach((form) => {
+    form.addEventListener("submit", submitNoteBookmarkLink);
+  });
+}
+
 async function submitNoteLink(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1965,6 +2082,54 @@ async function submitNoteLink(event) {
       }),
     });
     ui.toast("Link created", "success");
+    render();
+  } catch (err) {
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function noteBookmarkLinkForm(note, bookmarks) {
+  const linked = new Set(((note.links || {}).outgoing || []).filter((link) => link.to_type === "bookmark").map((link) => link.to_id));
+  const available = (bookmarks || []).filter((bookmark) => bookmark.id && !linked.has(bookmark.id));
+  if (!available.length) return "";
+  return `<form class="task-form" data-note-bookmark-link-form data-from-id="${escapeHTML(note.id)}">
+    <label class="sr-only" for="note-bookmark-link-target-${escapeHTML(note.id)}">Linked bookmark</label>
+    <select id="note-bookmark-link-target-${escapeHTML(note.id)}" data-link-target>
+      <option value="">Choose bookmark</option>
+      ${available.map((bookmark) => `<option value="${escapeHTML(bookmark.id)}">${escapeHTML(bookmark.title || bookmark.url || "Untitled bookmark")}</option>`).join("")}
+    </select>
+    <label class="sr-only" for="note-bookmark-link-label-${escapeHTML(note.id)}">Link label</label>
+    <input id="note-bookmark-link-label-${escapeHTML(note.id)}" data-link-label type="text" maxlength="80" placeholder="supports, cites, relates">
+    <button type="submit" class="secondary">Link bookmark</button>
+    <p class="form-message" data-form-message hidden></p>
+  </form>`;
+}
+
+async function submitNoteBookmarkLink(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const targetID = form.querySelector("[data-link-target]").value;
+  if (!targetID) {
+    setFormMessage(form, "Choose a bookmark to link.");
+    return;
+  }
+  const done = setButtonBusy(event.submitter, "Linking");
+  setFormMessage(form);
+  try {
+    await api("/links", {
+      method: "POST",
+      body: JSON.stringify({
+        from_type: "note",
+        from_id: form.dataset.fromId,
+        to_type: "bookmark",
+        to_id: targetID,
+        label: form.querySelector("[data-link-label]").value,
+      }),
+    });
+    ui.toast("Bookmark linked", "success");
     render();
   } catch (err) {
     setFormMessage(form, err.message);
@@ -2531,6 +2696,8 @@ async function reviewPage() {
   document.querySelectorAll("[data-review-archive]").forEach((button) => {
     button.addEventListener("click", () => reviewAction(button, "archive"));
   });
+  bindActionItemControls();
+  bindReminderControls();
 }
 
 function memoryCard(memory) {
@@ -2560,17 +2727,28 @@ function reviewCard(item) {
   const itemState = item.item_state || {};
   const nextAction = itemState.next_action || "";
   const importance = Number(itemState.importance || 0);
+  const reasons = item.review_reasons || [];
   return `<article class="panel bookmark">
-    <span class="meta">${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")}</span>
+    <span class="meta">${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")} · priority ${Number(item.review_priority || 0)}</span>
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
     <p>${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
+    ${reasons.length ? `<div class="chips">${reasons.slice(0, 4).map((reason) => `<span>${escapeHTML(reason)}</span>`).join("")}</div>` : ""}
     ${nextAction || importance ? `<p class="meta">${nextAction ? `Next: ${escapeHTML(nextAction)}` : ""}${nextAction && importance ? " · " : ""}${importance ? `Priority ${importance}` : ""}</p>` : ""}
     <p class="button-row">
-      <a class="button secondary" href="${isNote ? `/notes?note=${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
+      <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
       <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
       ${isNote ? "" : `<button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>`}
     </p>
+    <section>
+      <h3>Task</h3>
+      ${actionItemsPanel(item.item_type || "bookmark", item.id, item.action_items || [])}
+    </section>
+    <section>
+      <h3>Reminder</h3>
+      ${reminderForm(item.item_type || "bookmark", item.id)}
+      ${reminderList(item.reminders || [])}
+    </section>
   </article>`;
 }
 

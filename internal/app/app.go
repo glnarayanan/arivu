@@ -160,6 +160,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/review/{item_id}/snooze", a.withUser(a.bookmarks.SnoozeReview))
 	mux.HandleFunc("GET /api/inbox", a.withUser(a.bookmarks.Inbox))
 	mux.HandleFunc("PATCH /api/inbox/{item_id}", a.withUserQuota(quotaInboxUpdate, a.bookmarks.UpdateInboxItem))
+	mux.HandleFunc("POST /api/inbox/bulk", a.withUserQuota(quotaInboxUpdate, a.bookmarks.BulkUpdateInboxItems))
 	mux.HandleFunc("GET /api/links", a.withUser(a.bookmarks.Links))
 	mux.HandleFunc("POST /api/links", a.withUserQuota(quotaLinksCreate, a.bookmarks.CreateLink))
 	mux.HandleFunc("DELETE /api/links/{id}", a.withUser(a.bookmarks.DeleteLink))
