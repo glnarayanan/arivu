@@ -228,10 +228,24 @@ CREATE TABLE IF NOT EXISTS reminders (
 
 CREATE INDEX IF NOT EXISTS idx_reminders_user_due ON reminders(user_id, status, due_at);
 
+CREATE TABLE IF NOT EXISTS action_items (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK (item_type IN ('bookmark','note')),
+  item_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('pending','completed')) DEFAULT 'pending',
+  created_at TEXT NOT NULL,
+  completed_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_action_items_user_status ON action_items(user_id, status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_action_items_item ON action_items(user_id, item_type, item_id, status);
+
 CREATE TABLE IF NOT EXISTS assistant_actions (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  action_type TEXT NOT NULL CHECK (action_type IN ('update_item_state','create_link','create_reminder')),
+  action_type TEXT NOT NULL CHECK (action_type IN ('update_item_state','create_link','create_reminder','create_action_item')),
   payload_json TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL CHECK (status IN ('pending','executed','rejected','failed')) DEFAULT 'pending',
   result_json TEXT NOT NULL DEFAULT '{}',

@@ -34,6 +34,7 @@ All notable changes to this project will be documented in this file.
 - Added explicit bookmark/note links with backlink reads, bookmark-page controls, per-user ownership validation, and JSON backup/restore support.
 - Added one-time reminders for bookmarks and notes with due-time reads, completion/deletion APIs, bookmark-page controls, ownership validation, and JSON backup/restore support.
 - Added an assistant action approval ledger for bounded second-brain mutations, with proposal, approve, reject, failed-action tracking, and an embedded Assistant review page.
+- Added durable action items for bookmarks and notes, with inline Inbox/bookmark controls, completion/deletion APIs, ownership validation, and JSON backup/restore support.
 
 ### Changed
 

@@ -207,6 +207,7 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bm["item_state"] = s.itemState(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	bm["links"] = s.itemLinks(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	bm["reminders"] = s.itemReminders(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	bm["action_items"] = s.itemActionItems(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	writeJSON(w, http.StatusOK, bm)
 }
 
@@ -216,6 +217,7 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request, user auth.User)
 		writeError(w, http.StatusNotFound, "Bookmark not found")
 		return
 	}
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE user_id=? AND item_type='bookmark' AND item_id=?`, user.ID, r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark deleted"})
 }
 

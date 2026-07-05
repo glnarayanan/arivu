@@ -108,6 +108,7 @@ func (s *Service) DeleteNote(w http.ResponseWriter, r *http.Request, user auth.U
 		writeError(w, http.StatusNotFound, "Note not found")
 		return
 	}
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Note deleted"})
 }
 
@@ -536,6 +537,90 @@ func (s *Service) DeleteReminder(w http.ResponseWriter, r *http.Request, user au
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Reminder deleted"})
 }
 
+func (s *Service) ActionItems(w http.ResponseWriter, r *http.Request, user auth.User) {
+	status := strings.TrimSpace(r.URL.Query().Get("status"))
+	if status == "" {
+		status = "pending"
+	}
+	if status != "pending" && status != "completed" && status != "all" {
+		writeError(w, http.StatusBadRequest, "Invalid action item status")
+		return
+	}
+	where := "user_id=?"
+	args := []any{user.ID}
+	if status != "all" {
+		where += " AND status=?"
+		args = append(args, status)
+	}
+	if rawItem := strings.TrimSpace(r.URL.Query().Get("item")); rawItem != "" {
+		itemType, itemID, ok := splitReviewItem(rawItem)
+		if !ok || !s.reviewItemExists(r.Context(), user.ID, itemType, itemID) {
+			writeError(w, http.StatusNotFound, "Item not found")
+			return
+		}
+		where += " AND item_type=? AND item_id=?"
+		args = append(args, itemType, itemID)
+	}
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,item_type,item_id,title,status,created_at,COALESCE(completed_at,'') FROM action_items WHERE `+where+` ORDER BY created_at DESC LIMIT 200`, args...)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load action items")
+		return
+	}
+	items, err := s.scanActionItems(r.Context(), user.ID, rows)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load action items")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"action_items": items})
+}
+
+func (s *Service) CreateActionItem(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		ItemType string `json:"item_type"`
+		ItemID   string `json:"item_id"`
+		Title    string `json:"title"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	title := strings.TrimSpace(body.Title)
+	if title == "" || len(title) > 300 {
+		writeError(w, http.StatusBadRequest, "title must be between 1 and 300 characters")
+		return
+	}
+	if !s.reviewItemExists(r.Context(), user.ID, body.ItemType, body.ItemID) {
+		writeError(w, http.StatusNotFound, "Item not found")
+		return
+	}
+	item, err := s.createActionItem(r.Context(), user.ID, body.ItemType, body.ItemID, title, time.Now().UTC().Format(time.RFC3339))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not create action item")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"action_item": item})
+}
+
+func (s *Service) CompleteActionItem(w http.ResponseWriter, r *http.Request, user auth.User) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, _ := s.db.ExecContext(r.Context(), `UPDATE action_items SET status='completed',completed_at=? WHERE id=? AND user_id=?`, now, r.PathValue("id"), user.ID)
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Action item not found")
+		return
+	}
+	item, _ := s.actionItem(r.Context(), user.ID, r.PathValue("id"))
+	writeJSON(w, http.StatusOK, map[string]any{"action_item": item})
+}
+
+func (s *Service) DeleteActionItem(w http.ResponseWriter, r *http.Request, user auth.User) {
+	res, _ := s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID)
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Action item not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "Action item deleted"})
+}
+
 func (s *Service) AssistantActions(w http.ResponseWriter, r *http.Request, user auth.User) {
 	status := strings.TrimSpace(r.URL.Query().Get("status"))
 	if status == "" {
@@ -657,15 +742,23 @@ func (s *Service) inboxItems(ctx context.Context, userID, stage string, limit in
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
 		var itemType, id, title, url, description, source, domain, stateStage, nextAction, created, updated string
 		var importance int
 		_ = rows.Scan(&itemType, &id, &title, &url, &description, &source, &domain, &stateStage, &importance, &nextAction, &created, &updated)
-		items = append(items, map[string]any{"item_type": itemType, "id": id, "title": fallback(title, "Untitled"), "url": url, "description": description, "source": source, "domain": domain, "stage": stateStage, "importance": importance, "next_action": nextAction, "created_at": created, "updated_at": updated})
+		item := map[string]any{"item_type": itemType, "id": id, "title": fallback(title, "Untitled"), "url": url, "description": description, "source": source, "domain": domain, "stage": stateStage, "importance": importance, "next_action": nextAction, "created_at": created, "updated_at": updated}
+		items = append(items, item)
 	}
-	return items, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for _, item := range items {
+		item["action_items"] = s.itemActionItems(ctx, userID, stringValue(item["item_type"]), stringValue(item["id"]))
+	}
+	return items, nil
 }
 
 func (s *Service) inboxCounts(ctx context.Context, userID string) map[string]int {
@@ -945,6 +1038,61 @@ func (s *Service) itemReminders(ctx context.Context, userID, itemType, itemID st
 	return reminders
 }
 
+func (s *Service) actionItem(ctx context.Context, userID, id string) (map[string]any, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,item_type,item_id,title,status,created_at,COALESCE(completed_at,'') FROM action_items WHERE id=? AND user_id=?`, id, userID)
+	item := scanActionItem(row)
+	if item["id"] == "" {
+		return nil, sql.ErrNoRows
+	}
+	item["item_title"] = s.itemTitle(ctx, userID, stringValue(item["item_type"]), stringValue(item["item_id"]))
+	return item, nil
+}
+
+func (s *Service) createActionItem(ctx context.Context, userID, itemType, itemID, title, now string) (map[string]any, error) {
+	id := ids.New()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO action_items(id,user_id,item_type,item_id,title,status,created_at) VALUES(?,?,?,?,?,?,?)`, id, userID, itemType, itemID, title, "pending", now)
+	if err != nil {
+		return nil, err
+	}
+	return s.actionItem(ctx, userID, id)
+}
+
+func (s *Service) itemActionItems(ctx context.Context, userID, itemType, itemID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,title,status,created_at,COALESCE(completed_at,'') FROM action_items WHERE user_id=? AND item_type=? AND item_id=? ORDER BY status ASC, created_at DESC LIMIT 100`, userID, itemType, itemID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	items, err := s.scanActionItems(ctx, userID, rows)
+	if err != nil {
+		return []map[string]any{}
+	}
+	return items
+}
+
+func (s *Service) scanActionItems(ctx context.Context, userID string, rows *sql.Rows) ([]map[string]any, error) {
+	items := []map[string]any{}
+	for rows.Next() {
+		items = append(items, scanActionItem(rows))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	for _, item := range items {
+		item["item_title"] = s.itemTitle(ctx, userID, stringValue(item["item_type"]), stringValue(item["item_id"]))
+	}
+	return items, nil
+}
+
+func scanActionItem(row scanner) map[string]any {
+	var id, itemType, itemID, title, status, created, completed string
+	if err := row.Scan(&id, &itemType, &itemID, &title, &status, &created, &completed); err != nil {
+		return map[string]any{"id": ""}
+	}
+	return map[string]any{"id": id, "item_type": itemType, "item_id": itemID, "title": title, "status": status, "created_at": created, "completed_at": completed}
+}
+
 func (s *Service) assistantAction(ctx context.Context, userID, id string) (map[string]any, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,action_type,payload_json,status,result_json,error,created_at,COALESCE(decided_at,''),COALESCE(executed_at,'') FROM assistant_actions WHERE id=? AND user_id=?`, id, userID)
 	action := scanAssistantAction(row)
@@ -963,7 +1111,7 @@ func scanAssistantAction(row scanner) map[string]any {
 }
 
 func validAssistantAction(actionType string) bool {
-	return actionType == "update_item_state" || actionType == "create_link" || actionType == "create_reminder"
+	return actionType == "update_item_state" || actionType == "create_link" || actionType == "create_reminder" || actionType == "create_action_item"
 }
 
 func (s *Service) validateAssistantPayload(ctx context.Context, userID, actionType string, payload map[string]any) error {
@@ -1000,6 +1148,15 @@ func (s *Service) validateAssistantPayload(ctx context.Context, userID, actionTy
 		if len(strings.TrimSpace(stringValue(payload["note"]))) > 500 {
 			return errInvalid("invalid reminder note")
 		}
+	case "create_action_item":
+		itemType, itemID := stringValue(payload["item_type"]), stringValue(payload["item_id"])
+		title := strings.TrimSpace(stringValue(payload["title"]))
+		if !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			return errInvalid("assistant action item target not found")
+		}
+		if title == "" || len(title) > 300 {
+			return errInvalid("invalid action item title")
+		}
 	default:
 		return errInvalid("unsupported assistant action")
 	}
@@ -1033,20 +1190,27 @@ func (s *Service) executeAssistantAction(ctx context.Context, userID, actionType
 			return nil, err
 		}
 		return map[string]any{"reminder_id": reminder["id"]}, nil
+	case "create_action_item":
+		item, err := s.createActionItem(ctx, userID, stringValue(payload["item_type"]), stringValue(payload["item_id"]), strings.TrimSpace(stringValue(payload["title"])), now)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"action_item_id": item["id"]}, nil
 	default:
 		return nil, errInvalid("unsupported assistant action")
 	}
 }
 
 func (s *Service) scanReminders(ctx context.Context, userID string, rows *sql.Rows) ([]map[string]any, error) {
-	defer rows.Close()
 	reminders := []map[string]any{}
 	for rows.Next() {
 		reminders = append(reminders, scanReminder(rows))
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, err
 	}
+	rows.Close()
 	for _, reminder := range reminders {
 		reminder["item_title"] = s.itemTitle(ctx, userID, stringValue(reminder["item_type"]), stringValue(reminder["item_id"]))
 	}

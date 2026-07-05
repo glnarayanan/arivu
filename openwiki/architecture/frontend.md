@@ -18,9 +18,9 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 ### Product Routes
 
 - `/dashboard`: bookmark list, search, URL capture, quick note, manual tags, PWA share-target prefill, and visible processing status.
-- `/inbox`: capture triage for bookmarks and notes, with per-item stage, priority, and next action controls.
+- `/inbox`: capture triage for bookmarks and notes, with per-item stage, priority, next action controls, and inline action items.
 - `/assistant`: approval ledger for allowlisted assistant action proposals, with payload/result inspection and approve/reject controls.
-- `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, reminders, and review actions.
+- `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions.
 - `/notes`: standalone notes for ideas and snippets that are not tied to a URL.
 - `/review`: resurfacing-backed daily review queue with complete and snooze actions.
 - `/duplicates`: duplicate groups and merge workflow.

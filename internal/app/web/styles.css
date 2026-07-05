@@ -218,6 +218,23 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   flex-wrap: wrap;
   gap: var(--space-3);
 }
+
+.task-panel {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+}
+
+.task-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  align-items: start;
+}
+
+.task-form .form-message {
+  grid-column: 1 / -1;
+}
 .top-actions {
   position: relative;
   justify-content: flex-end;
@@ -647,6 +664,7 @@ input::placeholder, textarea::placeholder {
   }
   .headline { font-size: 3rem; }
   .split { grid-template-columns: 1fr; }
+  .task-form { grid-template-columns: 1fr; }
   .menu { left: 0; right: auto; width: min(100%, 20rem); }
 }
 

@@ -717,7 +717,7 @@ async function inboxPage() {
       <section class="panel">
         <h2>Stages</h2>
         <div class="chips stage-tabs">
-          ${["inbox", "processing", "processed", "archived"].map((name) => `<a class="${name === stage ? "active" : ""}" href="/inbox?stage=${name}">${name} · ${Number(counts[name] || 0)}</a>`).join("")}
+          ${["inbox", "processing", "processed", "archived"].map((name) => `<a class="${name === stage ? "active" : ""}" ${name === stage ? `aria-current="page"` : ""} href="/inbox?stage=${name}">${name} · ${Number(counts[name] || 0)}</a>`).join("")}
         </div>
       </section>
     </section>
@@ -731,6 +731,7 @@ async function inboxPage() {
   document.querySelectorAll("[data-inbox-save]").forEach((button) => {
     button.addEventListener("click", () => updateInboxItem(button, button.closest("[data-inbox-item]").querySelector("[data-next-stage]").value));
   });
+  bindActionItemControls();
   bindPriorityButtons();
 }
 
@@ -765,6 +766,7 @@ function inboxCard(item) {
       <button type="button" class="secondary" data-inbox-stage="processed">Processed</button>
       <button type="button" class="secondary" data-inbox-stage="archived">Archive</button>
     </p>
+    ${actionItemsPanel(item.item_type, item.id, item.action_items || [])}
   </article>`;
 }
 
@@ -788,7 +790,7 @@ function priorityButtons(value) {
     [1, "Low"],
     [3, "Med"],
     [5, "High"],
-  ].map(([score, label]) => `<button type="button" class="secondary ${current === score ? "active" : ""}" data-priority="${score}">${label}</button>`).join("");
+  ].map(([score, label]) => `<button type="button" class="secondary ${current === score ? "active" : ""}" data-priority="${score}" aria-pressed="${current === score}">${label}</button>`).join("");
 }
 
 function bindPriorityButtons() {
@@ -797,6 +799,7 @@ function bindPriorityButtons() {
       const field = button.closest(".priority-field");
       field.querySelector("[data-importance]").value = button.dataset.priority;
       field.querySelectorAll("[data-priority]").forEach((item) => item.classList.toggle("active", item === button));
+      field.querySelectorAll("[data-priority]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
     });
   });
 }
@@ -829,6 +832,7 @@ async function assistantPage() {
             <option value="update_item_state">Update item state</option>
             <option value="create_link">Create link</option>
             <option value="create_reminder">Create reminder</option>
+            <option value="create_action_item">Create action item</option>
           </select>
         </div>
         <div class="field">
@@ -842,7 +846,7 @@ async function assistantPage() {
     <section class="panel">
       <h2>Queue</h2>
       <div class="chips stage-tabs">
-        ${["pending", "executed", "failed", "rejected", "all"].map((name) => `<a class="${name === status ? "active" : ""}" href="/assistant?status=${name}">${name}</a>`).join("")}
+        ${["pending", "executed", "failed", "rejected", "all"].map((name) => `<a class="${name === status ? "active" : ""}" ${name === status ? `aria-current="page"` : ""} href="/assistant?status=${name}">${name}</a>`).join("")}
       </div>
     </section>
     <section class="stack">
@@ -935,6 +939,11 @@ function updateAssistantPayloadTemplate(event) {
       item_id: "",
       due_at: new Date(Date.now() + 86400000).toISOString(),
       note: "",
+    },
+    create_action_item: {
+      item_type: "bookmark",
+      item_id: "",
+      title: "",
     },
   };
   document.querySelector("#assistant-payload").value = JSON.stringify(templates[event.currentTarget.value], null, 2);
@@ -1210,6 +1219,18 @@ async function bookmarkPage() {
       </section>
     </section>
     <section class="split">
+      <form class="panel form" data-action-item-form data-item-type="bookmark" data-item-id="${escapeHTML(id)}">
+        <h2>Action item</h2>
+        <div class="field"><label for="action-item-title">Task</label><input id="action-item-title" data-action-item-title type="text" maxlength="300" placeholder="Concrete thing to do with this"></div>
+        <p class="form-message" data-form-message hidden></p>
+        <button type="submit">Add task</button>
+      </form>
+      <section class="panel">
+        <h2>Action items</h2>
+        ${actionItemsList(bookmark.action_items || [])}
+      </section>
+    </section>
+    <section class="split">
       <form class="panel form" id="reminder-form">
         <h2>Reminder</h2>
         <div class="field"><label for="reminder-due">Due</label><input id="reminder-due" type="datetime-local" required></div>
@@ -1345,6 +1366,7 @@ async function bookmarkPage() {
   document.querySelectorAll("[data-link-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteLink(button));
   });
+  bindActionItemControls();
   const reminderForm = document.querySelector("#reminder-form");
   reminderForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1409,6 +1431,93 @@ function reminderList(reminders) {
       <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete</button>
     </p>
   </article>`).join("")}</div>`;
+}
+
+function actionItemsPanel(itemType, itemID, items) {
+  return `<section class="task-panel">
+    <form class="task-form" data-action-item-form data-item-type="${escapeHTML(itemType)}" data-item-id="${escapeHTML(itemID)}">
+      <label class="sr-only" for="task-${escapeHTML(itemType)}-${escapeHTML(itemID)}">Action item</label>
+      <input id="task-${escapeHTML(itemType)}-${escapeHTML(itemID)}" data-action-item-title type="text" maxlength="300" placeholder="Add a task for this item">
+      <button type="submit" class="secondary">Add task</button>
+      <p class="form-message" data-form-message hidden></p>
+    </form>
+    ${actionItemsList(items)}
+  </section>`;
+}
+
+function actionItemsList(items) {
+  if (!items.length) return `<p class="meta">No action items yet.</p>`;
+  return `<div class="stack">${items.map((item) => `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.status || "pending")} · ${escapeHTML(item.item_title || "")}</span></p>
+    <p class="button-row">
+      ${item.status === "completed" ? "" : `<button type="button" data-action-item-complete="${escapeHTML(item.id)}">Done</button>`}
+      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}">Delete</button>
+    </p>
+  </article>`).join("")}</div>`;
+}
+
+function bindActionItemControls() {
+  document.querySelectorAll("[data-action-item-form]").forEach((form) => {
+    form.addEventListener("submit", submitActionItem);
+  });
+  document.querySelectorAll("[data-action-item-complete]").forEach((button) => {
+    button.addEventListener("click", () => completeActionItem(button));
+  });
+  document.querySelectorAll("[data-action-item-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteActionItem(button));
+  });
+}
+
+async function submitActionItem(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const done = setButtonBusy(event.submitter, "Adding");
+  setFormMessage(form);
+  try {
+    await api("/action-items", {
+      method: "POST",
+      body: JSON.stringify({
+        item_type: form.dataset.itemType,
+        item_id: form.dataset.itemId,
+        title: form.querySelector("[data-action-item-title]").value,
+      }),
+    });
+    ui.toast("Action item added", "success");
+    render();
+  } catch (err) {
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+async function completeActionItem(button) {
+  const done = setButtonBusy(button, "Completing");
+  try {
+    await api(`/action-items/${button.dataset.actionItemComplete}/complete`, { method: "POST", body: "{}" });
+    ui.toast("Action item completed", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+async function deleteActionItem(button) {
+  const confirmed = await ui.confirmDestructive({ title: "Delete action item", body: "This removes only the task.", confirm: "Delete task", cancel: "Keep task" });
+  if (!confirmed) return;
+  const done = setButtonBusy(button, "Deleting");
+  try {
+    await api(`/action-items/${button.dataset.actionItemDelete}`, { method: "DELETE" });
+    ui.toast("Action item deleted", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 function localDateTimeToRFC3339(value) {

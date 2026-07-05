@@ -24,6 +24,7 @@ with foreign keys.
   source provenance.
 - `reminders`: one-time due reminders for bookmarks and notes with pending or
   completed status.
+- `action_items`: durable completable tasks attached to bookmarks or notes.
 - `assistant_actions`: per-user proposal ledger for allowlisted assistant
   mutations with pending, executed, rejected, and failed statuses.
 - `import_sources`: source metadata for migration/import reports, grouped into
@@ -51,10 +52,14 @@ with foreign keys.
 - Reminder due times are stored as UTC RFC3339 strings. API handlers validate
   item ownership before creating, completing, deleting, exporting, or restoring
   reminder rows.
+- `action_items` stores multiple concrete tasks per bookmark or note. Because
+  item targets are polymorphic, handlers and restore code validate target
+  ownership before inserts, and bookmark/note deletion explicitly removes their
+  action items.
 - `assistant_actions` stores bounded JSON payloads for allowlisted mutations:
-  updating item state, creating explicit links, and creating reminders. Proposal
-  and approval both validate ownership; stale proposals are marked `failed`
-  instead of executing.
+  updating item state, creating explicit links, creating reminders, and creating
+  action items. Proposal and approval both validate ownership; stale proposals
+  are marked `failed` instead of executing.
 - Tags are user-scoped and normalized by slug. Aliases are also user-scoped and
   unique by normalized alias slug.
 - Annotation selectors and saved-search filters are stored as bounded JSON

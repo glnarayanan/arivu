@@ -59,6 +59,7 @@ var (
 	quotaInboxUpdate      = mutationQuota{name: "inbox.update", limit: 600, window: time.Hour}
 	quotaLinksCreate      = mutationQuota{name: "links.create", limit: 300, window: time.Hour}
 	quotaRemindersCreate  = mutationQuota{name: "reminders.create", limit: 120, window: time.Hour}
+	quotaActionItemCreate = mutationQuota{name: "action_items.create", limit: 240, window: time.Hour}
 	quotaAssistantPropose = mutationQuota{name: "assistant.propose", limit: 60, window: time.Hour}
 	quotaAssistantApprove = mutationQuota{name: "assistant.approve", limit: 60, window: time.Hour}
 )
@@ -160,6 +161,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/reminders", a.withUserQuota(quotaRemindersCreate, a.bookmarks.CreateReminder))
 	mux.HandleFunc("POST /api/reminders/{id}/complete", a.withUser(a.bookmarks.CompleteReminder))
 	mux.HandleFunc("DELETE /api/reminders/{id}", a.withUser(a.bookmarks.DeleteReminder))
+	mux.HandleFunc("GET /api/action-items", a.withUser(a.bookmarks.ActionItems))
+	mux.HandleFunc("POST /api/action-items", a.withUserQuota(quotaActionItemCreate, a.bookmarks.CreateActionItem))
+	mux.HandleFunc("POST /api/action-items/{id}/complete", a.withUser(a.bookmarks.CompleteActionItem))
+	mux.HandleFunc("DELETE /api/action-items/{id}", a.withUser(a.bookmarks.DeleteActionItem))
 	mux.HandleFunc("GET /api/assistant/actions", a.withUser(a.bookmarks.AssistantActions))
 	mux.HandleFunc("POST /api/assistant/actions", a.withUserQuota(quotaAssistantPropose, a.bookmarks.ProposeAssistantAction))
 	mux.HandleFunc("POST /api/assistant/actions/{id}/approve", a.withUserQuota(quotaAssistantApprove, a.bookmarks.ApproveAssistantAction))

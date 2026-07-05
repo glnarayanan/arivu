@@ -24,6 +24,9 @@
 - Second-brain routes use the same web-audience boundary as bookmarks. Notes,
   annotations, tags, saved searches, review actions, and job status are all
   scoped by `user_id`.
+- Action items validate bookmark/note ownership before creation and restore.
+  Completes and deletes require `WHERE id=? AND user_id=?`; deleting a bookmark
+  or note also deletes its polymorphic action-item rows.
 - Assistant actions are proposal records, not generic tool calls. The server
   allowlists action types, stores bounded JSON payloads, requires explicit
   approval, atomically claims pending rows before execution, and revalidates

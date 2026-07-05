@@ -179,6 +179,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreItemStates(ctx, userID, backup["item_states"], oldBookmarks, oldNotes, now)
 	s.restoreItemLinks(ctx, userID, backup["item_links"], oldBookmarks, oldNotes, now)
 	s.restoreReminders(ctx, userID, backup["reminders"], oldBookmarks, oldNotes, now)
+	s.restoreActionItems(ctx, userID, backup["action_items"], oldBookmarks, oldNotes, now)
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	return map[string]any{"message": "Backup restored", "count": restored, "import_job_id": jobID, "source_report": s.importSourceReport(ctx, userID, jobID)}, true, nil
@@ -509,6 +510,7 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"item_states":    s.exportItemStates(ctx, userID),
 		"item_links":     s.exportItemLinks(ctx, userID),
 		"reminders":      s.exportReminders(ctx, userID),
+		"action_items":   s.exportActionItems(ctx, userID),
 	}, nil
 }
 
@@ -670,6 +672,18 @@ func (s *Service) exportReminders(ctx context.Context, userID string) []map[stri
 	return reminders
 }
 
+func (s *Service) exportActionItems(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,title,status,created_at,COALESCE(completed_at,'') FROM action_items WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	items, err := s.scanActionItems(ctx, userID, rows)
+	if err != nil {
+		return []map[string]any{}
+	}
+	return items
+}
+
 func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
 	for _, rawState := range listValue(raw) {
 		state, ok := rawState.(map[string]any)
@@ -721,6 +735,33 @@ func (s *Service) restoreReminders(ctx context.Context, userID string, raw any, 
 		}
 		completed := nullableStringValue(stringValue(reminder["completed_at"]))
 		_, _ = s.db.ExecContext(ctx, `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,note,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), userID, itemType, itemID, due.UTC().Format(time.RFC3339), note, status, fallback(stringValue(reminder["created_at"]), now), completed)
+	}
+}
+
+func (s *Service) restoreActionItems(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawItem := range listValue(raw) {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(item["item_type"])
+		itemID := remapItemID(itemType, stringValue(item["item_id"]), oldBookmarks, oldNotes)
+		if itemID == "" || !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			continue
+		}
+		title := strings.TrimSpace(stringValue(item["title"]))
+		if title == "" {
+			continue
+		}
+		if len(title) > 300 {
+			title = title[:300]
+		}
+		status := stringValue(item["status"])
+		if status != "completed" {
+			status = "pending"
+		}
+		completed := nullableStringValue(stringValue(item["completed_at"]))
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO action_items(id,user_id,item_type,item_id,title,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?)`, ids.New(), userID, itemType, itemID, title, status, fallback(stringValue(item["created_at"]), now), completed)
 	}
 }
 
