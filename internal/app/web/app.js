@@ -1166,6 +1166,8 @@ async function notesPage() {
   document.querySelectorAll("[data-note-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteStandaloneNote(button));
   });
+  bindActionItemControls();
+  bindReminderControls();
   focusNoteFromQuery();
 }
 
@@ -1179,6 +1181,15 @@ function standaloneNoteCard(note) {
       <button type="button" data-note-save="${escapeHTML(note.id)}">Save changes</button>
       <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete</button>
     </p>
+    <section>
+      <h3>Action items</h3>
+      ${actionItemsPanel("note", note.id, note.action_items || [])}
+    </section>
+    <section>
+      <h3>Reminder</h3>
+      ${reminderForm("note", note.id)}
+      ${reminderList(note.reminders || [])}
+    </section>
   </article>`;
 }
 
@@ -1307,13 +1318,7 @@ async function bookmarkPage() {
       </section>
     </section>
     <section class="split">
-      <form class="panel form" id="reminder-form">
-        <h2>Reminder</h2>
-        <div class="field"><label for="reminder-due">Due</label><input id="reminder-due" type="datetime-local" required></div>
-        <div class="field"><label for="reminder-note">Note</label><input id="reminder-note" type="text" maxlength="500" placeholder="Why this should come back"></div>
-        <p class="form-message" id="reminder-message" data-form-message hidden></p>
-        <button type="submit">Set reminder</button>
-      </form>
+      ${reminderForm("bookmark", id, "panel")}
       <section class="panel">
         <h2>Reminders</h2>
         ${reminderList(bookmark.reminders || [])}
@@ -1443,41 +1448,7 @@ async function bookmarkPage() {
     button.addEventListener("click", () => deleteLink(button));
   });
   bindActionItemControls();
-  const reminderForm = document.querySelector("#reminder-form");
-  reminderForm.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const dueAt = localDateTimeToRFC3339(document.querySelector("#reminder-due").value);
-    if (!dueAt) {
-      setFormMessage(reminderForm, "Choose a valid reminder time.");
-      return;
-    }
-    const done = setButtonBusy(event.submitter, "Saving reminder");
-    setFormMessage(reminderForm);
-    try {
-      await api("/reminders", {
-        method: "POST",
-        body: JSON.stringify({
-          item_type: "bookmark",
-          item_id: id,
-          due_at: dueAt,
-          note: document.querySelector("#reminder-note").value,
-        }),
-      });
-      ui.toast("Reminder set", "success");
-      render();
-    } catch (err) {
-      setFormMessage(reminderForm, err.message);
-      ui.toast(err.message, "error");
-    } finally {
-      done();
-    }
-  });
-  document.querySelectorAll("[data-reminder-complete]").forEach((button) => {
-    button.addEventListener("click", () => completeReminder(button));
-  });
-  document.querySelectorAll("[data-reminder-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteReminder(button));
-  });
+  bindReminderControls();
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;
@@ -1507,6 +1478,19 @@ function reminderList(reminders) {
       <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete</button>
     </p>
   </article>`).join("")}</div>`;
+}
+
+function reminderForm(itemType, itemID, layout = "inline") {
+  const dueID = `reminder-due-${itemType}-${itemID}`;
+  const noteID = `reminder-note-${itemType}-${itemID}`;
+  const className = layout === "panel" ? "panel form" : "task-form";
+  return `<form class="${className}" data-reminder-form data-item-type="${escapeHTML(itemType)}" data-item-id="${escapeHTML(itemID)}">
+    ${layout === "panel" ? "<h2>Reminder</h2>" : ""}
+    <div class="field"><label for="${escapeHTML(dueID)}">Due</label><input id="${escapeHTML(dueID)}" data-reminder-due type="datetime-local" required></div>
+    <div class="field"><label for="${escapeHTML(noteID)}">Note</label><input id="${escapeHTML(noteID)}" data-reminder-note type="text" maxlength="500" placeholder="Why this should come back"></div>
+    <p class="form-message" data-form-message hidden></p>
+    <button type="submit" class="secondary">Set reminder</button>
+  </form>`;
 }
 
 function actionItemsPanel(itemType, itemID, items) {
@@ -1544,6 +1528,18 @@ function bindActionItemControls() {
   });
 }
 
+function bindReminderControls() {
+  document.querySelectorAll("[data-reminder-form]").forEach((form) => {
+    form.addEventListener("submit", submitReminder);
+  });
+  document.querySelectorAll("[data-reminder-complete]").forEach((button) => {
+    button.addEventListener("click", () => completeReminder(button));
+  });
+  document.querySelectorAll("[data-reminder-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteReminder(button));
+  });
+}
+
 async function submitActionItem(event) {
   event.preventDefault();
   const form = event.currentTarget;
@@ -1559,6 +1555,36 @@ async function submitActionItem(event) {
       }),
     });
     ui.toast("Action item added", "success");
+    render();
+  } catch (err) {
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+async function submitReminder(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dueAt = localDateTimeToRFC3339(form.querySelector("[data-reminder-due]").value);
+  if (!dueAt) {
+    setFormMessage(form, "Choose a valid reminder time.");
+    return;
+  }
+  const done = setButtonBusy(event.submitter, "Saving reminder");
+  setFormMessage(form);
+  try {
+    await api("/reminders", {
+      method: "POST",
+      body: JSON.stringify({
+        item_type: form.dataset.itemType,
+        item_id: form.dataset.itemId,
+        due_at: dueAt,
+        note: form.querySelector("[data-reminder-note]").value,
+      }),
+    });
+    ui.toast("Reminder set", "success");
     render();
   } catch (err) {
     setFormMessage(form, err.message);

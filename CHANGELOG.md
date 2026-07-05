@@ -36,6 +36,7 @@ All notable changes to this project will be documented in this file.
 - Added an assistant action approval ledger for bounded second-brain mutations, with proposal, approve, reject, failed-action tracking, and an embedded Assistant review page.
 - Added durable action items for bookmarks and notes, with inline Inbox/bookmark controls, completion/deletion APIs, ownership validation, and JSON backup/restore support.
 - Added a Focus page that gathers pending action items and reminders without adding backend dependencies.
+- Added note-side action item and reminder controls so standalone notes can carry the same open loops as bookmarks from the Notes page.
 
 ### Changed
 

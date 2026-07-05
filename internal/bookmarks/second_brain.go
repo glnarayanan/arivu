@@ -25,10 +25,24 @@ func (s *Service) Notes(w http.ResponseWriter, r *http.Request, user auth.User) 
 		writeError(w, http.StatusInternalServerError, "Could not load notes")
 		return
 	}
-	defer rows.Close()
 	var notes []map[string]any
 	for rows.Next() {
 		notes = append(notes, scanNote(rows))
+	}
+	if err := rows.Err(); err != nil {
+		_ = rows.Close()
+		writeError(w, http.StatusInternalServerError, "Could not load notes")
+		return
+	}
+	if err := rows.Close(); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load notes")
+		return
+	}
+	for _, note := range notes {
+		id := stringValue(note["id"])
+		note["item_state"] = s.itemState(r.Context(), user.ID, "note", id)
+		note["action_items"] = s.itemActionItems(r.Context(), user.ID, "note", id)
+		note["reminders"] = s.itemReminders(r.Context(), user.ID, "note", id)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"notes": notes})
 }

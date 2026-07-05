@@ -22,8 +22,9 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 - `/focus`: daily work surface combining pending action items and reminders with links back to their source items.
 - `/assistant`: approval ledger for allowlisted assistant action proposals, with payload/result inspection and approve/reject controls.
 - `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions.
-- `/notes`: standalone notes for ideas and snippets that are not tied to a URL.
-  `/notes?note=<id>` focuses a specific note from Inbox, backlinks, or tasks.
+- `/notes`: standalone notes for ideas and snippets that are not tied to a URL,
+  including note-side action items and reminders. `/notes?note=<id>` focuses a
+  specific note from Inbox, backlinks, Focus, or tasks.
 - `/review`: resurfacing-backed daily review queue with complete and snooze actions.
 - `/duplicates`: duplicate groups and merge workflow.
 - `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.

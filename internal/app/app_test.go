@@ -722,6 +722,19 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if len(remindersBody.Reminders) != 1 || remindersBody.Reminders[0]["id"] != reminderID || remindersBody.Reminders[0]["note"] != "Use this in planning." {
 		t.Fatalf("unexpected reminders body: %#v", remindersBody)
 	}
+	noteReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"note","item_id":"`+searchNoteID+`","due_at":"`+now.Add(96*time.Hour).UTC().Format(time.RFC3339)+`","note":"Bring this note back."}`, accessCookie, csrfCookie)
+	if noteReminderResp.StatusCode != http.StatusOK {
+		t.Fatalf("create note reminder status = %d body=%s", noteReminderResp.StatusCode, readBody(noteReminderResp))
+	}
+	var noteReminderBody struct {
+		Reminder map[string]any `json:"reminder"`
+	}
+	_ = json.NewDecoder(noteReminderResp.Body).Decode(&noteReminderBody)
+	noteReminderResp.Body.Close()
+	noteReminderID, _ := noteReminderBody.Reminder["id"].(string)
+	if noteReminderID == "" || noteReminderBody.Reminder["item_title"] != "Recall field note" {
+		t.Fatalf("unexpected note reminder body: %#v", noteReminderBody)
+	}
 	missingReminderCSRF := httptest.NewRequest(http.MethodPost, "/api/reminders/"+reminderID+"/complete", strings.NewReader(`{}`))
 	missingReminderCSRF.Header.Set("Content-Type", "application/json")
 	missingReminderCSRF.AddCookie(accessCookie)
@@ -788,6 +801,36 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	noteActionID, _ := noteActionBody.ActionItem["id"].(string)
 	if noteActionID == "" || noteActionBody.ActionItem["item_title"] != "Recall field note" {
 		t.Fatalf("unexpected note action item body: %#v", noteActionBody)
+	}
+	notesListResp := adminRequest(t, handler, http.MethodGet, "/api/notes", "", accessCookie, csrfCookie)
+	if notesListResp.StatusCode != http.StatusOK {
+		t.Fatalf("notes list status = %d body=%s", notesListResp.StatusCode, readBody(notesListResp))
+	}
+	var notesListBody struct {
+		Notes []map[string]any `json:"notes"`
+	}
+	_ = json.NewDecoder(notesListResp.Body).Decode(&notesListBody)
+	notesListResp.Body.Close()
+	var decoratedNote map[string]any
+	for _, note := range notesListBody.Notes {
+		if note["id"] == searchNoteID {
+			decoratedNote = note
+			break
+		}
+	}
+	if decoratedNote == nil {
+		t.Fatalf("notes list missing recall note: %#v", notesListBody)
+	}
+	if state, _ := decoratedNote["item_state"].(map[string]any); state["stage"] != "processing" || state["next_action"] != "Synthesize into the recall project." {
+		t.Fatalf("notes list missing note item state: %#v", decoratedNote["item_state"])
+	}
+	actionItems, _ := decoratedNote["action_items"].([]any)
+	if len(actionItems) != 1 || actionItems[0].(map[string]any)["id"] != noteActionID {
+		t.Fatalf("notes list missing note action items: %#v", decoratedNote["action_items"])
+	}
+	reminders, _ := decoratedNote["reminders"].([]any)
+	if len(reminders) != 1 || reminders[0].(map[string]any)["id"] != noteReminderID {
+		t.Fatalf("notes list missing note reminders: %#v", decoratedNote["reminders"])
 	}
 	crossActionResp := adminRequest(t, handler, http.MethodPost, "/api/action-items", `{"item_type":"note","item_id":"`+otherNoteID+`","title":"Steal this"}`, accessCookie, csrfCookie)
 	if crossActionResp.StatusCode != http.StatusNotFound {
@@ -1098,7 +1141,16 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if len(exportBody.ItemLinks) != 1 || exportBody.ItemLinks[0]["to_id"] != searchNoteID {
 		t.Fatalf("export missing item link: %#v", exportBody.ItemLinks)
 	}
-	if len(exportBody.Reminders) != 1 || exportBody.Reminders[0]["item_id"] != "capture" {
+	var sawBookmarkReminder, sawNoteReminder bool
+	for _, reminder := range exportBody.Reminders {
+		if reminder["item_id"] == "capture" && reminder["note"] == "Use this in planning." {
+			sawBookmarkReminder = true
+		}
+		if reminder["item_id"] == searchNoteID && reminder["note"] == "Bring this note back." {
+			sawNoteReminder = true
+		}
+	}
+	if len(exportBody.Reminders) != 2 || !sawBookmarkReminder || !sawNoteReminder {
 		t.Fatalf("export missing reminder: %#v", exportBody.Reminders)
 	}
 	if len(exportBody.ActionItems) != 2 {
@@ -1238,7 +1290,19 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if len(restoredExport.ItemLinks) != 1 || restoredExport.ItemLinks[0]["to_id"] == searchNoteID || restoredExport.ItemLinks[0]["label"] != "supports" {
 		t.Fatalf("restored export missing remapped item link: %#v", restoredExport.ItemLinks)
 	}
-	if len(restoredExport.Reminders) != 1 || restoredExport.Reminders[0]["item_id"] == "capture" || restoredExport.Reminders[0]["note"] != "Use this in planning." {
+	var restoredBookmarkReminder, restoredNoteReminder bool
+	for _, reminder := range restoredExport.Reminders {
+		if reminder["item_id"] == "capture" || reminder["item_id"] == searchNoteID {
+			t.Fatalf("restored export kept original reminder item id: %#v", restoredExport.Reminders)
+		}
+		if reminder["item_type"] == "bookmark" && reminder["note"] == "Use this in planning." {
+			restoredBookmarkReminder = true
+		}
+		if reminder["item_type"] == "note" && reminder["note"] == "Bring this note back." {
+			restoredNoteReminder = true
+		}
+	}
+	if len(restoredExport.Reminders) != 2 || !restoredBookmarkReminder || !restoredNoteReminder {
 		t.Fatalf("restored export missing remapped reminder: %#v", restoredExport.Reminders)
 	}
 	if len(restoredExport.ActionItems) != 2 {
@@ -1621,7 +1685,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `/notes?note=${encodeURIComponent(item.id)}`, `function focusNoteFromQuery()`, `async function focusPage()`, `/action-items?status=pending`, `/reminders?status=pending`} {
+	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `/notes?note=${encodeURIComponent(item.id)}`, `function focusNoteFromQuery()`, `async function focusPage()`, `/action-items?status=pending`, `/reminders?status=pending`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function bindReminderControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}

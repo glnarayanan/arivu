@@ -45,6 +45,9 @@ Second-brain v1 adds user-authored context around bookmarks:
   separate from the single `next_action` processing prompt and from dated
   reminders, so one saved item can carry a checklist without becoming a project
   management system.
+- The Notes page decorates standalone notes with their processing state, action
+  items, and reminders after closing the note query cursor, so note-side open
+  loops are visible without adding a separate note detail route.
 - The Focus page reads pending action items and reminders through existing APIs,
   giving users one working surface for open loops without introducing a new
   backend workflow.
