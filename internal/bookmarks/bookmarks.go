@@ -946,14 +946,7 @@ func (s *Service) graphTerms(ctx context.Context, userID, table, column string, 
 }
 
 func scanBookmarkWithEmbedding(row scanner, embedding *[]byte) map[string]any {
-	var id, urlv, title, description, domain, favicon, thumbnail, source, created, updated, lastAccessed, html, text sql.NullString
-	var readingTime, viewCount, version sql.NullInt64
-	var readStatus sql.NullBool
-	err := row.Scan(&id, &urlv, &title, &description, &domain, &favicon, &thumbnail, &readingTime, &readStatus, &source, &created, &updated, &lastAccessed, &viewCount, &version, &html, &text, embedding)
-	if err != nil {
-		return map[string]any{"id": ""}
-	}
-	return map[string]any{"id": id.String, "url": urlv.String, "title": title.String, "description": description.String, "domain": domain.String, "favicon": nullString(favicon), "thumbnail": nullString(thumbnail), "reading_time": readingTime.Int64, "read_status": readStatus.Bool, "source": source.String, "created_at": created.String, "updated_at": updated.String, "last_accessed": nullString(lastAccessed), "view_count": viewCount.Int64, "version": version.Int64, "html_content": sanitize.HTML(html.String), "text_content": text.String}
+	return scanBookmarkRow(row, embedding)
 }
 
 func duplicatePayloads(bookmarks []duplicateBookmark) []map[string]any {
@@ -1744,10 +1737,15 @@ type scanner interface {
 }
 
 func scanBookmark(row scanner) map[string]any {
+	return scanBookmarkRow(row)
+}
+
+func scanBookmarkRow(row scanner, extra ...any) map[string]any {
 	var id, urlv, title, description, domain, favicon, thumbnail, source, created, updated, lastAccessed, html, text sql.NullString
 	var readingTime, viewCount, version sql.NullInt64
 	var readStatus sql.NullBool
-	err := row.Scan(&id, &urlv, &title, &description, &domain, &favicon, &thumbnail, &readingTime, &readStatus, &source, &created, &updated, &lastAccessed, &viewCount, &version, &html, &text)
+	dest := []any{&id, &urlv, &title, &description, &domain, &favicon, &thumbnail, &readingTime, &readStatus, &source, &created, &updated, &lastAccessed, &viewCount, &version, &html, &text}
+	err := row.Scan(append(dest, extra...)...)
 	if err != nil {
 		return map[string]any{"id": ""}
 	}

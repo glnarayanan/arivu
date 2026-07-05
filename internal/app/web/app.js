@@ -55,10 +55,6 @@ function getCookie(name) {
   return document.cookie.split("; ").find((row) => row.startsWith(`${name}=`))?.split("=")[1] || "";
 }
 
-function html(strings, ...values) {
-  return strings.reduce((out, str, i) => out + str + escapeHTML(values[i] ?? ""), "");
-}
-
 function escapeHTML(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
 }
@@ -1703,13 +1699,6 @@ function auditEvents(events) {
 function auditMetadata(metadata) {
   if (!metadata || !Object.keys(metadata).length) return "";
   return `<p class="meta">${escapeHTML(JSON.stringify(metadata))}</p>`;
-}
-
-function simplePage(title, copy) {
-  return async () => {
-    await requireUser();
-    setRoot(shell(title, `<section class="panel"><p>${escapeHTML(copy)}</p></section>`));
-  };
 }
 
 async function requireUser() {

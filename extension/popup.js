@@ -1,8 +1,6 @@
 const DEFAULT_API_URL = 'https://arivu.app/api';
 
-let currentTab = null;
 let accessToken = null;
-let refreshToken = null;
 let apiUrl = DEFAULT_API_URL;
 
 async function getApiUrl() {
@@ -38,7 +36,6 @@ async function init() {
 
   const tokenResult = await chrome.storage.session.get(['accessToken', 'refreshToken']);
   accessToken = tokenResult.accessToken;
-  refreshToken = tokenResult.refreshToken;
 
   if (!accessToken) {
     document.getElementById('loginPrompt').style.display = 'block';
@@ -58,7 +55,6 @@ async function init() {
   document.getElementById('saveForm').style.display = 'block';
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  currentTab = tab;
 
   document.getElementById('url').value = tab.url;
   document.getElementById('title').value = tab.title;

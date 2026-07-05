@@ -46,6 +46,7 @@ All notable changes to this project will be documented in this file.
 - Extension popup saves now accept quick notes and comma-separated tags.
 - Extension self-hosted setup now requests browser host permission for the saved API origin and registers the token content script dynamically, avoiding manual manifest edits for custom domains.
 - CI now checks embedded frontend and extension JavaScript syntax and runs the extension URL/origin self-test.
+- Removed the extension popup's remote Google Fonts import in favor of native system font stacks.
 - Bookmark list and search now support normalized tag, domain, source, read-status, and created-date filters, and text search includes linked annotations and notes.
 - Cited answer mode now synthesizes deterministic answer text from saved summaries, highlights, snippets, and standalone notes while preserving citations back to the source items.
 - Bookmark import now accepts safe URLs from JSON arrays, object-wrapped exports, browser/Netscape HTML, and newline URL lists while recording source hints for inserted bookmarks.

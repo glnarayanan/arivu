@@ -33,6 +33,8 @@ called through narrow direct HTTP clients.
 
 The shipped frontend has no npm dependency tree. UI primitives, routing, API
 calls, state, and motion are first-party browser JavaScript and CSS.
+The extension popup also uses native system font stacks and does not import
+remote font CSS.
 
 ## Adding A Dependency
 
