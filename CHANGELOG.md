@@ -30,6 +30,7 @@ All notable changes to this project will be documented in this file.
 - Added a reader control for copying selected archived text into a new quote annotation.
 - Added inline reader controls for editing and deleting saved annotations.
 - Added standalone notes to the daily review queue, with note completion and snooze support.
+- Added a durable Inbox processing loop for bookmarks and notes, including per-item stage, priority, next action, reader controls, review context, and JSON backup/restore support.
 
 ### Changed
 
@@ -60,6 +61,7 @@ All notable changes to this project will be documented in this file.
 - Bookmark saves now accept quick notes, selected quotes, and manual tags, and return a `job_id` so the UI can show enrichment progress.
 - Extension selected-text saves now persist as quote annotations, with a backend compatibility alias for the older `annotation` payload field.
 - Extension popup saves now accept quick notes and comma-separated tags.
+- Extension popup saves now persist page titles and offer direct post-save links to the Inbox or saved bookmark instead of closing immediately.
 - Extension self-hosted setup now requests browser host permission for the saved API origin and registers the token content script dynamically, avoiding manual manifest edits for custom domains.
 - CI now checks embedded frontend and extension JavaScript syntax and runs the extension URL/origin self-test.
 - Removed the extension popup's remote Google Fonts import in favor of native system font stacks.

@@ -62,6 +62,7 @@ func (s *Service) CreateNote(w http.ResponseWriter, r *http.Request, user auth.U
 		writeError(w, http.StatusInternalServerError, "Could not create note")
 		return
 	}
+	_ = s.upsertItemState(r.Context(), user.ID, "note", id, "inbox", 0, "", now)
 	if body.BookmarkID != "" {
 		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO bookmark_notes(bookmark_id,note_id,user_id,created_at) VALUES(?,?,?,?)`, body.BookmarkID, id, user.ID, now)
 	}
@@ -324,6 +325,7 @@ func (s *Service) Review(w http.ResponseWriter, r *http.Request, user auth.User)
 		}
 		item := cloneMap(candidate.Bookmark)
 		item["item_type"] = "bookmark"
+		item["item_state"] = s.itemState(r.Context(), user.ID, "bookmark", id)
 		items = append(items, item)
 	}
 	if len(items) < limit {
@@ -337,22 +339,162 @@ func (s *Service) Review(w http.ResponseWriter, r *http.Request, user auth.User)
 	writeJSON(w, http.StatusOK, map[string]any{"items": items})
 }
 
+func (s *Service) Inbox(w http.ResponseWriter, r *http.Request, user auth.User) {
+	stage := strings.TrimSpace(r.URL.Query().Get("stage"))
+	if stage == "" {
+		stage = "inbox"
+	}
+	if !validItemStage(stage) {
+		writeError(w, http.StatusBadRequest, "Invalid inbox stage")
+		return
+	}
+	limit := queryInt(r, "limit", 100, 1, 200)
+	items, err := s.inboxItems(r.Context(), user.ID, stage, limit)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load inbox")
+		return
+	}
+	counts := s.inboxCounts(r.Context(), user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"items": items, "counts": counts, "stage": stage})
+}
+
+func (s *Service) UpdateInboxItem(w http.ResponseWriter, r *http.Request, user auth.User) {
+	itemType, itemID, ok := splitReviewItem(r.PathValue("item_id"))
+	if !ok || !s.reviewItemExists(r.Context(), user.ID, itemType, itemID) {
+		writeError(w, http.StatusNotFound, "Inbox item not found")
+		return
+	}
+	var body struct {
+		Stage      string `json:"stage"`
+		Importance int    `json:"importance"`
+		NextAction string `json:"next_action"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	stage := strings.TrimSpace(body.Stage)
+	if stage == "" {
+		stage = "processing"
+	}
+	if !validItemStage(stage) {
+		writeError(w, http.StatusBadRequest, "Invalid inbox stage")
+		return
+	}
+	if body.Importance < 0 || body.Importance > 5 {
+		writeError(w, http.StatusBadRequest, "importance must be between 0 and 5")
+		return
+	}
+	nextAction := strings.TrimSpace(body.NextAction)
+	if len(nextAction) > 500 {
+		writeError(w, http.StatusBadRequest, "next_action is too large")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := s.upsertItemState(r.Context(), user.ID, itemType, itemID, stage, body.Importance, nextAction, now); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not update inbox item")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"item_type": itemType, "item_id": itemID, "stage": stage, "importance": body.Importance, "next_action": nextAction, "updated_at": now})
+}
+
+func (s *Service) inboxItems(ctx context.Context, userID, stage string, limit int) ([]map[string]any, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT 'bookmark',b.id,b.title,b.url,COALESCE(b.description,''),b.source,b.domain,COALESCE(st.stage,'inbox'),COALESCE(st.importance,0),COALESCE(st.next_action,''),b.created_at,b.updated_at
+		FROM bookmarks b
+		LEFT JOIN item_states st ON st.user_id=b.user_id AND st.item_type='bookmark' AND st.item_id=b.id
+		WHERE b.user_id=? AND COALESCE(st.stage,'inbox')=?
+		UNION ALL
+		SELECT 'note',n.id,n.title,'',substr(n.body,1,500),n.source,'',COALESCE(st.stage,'inbox'),COALESCE(st.importance,0),COALESCE(st.next_action,''),n.created_at,n.updated_at
+		FROM notes n
+		LEFT JOIN item_states st ON st.user_id=n.user_id AND st.item_type='note' AND st.item_id=n.id
+		WHERE n.user_id=? AND COALESCE(st.stage,'inbox')=?
+		ORDER BY 12 DESC
+		LIMIT ?`, userID, stage, userID, stage, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var itemType, id, title, url, description, source, domain, stateStage, nextAction, created, updated string
+		var importance int
+		_ = rows.Scan(&itemType, &id, &title, &url, &description, &source, &domain, &stateStage, &importance, &nextAction, &created, &updated)
+		items = append(items, map[string]any{"item_type": itemType, "id": id, "title": fallback(title, "Untitled"), "url": url, "description": description, "source": source, "domain": domain, "stage": stateStage, "importance": importance, "next_action": nextAction, "created_at": created, "updated_at": updated})
+	}
+	return items, rows.Err()
+}
+
+func (s *Service) inboxCounts(ctx context.Context, userID string) map[string]int {
+	counts := map[string]int{"inbox": 0, "processing": 0, "processed": 0, "archived": 0}
+	for _, stage := range []string{"inbox", "processing", "processed", "archived"} {
+		var bookmarks, notes int
+		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM bookmarks b LEFT JOIN item_states st ON st.user_id=b.user_id AND st.item_type='bookmark' AND st.item_id=b.id WHERE b.user_id=? AND COALESCE(st.stage,'inbox')=?`, userID, stage).Scan(&bookmarks)
+		_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM notes n LEFT JOIN item_states st ON st.user_id=n.user_id AND st.item_type='note' AND st.item_id=n.id WHERE n.user_id=? AND COALESCE(st.stage,'inbox')=?`, userID, stage).Scan(&notes)
+		counts[stage] = bookmarks + notes
+	}
+	return counts
+}
+
+func (s *Service) upsertItemState(ctx context.Context, userID, itemType, itemID, stage string, importance int, nextAction, now string) error {
+	if !validItemStage(stage) || (itemType != "bookmark" && itemType != "note") {
+		return errInvalid("invalid item state")
+	}
+	_, err := s.db.ExecContext(ctx, `INSERT INTO item_states(user_id,item_type,item_id,stage,importance,next_action,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(user_id,item_type,item_id) DO UPDATE SET stage=excluded.stage,importance=excluded.importance,next_action=excluded.next_action,updated_at=excluded.updated_at`, userID, itemType, itemID, stage, importance, nextAction, now, now)
+	return err
+}
+
+func (s *Service) setItemStage(ctx context.Context, userID, itemType, itemID, stage, now string) error {
+	if !validItemStage(stage) || (itemType != "bookmark" && itemType != "note") {
+		return errInvalid("invalid item state")
+	}
+	res, err := s.db.ExecContext(ctx, `UPDATE item_states SET stage=?,updated_at=? WHERE user_id=? AND item_type=? AND item_id=?`, stage, now, userID, itemType, itemID)
+	if err != nil {
+		return err
+	}
+	if rows, _ := res.RowsAffected(); rows > 0 {
+		return nil
+	}
+	return s.upsertItemState(ctx, userID, itemType, itemID, stage, 0, "", now)
+}
+
+func (s *Service) itemState(ctx context.Context, userID, itemType, itemID string) map[string]any {
+	state := map[string]any{"stage": "inbox", "importance": 0, "next_action": ""}
+	var stage, nextAction, created, updated string
+	var importance int
+	err := s.db.QueryRowContext(ctx, `SELECT stage,importance,next_action,created_at,updated_at FROM item_states WHERE user_id=? AND item_type=? AND item_id=?`, userID, itemType, itemID).Scan(&stage, &importance, &nextAction, &created, &updated)
+	if err != nil {
+		return state
+	}
+	state["stage"] = stage
+	state["importance"] = importance
+	state["next_action"] = nextAction
+	state["created_at"] = created
+	state["updated_at"] = updated
+	return state
+}
+
+func validItemStage(stage string) bool {
+	return stage == "inbox" || stage == "processing" || stage == "processed" || stage == "archived"
+}
+
 func (s *Service) reviewNotes(ctx context.Context, userID string, limit int) ([]map[string]any, error) {
 	if limit <= 0 {
 		return []map[string]any{}, nil
 	}
 	now := time.Now().UTC()
 	cutoff := now.AddDate(0, 0, -1).Format(time.RFC3339)
-	rows, err := s.db.QueryContext(ctx, `SELECT id,title,substr(body,1,500),source,created_at,updated_at FROM notes n WHERE user_id=? AND updated_at<=? AND NOT EXISTS (SELECT 1 FROM bookmark_notes bn WHERE bn.note_id=n.id AND bn.user_id=n.user_id) AND NOT EXISTS (SELECT 1 FROM review_events re WHERE re.user_id=n.user_id AND re.item_type='note' AND re.item_id=n.id AND (re.created_at>=? OR (re.action='snoozed' AND re.snoozed_until>?))) ORDER BY updated_at ASC LIMIT ?`, userID, cutoff, cutoff, now.Format(time.RFC3339), limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT n.id,n.title,substr(n.body,1,500),n.source,n.created_at,n.updated_at,COALESCE(st.stage,'inbox'),COALESCE(st.importance,0),COALESCE(st.next_action,'') FROM notes n LEFT JOIN item_states st ON st.user_id=n.user_id AND st.item_type='note' AND st.item_id=n.id WHERE n.user_id=? AND n.updated_at<=? AND NOT EXISTS (SELECT 1 FROM bookmark_notes bn WHERE bn.note_id=n.id AND bn.user_id=n.user_id) AND NOT EXISTS (SELECT 1 FROM review_events re WHERE re.user_id=n.user_id AND re.item_type='note' AND re.item_id=n.id AND (re.created_at>=? OR (re.action='snoozed' AND re.snoozed_until>?))) ORDER BY n.updated_at ASC LIMIT ?`, userID, cutoff, cutoff, now.Format(time.RFC3339), limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var notes []map[string]any
 	for rows.Next() {
-		var id, title, body, source, created, updated string
-		_ = rows.Scan(&id, &title, &body, &source, &created, &updated)
-		notes = append(notes, map[string]any{"id": id, "item_type": "note", "title": fallback(title, "Untitled note"), "description": body, "source": source, "created_at": created, "updated_at": updated, "resurfacing_reason": "Review note"})
+		var id, title, body, source, created, updated, stage, nextAction string
+		var importance int
+		_ = rows.Scan(&id, &title, &body, &source, &created, &updated, &stage, &importance, &nextAction)
+		notes = append(notes, map[string]any{"id": id, "item_type": "note", "title": fallback(title, "Untitled note"), "description": body, "source": source, "created_at": created, "updated_at": updated, "resurfacing_reason": "Review note", "item_state": map[string]any{"stage": stage, "importance": importance, "next_action": nextAction}})
 	}
 	return notes, rows.Err()
 }
@@ -368,6 +510,7 @@ func (s *Service) CompleteReview(w http.ResponseWriter, r *http.Request, user au
 	if itemType == "bookmark" {
 		_, _ = s.db.ExecContext(r.Context(), `UPDATE bookmarks SET read_status=1,last_accessed=?,view_count=view_count+1,updated_at=? WHERE id=? AND user_id=?`, now, now, itemID, user.ID)
 	}
+	_ = s.setItemStage(r.Context(), user.ID, itemType, itemID, "processed", now)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Review completed"})
 }
 

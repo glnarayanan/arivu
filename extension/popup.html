@@ -146,6 +146,26 @@
       color: #991b1b;
     }
 
+    .saved-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .saved-actions a {
+      border: 2px solid #0F0F0F;
+      color: #0F0F0F;
+      background: white;
+      padding: 9px 8px;
+      text-align: center;
+      text-decoration: none;
+      font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
     .login-prompt {
       text-align: center;
       padding: 32px 20px;
@@ -271,6 +291,7 @@
       </div>
       <button type="submit" class="btn" id="saveBtn">Save Bookmark</button>
       <div id="status" class="status" style="display:none;"></div>
+      <div id="savedActions" class="saved-actions" style="display:none;"></div>
     </form>
   </div>
 

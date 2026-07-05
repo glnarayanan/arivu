@@ -18,6 +18,8 @@ with foreign keys.
 - `tags`, `tag_aliases`, and `bookmark_tags`: normalized per-user tags with aliases so provider suggestions and manual tags converge instead of creating synonym clutter.
 - `saved_searches`: named user searches with structured filter JSON.
 - `review_events`: review completion and snooze history for bookmarks and notes.
+- `item_states`: per-user processing stage, priority, and next action for bookmark
+  and note inbox workflows.
 - `import_sources`: source metadata for migration/import reports, grouped into
   per-import source reports for the Settings import status view.
 - `import_jobs`: user-facing import progress with fetched, AI-processed,
@@ -34,6 +36,9 @@ with foreign keys.
   When processing succeeds, deterministic local extraction fills summary bullets,
   highlight quotes, suggested tags, graph entities, and graph concepts. Gemini
   embeddings are added only when configured.
+- New bookmarks and notes enter `item_states` as `inbox`. Users can move them
+  through `processing`, `processed`, and `archived` without changing the source
+  bookmark or note content.
 - Tags are user-scoped and normalized by slug. Aliases are also user-scoped and
   unique by normalized alias slug.
 - Annotation selectors and saved-search filters are stored as bounded JSON

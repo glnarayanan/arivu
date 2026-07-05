@@ -29,6 +29,11 @@ To optimize storage and prevent workspace clutter, saving a bookmark triggers a 
 Second-brain v1 adds user-authored context around bookmarks:
 
 - Quick notes, selected quotes, and manual tags can be submitted with a new save.
+- New bookmarks and notes enter the Inbox so users can decide whether each item
+  should stay unprocessed, move into active processing, become processed, or be
+  archived from the working loop.
+- Processing state stores priority and the next action separately from the
+  original bookmark or note, so review and exports preserve why an item was kept.
 - Bookmark detail renders summaries, tags, related items, read state, annotations, linked notes, and review completion in one place.
 - The review queue is powered by resurfacing candidates and records completion or snooze events.
 - Tags are normalized and alias-aware so manual tags and provider suggestions converge.
@@ -48,6 +53,9 @@ Second-brain v1 adds user-authored context around bookmarks:
   them.
 - `/api/bookmarks/export` supports JSON, CSV, browser HTML, and
   Markdown/Obsidian-style links.
+- Full JSON export and restore include inbox processing state, remapped under
+  the importing user alongside notes, annotations, tags, searches, and review
+  events.
 
 ---
 

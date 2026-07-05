@@ -176,6 +176,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreTags(ctx, userID, backup["tags"], now)
 	s.restoreSavedSearches(ctx, userID, backup["saved_searches"], now)
 	s.restoreReviewEvents(ctx, userID, backup["review_events"], oldBookmarks, oldNotes, now)
+	s.restoreItemStates(ctx, userID, backup["item_states"], oldBookmarks, oldNotes, now)
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	return map[string]any{"message": "Backup restored", "count": restored, "import_job_id": jobID, "source_report": s.importSourceReport(ctx, userID, jobID)}, true, nil
@@ -503,6 +504,7 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"import_jobs":    s.exportImportJobs(ctx, userID),
 		"import_sources": s.exportImportSources(ctx, userID),
 		"review_events":  s.exportReviewEvents(ctx, userID),
+		"item_states":    s.exportItemStates(ctx, userID),
 	}, nil
 }
 
@@ -621,6 +623,51 @@ func (s *Service) exportReviewEvents(ctx context.Context, userID string) []map[s
 		events = append(events, map[string]any{"item_type": itemType, "item_id": itemID, "action": action, "snoozed_until": snoozedUntil, "created_at": created})
 	}
 	return events
+}
+
+func (s *Service) exportItemStates(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT item_type,item_id,stage,importance,next_action,created_at,updated_at FROM item_states WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	states := []map[string]any{}
+	for rows.Next() {
+		var itemType, itemID, stage, nextAction, created, updated string
+		var importance int
+		_ = rows.Scan(&itemType, &itemID, &stage, &importance, &nextAction, &created, &updated)
+		states = append(states, map[string]any{"item_type": itemType, "item_id": itemID, "stage": stage, "importance": importance, "next_action": nextAction, "created_at": created, "updated_at": updated})
+	}
+	return states
+}
+
+func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawState := range listValue(raw) {
+		state, ok := rawState.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(state["item_type"])
+		itemID := stringValue(state["item_id"])
+		if itemType == "bookmark" {
+			itemID = oldBookmarks[itemID]
+		} else if itemType == "note" {
+			itemID = oldNotes[itemID]
+		}
+		stage := stringValue(state["stage"])
+		if itemID == "" || !validItemStage(stage) {
+			continue
+		}
+		importance := intValue(state["importance"])
+		if importance < 0 || importance > 5 {
+			importance = 0
+		}
+		nextAction := strings.TrimSpace(stringValue(state["next_action"]))
+		if len(nextAction) > 500 {
+			nextAction = nextAction[:500]
+		}
+		_ = s.upsertItemState(ctx, userID, itemType, itemID, stage, importance, nextAction, fallback(stringValue(state["updated_at"]), now))
+	}
 }
 
 func writeObsidianBookmark(w io.Writer, bookmark map[string]any) {

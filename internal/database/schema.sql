@@ -184,6 +184,20 @@ CREATE TABLE IF NOT EXISTS review_events (
 
 CREATE INDEX IF NOT EXISTS idx_review_events_item ON review_events(user_id, item_type, item_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS item_states (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK (item_type IN ('bookmark','note')),
+  item_id TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('inbox','processing','processed','archived')),
+  importance INTEGER NOT NULL DEFAULT 0 CHECK (importance BETWEEN 0 AND 5),
+  next_action TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, item_type, item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_states_user_stage ON item_states(user_id, stage, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS collections (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

@@ -162,18 +162,21 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	if resp := bearerRequest(t, handler, http.MethodGet, "/api/extension/collections", "", extensionToken); resp.StatusCode != http.StatusOK {
 		t.Fatalf("extension scoped collections status = %d body=%s", resp.StatusCode, readBody(resp))
 	}
-	if resp := bearerRequest(t, handler, http.MethodPost, "/api/extension/bookmarks", `{"url":"https://example.com/extension","annotation":"Selected passage"}`, extensionToken); resp.StatusCode != http.StatusOK {
+	if resp := bearerRequest(t, handler, http.MethodPost, "/api/extension/bookmarks", `{"url":"https://example.com/extension","title":"Extension Capture","annotation":"Selected passage"}`, extensionToken); resp.StatusCode != http.StatusOK {
 		t.Fatalf("extension scoped bookmark status = %d body=%s", resp.StatusCode, readBody(resp))
 	} else {
 		resp.Body.Close()
 	}
 	userID := userIDForEmail(t, a, "admin@example.com")
-	var quote string
-	if err := a.db.QueryRowContext(context.Background(), `SELECT a.quote FROM annotations a JOIN bookmarks b ON b.id=a.bookmark_id AND b.user_id=a.user_id WHERE a.user_id=? AND b.url=?`, userID, "https://example.com/extension").Scan(&quote); err != nil {
+	var quote, title string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT a.quote,b.title FROM annotations a JOIN bookmarks b ON b.id=a.bookmark_id AND b.user_id=a.user_id WHERE a.user_id=? AND b.url=?`, userID, "https://example.com/extension").Scan(&quote, &title); err != nil {
 		t.Fatalf("extension selected-text annotation missing: %v", err)
 	}
 	if quote != "Selected passage" {
 		t.Fatalf("extension quote = %q", quote)
+	}
+	if title != "Extension Capture" {
+		t.Fatalf("extension title = %q", title)
 	}
 }
 
@@ -385,7 +388,7 @@ func TestExtensionPopupCapturesNoteAndTags(t *testing.T) {
 		}
 	}
 	source := string(script)
-	for _, expected := range []string{"function splitTags", "payload.note = note", "payload.tags = tags", "ensureApiPermission", "configureApiOrigin", "ArivuExtensionURL.normalizeApiUrl"} {
+	for _, expected := range []string{"function splitTags", "payload.title = title", "payload.note = note", "payload.tags = tags", "Saved to Inbox", "Open Inbox", "Open Item", "replaceChildren", "ensureApiPermission", "configureApiOrigin", "ArivuExtensionURL.normalizeApiUrl"} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("extension popup script missing %s", expected)
 		}
@@ -513,6 +516,42 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	_, _ = a.db.ExecContext(context.Background(), `UPDATE notes SET created_at=?,updated_at=? WHERE id=?`, now.AddDate(0, 0, -4).Format(time.RFC3339), now.AddDate(0, 0, -4).Format(time.RFC3339), snoozeNoteID)
 
+	inboxResp := adminRequest(t, handler, http.MethodGet, "/api/inbox?stage=inbox", "", accessCookie, csrfCookie)
+	if inboxResp.StatusCode != http.StatusOK {
+		t.Fatalf("inbox status = %d body=%s", inboxResp.StatusCode, readBody(inboxResp))
+	}
+	var inboxBody struct {
+		Items  []map[string]any `json:"items"`
+		Counts map[string]int   `json:"counts"`
+	}
+	_ = json.NewDecoder(inboxResp.Body).Decode(&inboxBody)
+	inboxResp.Body.Close()
+	var sawCaptureInbox, sawSearchNoteInbox bool
+	for _, item := range inboxBody.Items {
+		if item["id"] == "capture" && item["item_type"] == "bookmark" && item["stage"] == "inbox" {
+			sawCaptureInbox = true
+		}
+		if item["id"] == searchNoteID && item["item_type"] == "note" && item["stage"] == "inbox" {
+			sawSearchNoteInbox = true
+		}
+		if item["id"] == otherNoteID {
+			t.Fatalf("inbox leaked other user's note: %#v", inboxBody)
+		}
+	}
+	if !sawCaptureInbox || !sawSearchNoteInbox || inboxBody.Counts["inbox"] < 3 {
+		t.Fatalf("unexpected inbox body: %#v", inboxBody)
+	}
+	updateInboxResp := adminRequest(t, handler, http.MethodPatch, "/api/inbox/note:"+searchNoteID, `{"stage":"processing","importance":4,"next_action":"Synthesize into the recall project."}`, accessCookie, csrfCookie)
+	if updateInboxResp.StatusCode != http.StatusOK {
+		t.Fatalf("update inbox status = %d body=%s", updateInboxResp.StatusCode, readBody(updateInboxResp))
+	}
+	updateInboxResp.Body.Close()
+	badInboxResp := adminRequest(t, handler, http.MethodPatch, "/api/inbox/note:"+otherNoteID, `{"stage":"processed"}`, accessCookie, csrfCookie)
+	if badInboxResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-user inbox update status = %d body=%s", badInboxResp.StatusCode, readBody(badInboxResp))
+	}
+	badInboxResp.Body.Close()
+
 	annotationResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/capture/annotations", `{"quote":"Recall with evidence","note":"Promote this into review.","selector":{"type":"quote"},"tags":["Evidence","evidence"]}`, accessCookie, csrfCookie)
 	if annotationResp.StatusCode != http.StatusOK {
 		t.Fatalf("create annotation status = %d body=%s", annotationResp.StatusCode, readBody(annotationResp))
@@ -608,6 +647,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if len(detail["notes"].([]any)) != 1 || len(detail["annotations"].([]any)) != 1 || len(detail["tags"].([]any)) == 0 {
 		t.Fatalf("bookmark detail missing second-brain data: %#v", detail)
 	}
+	if state, _ := detail["item_state"].(map[string]any); state["stage"] != "inbox" {
+		t.Fatalf("bookmark detail missing item state: %#v", detail["item_state"])
+	}
 
 	filteredResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks?tag=evidence&date_from="+url.QueryEscape(now.AddDate(0, 0, -30).Format(time.RFC3339)), "", accessCookie, csrfCookie)
 	if filteredResp.StatusCode != http.StatusOK {
@@ -673,6 +715,10 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		}
 		if item["id"] == searchNoteID && item["item_type"] == "note" {
 			sawNoteReview = true
+			state, _ := item["item_state"].(map[string]any)
+			if state["stage"] != "processing" || state["next_action"] != "Synthesize into the recall project." {
+				t.Fatalf("review note missing item state: %#v", item)
+			}
 		}
 		if item["id"] == snoozeNoteID && item["item_type"] == "note" {
 			sawSnoozeNoteReview = true
@@ -736,11 +782,24 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		Tags          []map[string]any `json:"tags"`
 		SavedSearches []map[string]any `json:"saved_searches"`
 		ReviewEvents  []map[string]any `json:"review_events"`
+		ItemStates    []map[string]any `json:"item_states"`
 	}
 	_ = json.Unmarshal(exportRaw, &exportBody)
 	exportResp.Body.Close()
 	if len(exportBody.Bookmarks) != 1 || len(exportBody.Notes) == 0 || len(exportBody.ReviewEvents) == 0 {
 		t.Fatalf("export missing second-brain sections: %#v", exportBody)
+	}
+	var sawProcessingState bool
+	for _, state := range exportBody.ItemStates {
+		if state["item_id"] == searchNoteID && state["item_type"] == "note" && state["stage"] == "processed" && state["next_action"] == "Synthesize into the recall project." {
+			sawProcessingState = true
+		}
+		if state["item_id"] == otherNoteID {
+			t.Fatalf("export leaked other user's item state: %#v", exportBody.ItemStates)
+		}
+	}
+	if !sawProcessingState {
+		t.Fatalf("export missing item state: %#v", exportBody.ItemStates)
 	}
 	bookmarkExport := exportBody.Bookmarks[0]
 	if bookmarkExport["id"] != "capture" || len(bookmarkExport["annotations"].([]any)) == 0 || len(bookmarkExport["notes"].([]any)) == 0 || len(bookmarkExport["tags"].([]any)) == 0 {
@@ -839,11 +898,21 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		Tags          []map[string]any `json:"tags"`
 		SavedSearches []map[string]any `json:"saved_searches"`
 		ReviewEvents  []map[string]any `json:"review_events"`
+		ItemStates    []map[string]any `json:"item_states"`
 	}
 	_ = json.NewDecoder(restoreExportResp.Body).Decode(&restoredExport)
 	restoreExportResp.Body.Close()
 	if len(restoredExport.Bookmarks) != 1 || len(restoredExport.Notes) == 0 || len(restoredExport.SavedSearches) == 0 || len(restoredExport.ReviewEvents) == 0 {
 		t.Fatalf("restored export missing backup sections: %#v", restoredExport)
+	}
+	var sawRestoredProcessingState bool
+	for _, state := range restoredExport.ItemStates {
+		if state["item_type"] == "note" && state["stage"] == "processed" && state["next_action"] == "Synthesize into the recall project." {
+			sawRestoredProcessingState = true
+		}
+	}
+	if !sawRestoredProcessingState {
+		t.Fatalf("restored export missing item state: %#v", restoredExport.ItemStates)
 	}
 	restoredBookmark := restoredExport.Bookmarks[0]
 	if restoredBookmark["id"] == "capture" || len(restoredBookmark["annotations"].([]any)) == 0 || len(restoredBookmark["notes"].([]any)) == 0 || len(restoredBookmark["tags"].([]any)) == 0 {

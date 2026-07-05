@@ -56,6 +56,7 @@ func (s *Service) geminiClient(ctx context.Context) providers.GeminiClient {
 func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body struct {
 		URL          string   `json:"url"`
+		Title        string   `json:"title"`
 		CollectionID string   `json:"collection_id"`
 		Note         string   `json:"note"`
 		Quote        string   `json:"quote"`
@@ -77,13 +78,14 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	bookmarkID := ids.New()
-	title := parsed.Hostname()
+	title := fallback(strings.TrimSpace(body.Title), parsed.Hostname())
 	_, err := s.db.ExecContext(r.Context(), `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, body.URL, title, parsed.Hostname(), now, now)
 	if err != nil {
 		writeError(w, http.StatusConflict, "Bookmark already exists")
 		return
 	}
 	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
+	_ = s.upsertItemState(r.Context(), user.ID, "bookmark", bookmarkID, "inbox", 0, strings.TrimSpace(body.Note), now)
 	if body.CollectionID != "" {
 		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, body.CollectionID, bookmarkID, user.ID, now)
 	}
@@ -202,6 +204,7 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bm["tags"] = s.bookmarkTags(r.Context(), user.ID, r.PathValue("id"))
 	bm["annotations"] = s.bookmarkAnnotations(r.Context(), user.ID, r.PathValue("id"))
 	bm["notes"] = s.bookmarkNotes(r.Context(), user.ID, r.PathValue("id"))
+	bm["item_state"] = s.itemState(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	writeJSON(w, http.StatusOK, bm)
 }
 

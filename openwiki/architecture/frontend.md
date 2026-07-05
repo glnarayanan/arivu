@@ -18,7 +18,8 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 ### Product Routes
 
 - `/dashboard`: bookmark list, search, URL capture, quick note, manual tags, PWA share-target prefill, and visible processing status.
-- `/bookmark/:id`: sanitized reader view, summaries, read state, tags, related items, annotations, linked notes, and review actions.
+- `/inbox`: capture triage for bookmarks and notes, with per-item stage, priority, and next action controls.
+- `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, and review actions.
 - `/notes`: standalone notes for ideas and snippets that are not tied to a URL.
 - `/review`: resurfacing-backed daily review queue with complete and snooze actions.
 - `/duplicates`: duplicate groups and merge workflow.
@@ -40,7 +41,7 @@ The `/extension/` directory houses a companion, cross-browser compatible WebExte
 Declared in `manifest.json` as a Manifest V3 extension, providing integrations:
 - `background.js`: Listens for action clicks, context-menu saves, keyboard command saves, selected-text capture, and secure token relay from the active Arivu backend instance.
 - `content.js`: Injected scripts to extract selected page content and trigger seamless "Save in Arivu" operations from local tabs.
-- `popup.html` & `popup.js`: Mini utility panel allowing users to connect their active local server instance, capture status flags, and organize tags or collections immediately upon index request.
+- `popup.html` & `popup.js`: Mini utility panel allowing users to connect their active local server instance, preserve page title, capture notes/tags/collections, and open the saved item or Inbox immediately after capture.
 
 ---
 

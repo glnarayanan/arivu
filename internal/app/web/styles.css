@@ -184,6 +184,20 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background: var(--panel);
 }
 
+.stage-tabs a {
+  border: 2px solid var(--ink);
+  background: color-mix(in oklch, var(--gold) 20%, var(--panel));
+  color: var(--ink);
+  padding: var(--space-1) var(--space-2);
+  font: 700 .75rem/1.25 var(--font-ui);
+  text-decoration: none;
+  text-transform: uppercase;
+}
+.stage-tabs a.active {
+  background: var(--ink);
+  color: var(--accent-ink);
+}
+
 .main {
   min-width: 0;
   padding: var(--space-6);
@@ -226,6 +240,38 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   box-shadow: var(--shadow);
   overflow-wrap: anywhere;
   padding: var(--space-5);
+}
+
+.compact-split {
+  grid-template-columns: minmax(220px, 1fr) minmax(96px, .22fr) minmax(140px, .28fr);
+  margin: var(--space-4) 0;
+}
+
+.priority-field {
+  min-width: 0;
+  margin: 0;
+  border: 0;
+  padding: 0;
+}
+.priority-field legend {
+  display: block;
+  margin: 0 0 var(--space-2);
+  color: var(--muted);
+  font: 700 .75rem/1.2 var(--font-ui);
+  text-transform: uppercase;
+}
+.priority-buttons {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+.priority-buttons button {
+  min-height: 40px;
+  padding: 0 var(--space-2);
+}
+.priority-buttons button.active {
+  background: var(--ink);
+  color: var(--accent-ink);
 }
 
 .auth {

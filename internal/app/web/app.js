@@ -10,6 +10,7 @@ const routes = [
   { prefix: "/accept-invite", page: acceptInvitePage, access: "public" },
   { prefix: "/dashboard", page: dashboardPage, access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
+  { prefix: "/inbox", page: inboxPage, access: "protected" },
   { prefix: "/notes", page: notesPage, access: "protected" },
   { prefix: "/review", page: reviewPage, access: "protected" },
   { prefix: "/duplicates", page: duplicatesPage, access: "protected" },
@@ -316,6 +317,7 @@ function navigate(path, replace = false) {
 function shell(title, content) {
   const nav = [
     ["/dashboard", "Bookmarks"],
+    ["/inbox", "Inbox"],
     ["/notes", "Notes"],
     ["/review", "Review"],
     ["/knowledge-graph", "Graph"],
@@ -669,7 +671,7 @@ function answerPanel(answer) {
     <div class="stack">${citations.map((item, index) => `<article class="annotation">
       <p><strong>[${index + 1}] ${escapeHTML(item.title || item.url)}</strong> <span class="meta">${escapeHTML(item.type || "bookmark")} · ${escapeHTML(item.domain || "")}</span></p>
       <p>${escapeHTML(item.snippet || "")}</p>
-      <a class="text-link" href="${item.type === "note" ? "/notes" : `/bookmark/${escapeHTML(item.id)}`}">Open citation</a>
+      <a class="text-link" href="${item.type === "note" ? `/notes?note=${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open citation</a>
     </article>`).join("") || `<p class="meta">No citations found.</p>`}</div>`;
 }
 
@@ -694,6 +696,114 @@ function bookmarkCard(b) {
 
 function splitTags(value) {
   return String(value || "").split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 20);
+}
+
+async function inboxPage() {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  const stage = params.get("stage") || "inbox";
+  const result = await api(`/inbox?stage=${encodeURIComponent(stage)}&limit=100`);
+  const items = result.items || [];
+  const counts = result.counts || {};
+  setRoot(shell("Inbox", `
+    <section class="split">
+      <section class="panel">
+        <span class="meta">Processing loop</span>
+        <h2>${Number(counts.inbox || 0)} unprocessed</h2>
+        <p>Decide why each saved item matters, move active work into processing, then mark finished items processed before review.</p>
+      </section>
+      <section class="panel">
+        <h2>Stages</h2>
+        <div class="chips stage-tabs">
+          ${["inbox", "processing", "processed", "archived"].map((name) => `<a class="${name === stage ? "active" : ""}" href="/inbox?stage=${name}">${name} · ${Number(counts[name] || 0)}</a>`).join("")}
+        </div>
+      </section>
+    </section>
+    <section class="stack">
+      ${items.map(inboxCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No ${escapeHTML(stage)} items</h2><p>New captures and notes appear in the inbox until you process them.</p></div>`}
+    </section>
+  `));
+  document.querySelectorAll("[data-inbox-stage]").forEach((button) => {
+    button.addEventListener("click", () => updateInboxItem(button, button.dataset.inboxStage));
+  });
+  document.querySelectorAll("[data-inbox-save]").forEach((button) => {
+    button.addEventListener("click", () => updateInboxItem(button, button.closest("[data-inbox-item]").querySelector("[data-next-stage]").value));
+  });
+  bindPriorityButtons();
+}
+
+function inboxCard(item) {
+  const itemID = `${item.item_type}:${item.id}`;
+  const isNote = item.item_type === "note";
+  return `<article class="panel form" data-inbox-item="${escapeHTML(itemID)}">
+    <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.domain || item.source || item.stage || "")}</span>
+    <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
+    <p>${escapeHTML(item.description || item.url || "")}</p>
+    <div class="split compact-split">
+      <div class="field">
+        <label for="next-action-${escapeHTML(item.id)}">Next action</label>
+        <input id="next-action-${escapeHTML(item.id)}" data-next-action value="${escapeHTML(item.next_action || "")}" maxlength="500" placeholder="Why keep this? What will you do with it?">
+      </div>
+      <fieldset class="field priority-field">
+        <legend>Priority</legend>
+        <input data-importance type="hidden" value="${Number(item.importance || 0)}">
+        <div class="priority-buttons">${priorityButtons(item.importance || 0)}</div>
+      </fieldset>
+      <div class="field">
+        <label for="stage-${escapeHTML(item.id)}">Stage</label>
+        <select id="stage-${escapeHTML(item.id)}" data-next-stage>
+          ${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}" ${stage === item.stage ? "selected" : ""}>${stage}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <p class="button-row">
+      <a class="button secondary" href="${isNote ? "/notes" : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
+      <button type="button" data-inbox-save="${escapeHTML(itemID)}">Save state</button>
+      <button type="button" class="secondary" data-inbox-stage="processing">Processing</button>
+      <button type="button" class="secondary" data-inbox-stage="processed">Processed</button>
+      <button type="button" class="secondary" data-inbox-stage="archived">Archive</button>
+    </p>
+  </article>`;
+}
+
+async function updateInboxItem(button, stage) {
+  const card = button.closest("[data-inbox-item]");
+  const done = setButtonBusy(button, "Saving");
+  try {
+    await saveItemState(card.dataset.inboxItem, stage, Number(card.querySelector("[data-importance]").value || 0), card.querySelector("[data-next-action]").value);
+    ui.toast("Inbox updated", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function priorityButtons(value) {
+  const current = Number(value || 0);
+  return [
+    [1, "Low"],
+    [3, "Med"],
+    [5, "High"],
+  ].map(([score, label]) => `<button type="button" class="secondary ${current === score ? "active" : ""}" data-priority="${score}">${label}</button>`).join("");
+}
+
+function bindPriorityButtons() {
+  document.querySelectorAll("[data-priority]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const field = button.closest(".priority-field");
+      field.querySelector("[data-importance]").value = button.dataset.priority;
+      field.querySelectorAll("[data-priority]").forEach((item) => item.classList.toggle("active", item === button));
+    });
+  });
+}
+
+function saveItemState(itemID, stage, importance, nextAction) {
+  return api(`/inbox/${itemID}`, {
+    method: "PATCH",
+    body: JSON.stringify({ stage, importance, next_action: nextAction }),
+  });
 }
 
 function selectedReaderText() {
@@ -823,6 +933,7 @@ async function notesPage() {
   document.querySelectorAll("[data-note-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteStandaloneNote(button));
   });
+  focusNoteFromQuery();
 }
 
 function standaloneNoteCard(note) {
@@ -836,6 +947,16 @@ function standaloneNoteCard(note) {
       <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete</button>
     </p>
   </article>`;
+}
+
+function focusNoteFromQuery() {
+  const targetID = new URLSearchParams(location.search).get("note");
+  if (!targetID) return;
+  const target = Array.from(document.querySelectorAll("[data-note]")).find((item) => item.dataset.note === targetID);
+  if (!target) return;
+  target.tabIndex = -1;
+  target.focus({ preventScroll: true });
+  target.scrollIntoView({ block: "center" });
 }
 
 async function updateStandaloneNote(button) {
@@ -879,6 +1000,7 @@ async function bookmarkPage() {
   const bookmark = await api(`/bookmarks/${id}`);
   const related = await api(`/bookmarks/${id}/related?limit=4`).catch(() => ({ related: [] }));
   const summary = bookmark.ai_summary || {};
+  const itemState = bookmark.item_state || { stage: "inbox", importance: 0, next_action: "" };
   setRoot(shell(bookmark.title || "Bookmark", `
     <article class="panel reader">
       <p class="meta">${bookmark.domain || ""} · ${bookmark.reading_time || 0} min</p>
@@ -890,6 +1012,7 @@ async function bookmarkPage() {
       </p>
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
+      ${processingStrip(id, itemState)}
       <div class="reader-content">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
     </article>
     <section class="split">
@@ -951,6 +1074,11 @@ async function bookmarkPage() {
       done();
     }
   });
+  document.querySelectorAll("[data-reader-stage]").forEach((button) => {
+    button.addEventListener("click", () => updateReaderState(button, button.dataset.readerStage));
+  });
+  document.querySelector("#processing-save").addEventListener("click", (event) => updateReaderState(event.currentTarget, document.querySelector("#processing-stage").value));
+  bindPriorityButtons();
   const annotationForm = document.querySelector("#annotation-form");
   document.querySelector("#use-selection").addEventListener("click", () => {
     const quote = selectedReaderText();
@@ -1024,6 +1152,48 @@ async function bookmarkPage() {
   document.querySelectorAll("[data-annotation-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteAnnotation(button));
   });
+}
+
+function processingStrip(bookmarkID, itemState) {
+  return `<section class="insight-strip processing-strip" data-reader-item="bookmark:${escapeHTML(bookmarkID)}">
+    <span class="meta">Processing · ${escapeHTML(itemState.stage || "inbox")}</span>
+    <div class="split compact-split">
+      <div class="field">
+        <label for="processing-next-action">Next action</label>
+        <input id="processing-next-action" data-next-action value="${escapeHTML(itemState.next_action || "")}" maxlength="500" placeholder="What should this item become?">
+      </div>
+      <fieldset class="field priority-field">
+        <legend>Priority</legend>
+        <input data-importance type="hidden" value="${Number(itemState.importance || 0)}">
+        <div class="priority-buttons">${priorityButtons(itemState.importance || 0)}</div>
+      </fieldset>
+      <div class="field">
+        <label for="processing-stage">Stage</label>
+        <select id="processing-stage" data-next-stage>
+          ${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}" ${stage === itemState.stage ? "selected" : ""}>${stage}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <p class="button-row">
+      <button type="button" id="processing-save">Save state</button>
+      <button type="button" class="secondary" data-reader-stage="processed">Processed</button>
+      <button type="button" class="secondary" data-reader-stage="archived">Archive</button>
+    </p>
+  </section>`;
+}
+
+async function updateReaderState(button, stage) {
+  const card = button.closest("[data-reader-item]");
+  const done = setButtonBusy(button, "Saving");
+  try {
+    await saveItemState(card.dataset.readerItem, stage, Number(card.querySelector("[data-importance]").value || 0), card.querySelector("[data-next-action]").value);
+    ui.toast("Processing state updated", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 async function updateAnnotation(button) {
@@ -1567,12 +1737,16 @@ function memoryCard(memory) {
 function reviewCard(item) {
   const id = `${item.item_type || "bookmark"}:${item.id}`;
   const isNote = item.item_type === "note";
+  const itemState = item.item_state || {};
+  const nextAction = itemState.next_action || "";
+  const importance = Number(itemState.importance || 0);
   return `<article class="panel bookmark">
     <span class="meta">${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")}</span>
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
     <p>${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
+    ${nextAction || importance ? `<p class="meta">${nextAction ? `Next: ${escapeHTML(nextAction)}` : ""}${nextAction && importance ? " · " : ""}${importance ? `Priority ${importance}` : ""}</p>` : ""}
     <p class="button-row">
-      <a class="button secondary" href="${isNote ? "/notes" : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
+      <a class="button secondary" href="${isNote ? `/notes?note=${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
       <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
       ${isNote ? "" : `<button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>`}

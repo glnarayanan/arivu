@@ -102,10 +102,12 @@ document.getElementById('bookmarkForm').addEventListener('submit', async (e) => 
 
   try {
     const url = document.getElementById('url').value;
+    const title = document.getElementById('title').value.trim();
     const collectionId = document.getElementById('collection').value || null;
     const note = document.getElementById('note').value.trim();
     const tags = splitTags(document.getElementById('tags').value);
     const payload = { url, collection_id: collectionId };
+    if (title) payload.title = title;
     if (note) payload.note = note;
     if (tags.length) payload.tags = tags;
 
@@ -119,10 +121,16 @@ document.getElementById('bookmarkForm').addEventListener('submit', async (e) => 
     });
 
     if (response.ok) {
+      const result = await response.json();
+      const bookmarkId = result?.bookmark?.id;
+      const baseUrl = apiUrl.replace(/\/api\/?$/, '');
       status.className = 'status success';
-      status.textContent = 'Saved — AI is processing';
+      status.textContent = 'Saved to Inbox';
       status.style.display = 'block';
-      setTimeout(() => window.close(), 1500);
+      const actions = document.getElementById('savedActions');
+      actions.replaceChildren(savedLink(`${baseUrl}/inbox`, 'Open Inbox'));
+      if (bookmarkId) actions.appendChild(savedLink(`${baseUrl}/bookmark/${encodeURIComponent(bookmarkId)}`, 'Open Item'));
+      actions.style.display = 'grid';
     } else if (response.status === 401) {
       await chrome.storage.session.remove(['accessToken', 'refreshToken']);
       status.className = 'status error';
@@ -140,6 +148,15 @@ document.getElementById('bookmarkForm').addEventListener('submit', async (e) => 
     btn.textContent = 'Save Bookmark';
   }
 });
+
+function savedLink(href, label) {
+  const link = document.createElement('a');
+  link.href = href;
+  link.target = '_blank';
+  link.rel = 'noreferrer';
+  link.textContent = label;
+  return link;
+}
 
 // Settings toggle
 const settingsToggle = document.getElementById('settingsToggle');
