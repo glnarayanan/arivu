@@ -139,7 +139,7 @@ func (s *Service) List(w http.ResponseWriter, r *http.Request, user auth.User) {
 	defer rows.Close()
 	result := []map[string]any{}
 	for rows.Next() {
-		result = append(result, scanBookmark(rows))
+		result = append(result, scanBookmarkRow(rows))
 	}
 	writeJSON(w, http.StatusOK, result)
 }
@@ -322,13 +322,6 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		answer += " that mention this query. Use the citations below to inspect the original saved context."
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"answer": answer, "citations": citations})
-}
-
-func standaloneNotesMatchFilters(values url.Values) bool {
-	return strings.TrimSpace(values.Get("tag")) == "" &&
-		strings.TrimSpace(values.Get("domain")) == "" &&
-		strings.TrimSpace(values.Get("source")) == "" &&
-		strings.TrimSpace(values.Get("read_status")) == ""
 }
 
 func (s *Service) Related(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -787,7 +780,7 @@ func (s *Service) Counts(ctx context.Context) CountsResult {
 
 func (s *Service) getBookmark(ctx context.Context, userID, id string) (map[string]any, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content FROM bookmarks WHERE id=? AND user_id=?`, id, userID)
-	bm := scanBookmark(row)
+	bm := scanBookmarkRow(row)
 	if bm["id"] == "" {
 		return nil, errors.New("not found")
 	}
@@ -1292,10 +1285,10 @@ func expandGraphQuery(query string, maxExpansions int, bookmarks []graphBookmark
 	topEntities := topCountTerms(coEntities, maxExpansions)
 	topConcepts := topCountTerms(coConcepts, maxExpansions)
 	for _, term := range firstStrings(topEntities, 5) {
-		expansions = append(expansions, map[string]any{"term": term, "type": "entity", "source": "co_occurrence", "relevance": roundFloat(minFloat(float64(coEntities[term])/5, 0.8), 2)})
+		expansions = append(expansions, map[string]any{"term": term, "type": "entity", "source": "co_occurrence", "relevance": roundFloat(min(float64(coEntities[term])/5, 0.8), 2)})
 	}
 	for _, term := range firstStrings(topConcepts, 5) {
-		expansions = append(expansions, map[string]any{"term": term, "type": "concept", "source": "co_occurrence", "relevance": roundFloat(minFloat(float64(coConcepts[term])/5, 0.8), 2)})
+		expansions = append(expansions, map[string]any{"term": term, "type": "concept", "source": "co_occurrence", "relevance": roundFloat(min(float64(coConcepts[term])/5, 0.8), 2)})
 	}
 	sort.SliceStable(expansions, func(i, j int) bool {
 		return numberValue(expansions[i]["relevance"]) > numberValue(expansions[j]["relevance"])
@@ -1460,7 +1453,7 @@ func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID 
 	mergedText := preferString(keepText, dupText)
 	mergedLast := maxTimeString(keepLast, dupLast)
 	mergedRead := keepRead.Bool || dupRead.Bool
-	mergedReading := maxInt64(keepReading.Int64, dupReading.Int64)
+	mergedReading := max(keepReading.Int64, dupReading.Int64)
 	mergedViews := keepViews.Int64 + dupViews.Int64
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET title=?,description=?,favicon=?,thumbnail=?,sanitized_html=?,text_content=?,last_accessed=?,read_status=?,reading_time=?,view_count=?,version=version+1,updated_at=? WHERE id=? AND user_id=?`, mergedTitle, mergedDescription, nullableStringValue(mergedFavicon), nullableStringValue(mergedThumbnail), nullableStringValue(mergedHTML), nullableStringValue(mergedText), nullableStringValue(mergedLast), mergedRead, mergedReading, mergedViews, now, keepID, userID); err != nil {
@@ -1539,13 +1532,6 @@ func maxTimeString(a, b sql.NullString) string {
 	return a.String
 }
 
-func maxInt64(a, b int64) int64 {
-	if b > a {
-		return b
-	}
-	return a
-}
-
 type resurfacingCandidate struct {
 	Bookmark        map[string]any
 	Score           float64
@@ -1560,7 +1546,7 @@ func (s *Service) resurfacingCandidates(ctx context.Context, userID string, capC
 	}
 	var bookmarks []map[string]any
 	for rows.Next() {
-		bm := scanBookmark(rows)
+		bm := scanBookmarkRow(rows)
 		bookmarks = append(bookmarks, bm)
 	}
 	scanErr := rows.Err()
@@ -1601,13 +1587,13 @@ func resurfacingScore(bookmark map[string]any, summary map[string]any, daysSince
 	breakdown := map[string]float64{}
 	ageScore := 0.0
 	if daysSinceAccess >= 7 && daysSinceAccess <= 90 {
-		ageScore = minFloat(float64(daysSinceAccess)/10, 10)
+		ageScore = min(float64(daysSinceAccess)/10, 10)
 	} else if daysSinceAccess > 90 {
 		ageScore = 10
 	}
 	breakdown["age"] = ageScore
 	viewCount := numberValue(bookmark["view_count"])
-	breakdown["engagement"] = minFloat(viewCount*2, 10)
+	breakdown["engagement"] = min(viewCount*2, 10)
 	quality := 0.0
 	if one, _ := summary["one_sentence"].(string); one != "" {
 		quality += 3
@@ -1725,19 +1711,8 @@ func numberValue(value any) float64 {
 	}
 }
 
-func minFloat(a, b float64) float64 {
-	if a < b {
-		return a
-	}
-	return b
-}
-
 type scanner interface {
 	Scan(dest ...any) error
-}
-
-func scanBookmark(row scanner) map[string]any {
-	return scanBookmarkRow(row)
 }
 
 func scanBookmarkRow(row scanner, extra ...any) map[string]any {

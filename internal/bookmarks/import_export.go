@@ -494,7 +494,7 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 	}
 	bookmarks := []map[string]any{}
 	for rows.Next() {
-		bookmarks = append(bookmarks, scanBookmark(rows))
+		bookmarks = append(bookmarks, scanBookmarkRow(rows))
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
