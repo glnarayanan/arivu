@@ -76,6 +76,9 @@ All notable changes to this project will be documented in this file.
   with collapsible filters and saved searches, bookmark detail is reader-first
   with collapsed workbench groups, Inbox/Focus/Review use clearer user-facing
   labels, and the mobile shell keeps brutalist navigation compact.
+- Added a user-facing OpenWiki guide and a GitHub Wiki publishing runbook so
+  public wiki pages can be generated from repository documentation without
+  making the GitHub Wiki the canonical source.
 - Bookmark saves now accept quick notes, selected quotes, and manual tags, and return a `job_id` so the UI can show enrichment progress.
 - Extension selected-text saves now persist as quote annotations, with a backend compatibility alias for the older `annotation` payload field.
 - Extension popup saves now accept quick notes and comma-separated tags.

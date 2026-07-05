@@ -12,6 +12,7 @@ assistants.
 Use the following section pages to explore specific areas of the repository:
 
 - **[Runtime & Storage](architecture/runtime.md)**: web server architecture, middleware, SQLite pragmas, schema, and jobs.
+- **[User Guide](user-guide.md)**: installing, capturing, triaging, reviewing, searching, importing, and exporting from a user's point of view.
 - **[Security Model](workflows/auth-security.md)**: opaque token sessions, cookie audience protection, CSRF, SSRF prevention, and backend-owned HTML sanitization.
 - **[Frontend & Extensions](architecture/frontend.md)**: embedded UI, WebExtension layout, CLI client, and asset caching.
 - **[Frontend Runtime](architecture/frontend-runtime.md)**: browser runtime rules, route behavior, and smoke checks.
@@ -21,6 +22,7 @@ Use the following section pages to explore specific areas of the repository:
 - **[Migration Guide](domain/migration-guide.md)**: command reference and cutover guarantees.
 - **[Deployment](operations/deployment.md)**: local, container, and systemd deployment.
 - **[Dependency Policy](operations/dependency-policy.md)**: accepted dependencies and supply-chain checks.
+- **[GitHub Wiki Publishing](operations/github-wiki.md)**: mapping OpenWiki pages into the public GitHub Wiki.
 - **[SQLite Schema](reference/sqlite-schema.md)**: persistence model and FTS fallback.
 - **[Testing Guidelines](testing/tactics.md)**: Go tests, golden fixtures, browser smoke checks, and future-change precautions.
 

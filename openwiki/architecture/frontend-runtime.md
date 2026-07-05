@@ -77,12 +77,12 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   tag fields while context-menu capture keeps the selected-text quote path.
 - Bookmark save responses include `job_id`; the dashboard shows a short
   processing status before navigating to the saved bookmark.
-- Bookmark detail is now the reader/research surface: sanitized archived HTML,
-  summaries, tags, related items, read state, review completion, annotations,
-  and linked notes all render in one flow. The annotation form can copy the
-  current browser selection into the quote field when the selection is fully
-  inside the sanitized reader content, and existing annotations can be edited or
-  deleted inline.
+- Bookmark detail is now reader-first: sanitized archived HTML, summaries,
+  tags, and source controls stay up top; workflow state gets one next-step
+  panel; annotations, notes, links, tasks, reminders, and related items live in
+  disclosure groups. The annotation form can copy the current browser selection
+  into the quote field when the selection is fully inside the sanitized reader
+  content, and existing annotations can be edited or deleted inline.
 - `/focus` keeps the pending default and adds overdue, today, upcoming, and
   completed views over action items and reminders.
 - `/review` includes the daily memory card from `/api/memory-jogger`, the

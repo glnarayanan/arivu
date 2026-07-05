@@ -30,14 +30,16 @@ Second-brain v1 adds user-authored context around bookmarks:
 
 - Quick notes, selected quotes, and manual tags can be submitted with a new save.
 - New bookmarks and notes enter the Inbox so users can decide whether each item
-  should stay unprocessed, move into active processing, become processed, or be
-  archived from the working loop.
+  should stay in Inbox, move into Working, become Kept, or be Archived from the
+  working loop.
 - Inbox bulk triage updates up to 100 bookmark/note items at once and returns
   partial failures for stale or cross-user targets instead of failing the whole
   operation.
 - Processing state stores priority and the next action separately from the
   original bookmark or note, so review and exports preserve why an item was kept.
-- Bookmark detail renders summaries, tags, related items, read state, annotations, linked notes, and review completion in one place.
+- Bookmark detail is reader-first, with one next-step workflow panel and
+  disclosure groups for annotations, linked notes, explicit links, tasks,
+  reminders, related items, and review completion.
 - Explicit links connect bookmarks and notes with user-authored labels. Link
   reads return outgoing and incoming relationships so a saved item can show both
   what it points to and what points back to it. Link picker target reads use
