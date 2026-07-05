@@ -29,9 +29,13 @@ func (q *Queue) Enqueue(ctx context.Context, userID, jobType, payload string) er
 }
 
 func (q *Queue) EnqueueWithID(ctx context.Context, userID, jobType, payload string) (string, error) {
+	return q.EnqueueAt(ctx, userID, jobType, payload, time.Now().UTC())
+}
+
+func (q *Queue) EnqueueAt(ctx context.Context, userID, jobType, payload string, runAfter time.Time) (string, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := ids.New()
-	_, err := q.db.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,payload_json,run_after,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, nullable(userID), jobType, "queued", payload, now, now, now)
+	_, err := q.db.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,payload_json,run_after,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, nullable(userID), jobType, "queued", payload, runAfter.UTC().Format(time.RFC3339), now, now)
 	return id, err
 }
 

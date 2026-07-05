@@ -26,8 +26,8 @@ with foreign keys.
   including normalized title, body, tags, link text, source, and update time.
 - `search_fts`: optional FTS5 mirror of `search_index` used for ranked
   full-text retrieval when the local SQLite build supports FTS5.
-- `reminders`: one-time due reminders for bookmarks and notes with pending or
-  completed status.
+- `reminders`: due reminders for bookmarks and notes with stored timezone,
+  recurrence, notification channel, last-notified, and last-completed state.
 - `action_items`: durable completable tasks attached to bookmarks or notes.
 - `assistant_actions`: per-user proposal ledger for allowlisted assistant
   mutations with pending, executed, rejected, and failed statuses.
@@ -53,9 +53,16 @@ with foreign keys.
 - `item_links` is polymorphic, so API handlers must validate that both endpoints
   belong to the authenticated user before inserts or reads expose relationship
   metadata.
-- Reminder due times are stored as UTC RFC3339 strings. API handlers validate
-  item ownership before creating, completing, deleting, exporting, or restoring
-  reminder rows.
+- Reminder due times are stored as UTC RFC3339 strings while `timezone`
+  preserves the user's intended local clock for recurring schedules.
+  `recurrence` supports `none`, `daily`, `weekly`, `monthly`, and bounded
+  custom day intervals. API handlers validate item ownership before creating,
+  updating, snoozing, completing, deleting, exporting, or restoring reminder
+  rows.
+- Reminder notifications are always visible in-app through computed `due_state`
+  and `is_due` response fields. Rows with `notification_channel='email'` queue a
+  scheduled `reminder.email` job. Email delivery is idempotent through the
+  reminder ID, exact `due_at`, and `last_notified_at`.
 - `action_items` stores multiple concrete tasks per bookmark or note. Because
   item targets are polymorphic, handlers and restore code validate target
   ownership before inserts, and bookmark/note deletion explicitly removes their

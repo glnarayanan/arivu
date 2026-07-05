@@ -672,7 +672,7 @@ func (s *Service) exportItemLinks(ctx context.Context, userID string) []map[stri
 }
 
 func (s *Service) exportReminders(ctx context.Context, userID string) []map[string]any {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,due_at,note,status,created_at,COALESCE(completed_at,'') FROM reminders WHERE user_id=? ORDER BY due_at ASC`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,COALESCE(completed_at,''),COALESCE(last_notified_at,''),COALESCE(last_completed_at,'') FROM reminders WHERE user_id=? ORDER BY due_at ASC`, userID)
 	if err != nil {
 		return []map[string]any{}
 	}
@@ -744,8 +744,30 @@ func (s *Service) restoreReminders(ctx context.Context, userID string, raw any, 
 		if len(note) > 500 {
 			note = note[:500]
 		}
+		timezoneName := fallback(stringValue(reminder["timezone"]), "UTC")
+		if _, err := time.LoadLocation(timezoneName); err != nil {
+			timezoneName = "UTC"
+		}
+		recurrence := fallback(stringValue(reminder["recurrence"]), "none")
+		if !validReminderRecurrence(recurrence) {
+			recurrence = "none"
+		}
+		interval := intValue(reminder["recurrence_interval_days"])
+		if recurrence != "custom" || interval < 1 || interval > 365 {
+			interval = 0
+		}
+		channel := fallback(stringValue(reminder["notification_channel"]), "in_app")
+		if channel != "email" {
+			channel = "in_app"
+		}
 		completed := nullableStringValue(stringValue(reminder["completed_at"]))
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,note,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), userID, itemType, itemID, due.UTC().Format(time.RFC3339), note, status, fallback(stringValue(reminder["created_at"]), now), completed)
+		lastCompleted := nullableStringValue(stringValue(reminder["last_completed_at"]))
+		reminderID := ids.New()
+		dueUTC := due.UTC().Format(time.RFC3339)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,completed_at,last_completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, reminderID, userID, itemType, itemID, dueUTC, timezoneName, recurrence, interval, channel, note, status, fallback(stringValue(reminder["created_at"]), now), completed, lastCompleted)
+		if status == "pending" && channel == "email" && due.After(time.Now().UTC()) {
+			s.scheduleReminderNotification(ctx, userID, reminderID, dueUTC, channel)
+		}
 	}
 }
 

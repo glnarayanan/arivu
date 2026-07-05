@@ -79,3 +79,7 @@
   hashed namespace, audience, user ID, and quota name. Web, CLI, and extension
   buckets are separated so one client cannot drain another client's quota.
 - Background work is leased through SQLite jobs with retry state.
+- Reminder create, update, and snooze routes are authenticated web mutations
+  behind CSRF and mutation quota checks. Reminder email jobs re-check the owning
+  user, exact due timestamp, pending status, email notification channel, and
+  empty `last_notified_at` before sending through Resend.

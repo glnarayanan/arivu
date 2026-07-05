@@ -248,13 +248,20 @@ CREATE TABLE IF NOT EXISTS reminders (
   item_type TEXT NOT NULL CHECK (item_type IN ('bookmark','note')),
   item_id TEXT NOT NULL,
   due_at TEXT NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'UTC',
+  recurrence TEXT NOT NULL CHECK (recurrence IN ('none','daily','weekly','monthly','custom')) DEFAULT 'none',
+  recurrence_interval_days INTEGER NOT NULL DEFAULT 0,
+  notification_channel TEXT NOT NULL CHECK (notification_channel IN ('in_app','email')) DEFAULT 'in_app',
   note TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL CHECK (status IN ('pending','completed')) DEFAULT 'pending',
   created_at TEXT NOT NULL,
-  completed_at TEXT
+  completed_at TEXT,
+  last_notified_at TEXT,
+  last_completed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_reminders_user_due ON reminders(user_id, status, due_at);
+CREATE INDEX IF NOT EXISTS idx_reminders_notification_due ON reminders(status, notification_channel, due_at, last_notified_at);
 
 CREATE TABLE IF NOT EXISTS action_items (
   id TEXT PRIMARY KEY,

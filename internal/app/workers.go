@@ -32,7 +32,13 @@ func (a *App) runOneJob(ctx context.Context) {
 	if !ok {
 		return
 	}
-	if err := a.bookmarks.ProcessJob(ctx, job.Type, job.Payload); err != nil {
+	switch job.Type {
+	case "reminder.email":
+		err = a.processReminderEmailJob(ctx, job.UserID, job.Payload)
+	default:
+		err = a.bookmarks.ProcessJob(ctx, job.Type, job.Payload)
+	}
+	if err != nil {
 		log.Printf("job %s failed: %v", job.ID, err)
 		_ = a.jobs.Fail(ctx, job.ID, err.Error())
 		return

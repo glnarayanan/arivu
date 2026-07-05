@@ -31,18 +31,19 @@ var webFS embed.FS
 var webAssetModTime = time.Unix(0, 0).UTC()
 
 type App struct {
-	cfg       config.Config
-	db        *sql.DB
-	auth      *auth.Service
-	bookmarks *bookmarks.Service
-	jobs      *jobs.Queue
-	fetcher   *safefetch.Client
-	runtime   *runtimeconfig.Service
-	xHTTP     *http.Client
-	startedAt time.Time
-	usage     *providerUsage
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	cfg        config.Config
+	db         *sql.DB
+	auth       *auth.Service
+	bookmarks  *bookmarks.Service
+	jobs       *jobs.Queue
+	fetcher    *safefetch.Client
+	runtime    *runtimeconfig.Service
+	xHTTP      *http.Client
+	resendHTTP *http.Client
+	startedAt  time.Time
+	usage      *providerUsage
+	cancel     context.CancelFunc
+	wg         sync.WaitGroup
 }
 
 type mutationQuota struct {
@@ -59,6 +60,7 @@ var (
 	quotaInboxUpdate      = mutationQuota{name: "inbox.update", limit: 600, window: time.Hour}
 	quotaLinksCreate      = mutationQuota{name: "links.create", limit: 300, window: time.Hour}
 	quotaRemindersCreate  = mutationQuota{name: "reminders.create", limit: 120, window: time.Hour}
+	quotaRemindersUpdate  = mutationQuota{name: "reminders.update", limit: 240, window: time.Hour}
 	quotaActionItemCreate = mutationQuota{name: "action_items.create", limit: 240, window: time.Hour}
 	quotaAssistantPropose = mutationQuota{name: "assistant.propose", limit: 60, window: time.Hour}
 	quotaAssistantApprove = mutationQuota{name: "assistant.approve", limit: 60, window: time.Hour}
@@ -162,6 +164,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("DELETE /api/links/{id}", a.withUser(a.bookmarks.DeleteLink))
 	mux.HandleFunc("GET /api/reminders", a.withUser(a.bookmarks.Reminders))
 	mux.HandleFunc("POST /api/reminders", a.withUserQuota(quotaRemindersCreate, a.bookmarks.CreateReminder))
+	mux.HandleFunc("PATCH /api/reminders/{id}", a.withUserQuota(quotaRemindersUpdate, a.bookmarks.UpdateReminder))
+	mux.HandleFunc("POST /api/reminders/{id}/snooze", a.withUserQuota(quotaRemindersUpdate, a.bookmarks.SnoozeReminder))
 	mux.HandleFunc("POST /api/reminders/{id}/complete", a.withUser(a.bookmarks.CompleteReminder))
 	mux.HandleFunc("DELETE /api/reminders/{id}", a.withUser(a.bookmarks.DeleteReminder))
 	mux.HandleFunc("GET /api/action-items", a.withUser(a.bookmarks.ActionItems))

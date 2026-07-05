@@ -219,6 +219,7 @@ func (s *Service) Delete(w http.ResponseWriter, r *http.Request, user auth.User)
 		return
 	}
 	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE user_id=? AND item_type='bookmark' AND item_id=?`, user.ID, r.PathValue("id"))
+	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM reminders WHERE user_id=? AND item_type='bookmark' AND item_id=?`, user.ID, r.PathValue("id"))
 	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark deleted"})
 }

@@ -58,11 +58,19 @@ to `settings`; Gemini, Resend, and X read effective values at runtime.
 
 ## Durable Background Jobs Engine
 
-Asynchronous workflows (e.g., crawling bookmarks, querying LLMs, syncing X timelines) are powered by a SQLite-backed task queue.
+Asynchronous workflows (e.g., crawling bookmarks, querying LLMs, syncing X timelines, and due reminder email notifications) are powered by a SQLite-backed task queue.
 
 - **Queue Schema**: Scheduled items are tracked persistently in the `jobs` table.
 - **Worker Pools**: Handled in `/internal/app/workers.go` and managed by `/internal/jobs/jobs.go`.
 - **Properties**:
   - Keeps progress status (`queued`, `leased`, `completed`, `failed`).
+  - Supports delayed jobs through `run_after`; reminder email jobs are scheduled
+    for the reminder's current UTC due time.
   - Limits execution concurrency using bounded pools of Go workers.
   - Recovers on server restart by scanning non-completed entries.
+
+Reminder email jobs are app-level jobs because they need runtime Resend
+settings. A job is idempotent: it sends only when the payload reminder ID and
+payload due time still match a pending reminder whose `last_notified_at` is
+empty. Missing Resend configuration makes the job a no-op rather than failing
+the core reminder workflow.

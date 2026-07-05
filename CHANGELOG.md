@@ -32,13 +32,14 @@ All notable changes to this project will be documented in this file.
 - Added standalone notes to the daily review queue, with note completion and snooze support.
 - Added a durable Inbox processing loop for bookmarks and notes, including per-item stage, priority, next action, reader controls, review context, and JSON backup/restore support.
 - Added explicit bookmark/note links with backlink reads, bookmark-page controls, per-user ownership validation, and JSON backup/restore support.
-- Added one-time reminders for bookmarks and notes with due-time reads, completion/deletion APIs, bookmark-page controls, ownership validation, and JSON backup/restore support.
+- Added reminders for bookmarks and notes with due-time reads, completion/deletion APIs, bookmark-page controls, ownership validation, and JSON backup/restore support.
 - Added an assistant action approval ledger for bounded second-brain mutations, with proposal, approve, reject, failed-action tracking, and an embedded Assistant review page.
 - Added durable action items for bookmarks and notes, with inline Inbox/bookmark controls, completion/deletion APIs, ownership validation, and JSON backup/restore support.
 - Added a Focus page that gathers pending action items and reminders without adding backend dependencies.
 - Added note-side action item and reminder controls so standalone notes can carry the same open loops as bookmarks from the Notes page.
 - Added note-side explicit links and backlinks, including note-to-note link creation from the Notes page.
 - Added a unified per-user search index for bookmarks and notes, a typed `/api/search/items` retrieval API, and a quota-protected `/api/search/rebuild` repair path.
+- Added timezone-aware recurring reminders with custom day intervals, notification channels, edit and snooze APIs, due-state response metadata, and idempotent scheduled Resend email jobs.
 
 ### Changed
 
@@ -109,3 +110,4 @@ All notable changes to this project will be documented in this file.
 - Assistant actions are inert until explicit approval, revalidate item ownership during execution, and record failed stale proposals without running arbitrary tools.
 - Authenticated mutation quotas now throttle high-risk write paths with hashed per-user, per-audience keys in SQLite.
 - Search index rebuilds are explicit CSRF-protected mutations; read-only search routes do not mutate server state and typed search results remain user-scoped.
+- Reminder update and snooze routes are CSRF-protected, quota-limited, and user-scoped; reminder email jobs re-check ownership, due timestamp, pending status, and `last_notified_at` before sending.

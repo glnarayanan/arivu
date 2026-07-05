@@ -849,12 +849,7 @@ async function focusPage() {
     </section>
   `));
   bindActionItemControls();
-  document.querySelectorAll("[data-reminder-complete]").forEach((button) => {
-    button.addEventListener("click", () => completeReminder(button));
-  });
-  document.querySelectorAll("[data-reminder-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteReminder(button));
-  });
+  bindReminderControls();
 }
 
 function focusActionItems(items) {
@@ -872,10 +867,12 @@ function focusActionItems(items) {
 function focusReminders(items) {
   if (!items.length) return `<div class="empty-state"><span class="meta">Clear</span><h3>No pending reminders</h3><p>Timed nudges from saved items appear here.</p></div>`;
   return `<div class="stack">${items.map((item) => `<article class="annotation">
-    <p><strong>${escapeHTML(formatDate(item.due_at))}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.item_title || "")}</span></p>
+    <p><strong>${escapeHTML(formatDate(item.due_at))}</strong> <span class="meta">${reminderMeta(item)}</span></p>
     ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
     <p class="button-row">
       <a class="button secondary" href="${itemHref(item)}">Open item</a>
+      <button type="button" class="secondary" data-reminder-snooze="${escapeHTML(item.id)}" data-minutes="30">30m</button>
+      <button type="button" class="secondary" data-reminder-snooze="${escapeHTML(item.id)}" data-days="1">Tomorrow</button>
       <button type="button" data-reminder-complete="${escapeHTML(item.id)}" aria-label="Complete reminder ${escapeHTML(item.note || item.item_title || "")}">Done</button>
       <button type="button" class="danger" data-reminder-delete="${escapeHTML(item.id)}" aria-label="Delete reminder ${escapeHTML(item.note || item.item_title || "")}">Delete</button>
     </p>
@@ -1476,26 +1473,72 @@ async function bookmarkPage() {
 function reminderList(reminders) {
   if (!reminders.length) return `<p class="meta">No reminders set.</p>`;
   return `<div class="stack">${reminders.map((reminder) => `<article class="annotation">
-    <p><strong>${escapeHTML(formatDate(reminder.due_at))}</strong> <span class="meta">${escapeHTML(reminder.status || "pending")}</span></p>
+    <p><strong>${escapeHTML(formatDate(reminder.due_at))}</strong> <span class="meta">${reminderMeta(reminder)}</span></p>
     ${reminder.note ? `<p>${escapeHTML(reminder.note)}</p>` : ""}
     <p class="button-row">
+      ${reminder.status === "completed" ? "" : `<button type="button" class="secondary" data-reminder-snooze="${escapeHTML(reminder.id)}" data-minutes="30">30m</button><button type="button" class="secondary" data-reminder-snooze="${escapeHTML(reminder.id)}" data-days="1">Tomorrow</button>`}
       ${reminder.status === "completed" ? "" : `<button type="button" data-reminder-complete="${escapeHTML(reminder.id)}">Done</button>`}
       <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete</button>
     </p>
+    ${reminder.status === "completed" ? "" : reminderEditForm(reminder)}
   </article>`).join("")}</div>`;
 }
 
 function reminderForm(itemType, itemID, layout = "inline") {
   const dueID = `reminder-due-${itemType}-${itemID}`;
   const noteID = `reminder-note-${itemType}-${itemID}`;
+  const recurrenceID = `reminder-recurrence-${itemType}-${itemID}`;
+  const intervalID = `reminder-interval-${itemType}-${itemID}`;
+  const channelID = `reminder-channel-${itemType}-${itemID}`;
   const className = layout === "panel" ? "panel form" : "task-form";
   return `<form class="${className}" data-reminder-form data-item-type="${escapeHTML(itemType)}" data-item-id="${escapeHTML(itemID)}">
     ${layout === "panel" ? "<h2>Reminder</h2>" : ""}
     <div class="field"><label for="${escapeHTML(dueID)}">Due</label><input id="${escapeHTML(dueID)}" data-reminder-due type="datetime-local" required></div>
+    <input data-reminder-timezone type="hidden" value="${escapeHTML(browserTimezone())}">
+    <div class="field"><label for="${escapeHTML(recurrenceID)}">Repeat</label><select id="${escapeHTML(recurrenceID)}" data-reminder-recurrence>${reminderRecurrenceOptions("none")}</select></div>
+    <div class="field"><label for="${escapeHTML(intervalID)}">Custom days</label><input id="${escapeHTML(intervalID)}" data-reminder-interval type="number" min="1" max="365" inputmode="numeric" placeholder="Only for custom"></div>
+    <div class="field"><label for="${escapeHTML(channelID)}">Notify</label><select id="${escapeHTML(channelID)}" data-reminder-channel>${reminderChannelOptions("in_app")}</select></div>
     <div class="field"><label for="${escapeHTML(noteID)}">Note</label><input id="${escapeHTML(noteID)}" data-reminder-note type="text" maxlength="500" placeholder="Why this should come back"></div>
     <p class="form-message" data-form-message hidden></p>
     <button type="submit" class="secondary">Set reminder</button>
   </form>`;
+}
+
+function reminderEditForm(reminder) {
+  const id = escapeHTML(reminder.id || "");
+  return `<details class="inline-details">
+    <summary>Edit reminder</summary>
+    <form class="task-form" data-reminder-edit="${id}">
+      <input data-reminder-timezone type="hidden" value="${escapeHTML(reminder.timezone || browserTimezone())}">
+      <label class="sr-only" for="edit-reminder-due-${id}">Due</label>
+      <input id="edit-reminder-due-${id}" data-reminder-due type="datetime-local" value="${escapeHTML(rfc3339ToLocalDateTime(reminder.due_at))}" required>
+      <label class="sr-only" for="edit-reminder-recur-${id}">Repeat</label>
+      <select id="edit-reminder-recur-${id}" data-reminder-recurrence>${reminderRecurrenceOptions(reminder.recurrence || "none")}</select>
+      <label class="sr-only" for="edit-reminder-interval-${id}">Custom days</label>
+      <input id="edit-reminder-interval-${id}" data-reminder-interval type="number" min="1" max="365" inputmode="numeric" value="${reminder.recurrence === "custom" ? escapeHTML(String(reminder.recurrence_interval_days || "")) : ""}" placeholder="Custom days">
+      <label class="sr-only" for="edit-reminder-channel-${id}">Notify</label>
+      <select id="edit-reminder-channel-${id}" data-reminder-channel>${reminderChannelOptions(reminder.notification_channel || "in_app")}</select>
+      <label class="sr-only" for="edit-reminder-note-${id}">Note</label>
+      <input id="edit-reminder-note-${id}" data-reminder-note type="text" maxlength="500" value="${escapeHTML(reminder.note || "")}" placeholder="Why this should come back">
+      <p class="form-message" data-form-message hidden></p>
+      <button type="submit" class="secondary">Save</button>
+    </form>
+  </details>`;
+}
+
+function reminderRecurrenceOptions(current) {
+  return [["none", "Once"], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["custom", "Custom days"]].map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function reminderChannelOptions(current) {
+  return [["in_app", "In app"], ["email", "In app + email"]].map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function reminderMeta(reminder) {
+  const parts = [reminder.due_state || reminder.status || "pending", reminder.item_type || "item", reminder.item_title || ""];
+  if (reminder.recurrence && reminder.recurrence !== "none") parts.push(reminder.recurrence === "custom" ? `every ${reminder.recurrence_interval_days || "?"}d` : reminder.recurrence);
+  if (reminder.notification_channel === "email") parts.push("email");
+  return escapeHTML(parts.filter(Boolean).join(" · "));
 }
 
 function actionItemsPanel(itemType, itemID, items) {
@@ -1536,6 +1579,12 @@ function bindActionItemControls() {
 function bindReminderControls() {
   document.querySelectorAll("[data-reminder-form]").forEach((form) => {
     form.addEventListener("submit", submitReminder);
+  });
+  document.querySelectorAll("[data-reminder-edit]").forEach((form) => {
+    form.addEventListener("submit", submitReminderEdit);
+  });
+  document.querySelectorAll("[data-reminder-snooze]").forEach((button) => {
+    button.addEventListener("click", () => snoozeReminder(button));
   });
   document.querySelectorAll("[data-reminder-complete]").forEach((button) => {
     button.addEventListener("click", () => completeReminder(button));
@@ -1582,12 +1631,11 @@ async function submitReminder(event) {
   try {
     await api("/reminders", {
       method: "POST",
-      body: JSON.stringify({
+      body: JSON.stringify(reminderPayload(form, {
         item_type: form.dataset.itemType,
         item_id: form.dataset.itemId,
         due_at: dueAt,
-        note: form.querySelector("[data-reminder-note]").value,
-      }),
+      })),
     });
     ui.toast("Reminder set", "success");
     render();
@@ -1597,6 +1645,46 @@ async function submitReminder(event) {
   } finally {
     done();
   }
+}
+
+async function submitReminderEdit(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dueAt = localDateTimeToRFC3339(form.querySelector("[data-reminder-due]").value);
+  if (!dueAt) {
+    setFormMessage(form, "Choose a valid reminder time.");
+    return;
+  }
+  const done = setButtonBusy(event.submitter, "Saving");
+  setFormMessage(form);
+  try {
+    await api(`/reminders/${form.dataset.reminderEdit}`, {
+      method: "PATCH",
+      body: JSON.stringify(reminderPayload(form, { due_at: dueAt })),
+    });
+    ui.toast("Reminder updated", "success");
+    render();
+  } catch (err) {
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function reminderPayload(form, base) {
+  const recurrence = form.querySelector("[data-reminder-recurrence]")?.value || "none";
+  const intervalValue = Number(form.querySelector("[data-reminder-interval]")?.value || 0);
+  const channel = form.querySelector("[data-reminder-channel]")?.value || "in_app";
+  return {
+    ...base,
+    timezone: form.querySelector("[data-reminder-timezone]")?.value || browserTimezone(),
+    recurrence,
+    recurrence_interval_days: recurrence === "custom" ? intervalValue : 0,
+    notification_channel: channel,
+    email_enabled: channel === "email",
+    note: form.querySelector("[data-reminder-note]")?.value || "",
+  };
 }
 
 async function completeActionItem(button) {
@@ -1632,6 +1720,34 @@ function localDateTimeToRFC3339(value) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   return date.toISOString();
+}
+
+function rfc3339ToLocalDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function browserTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+async function snoozeReminder(button) {
+  const body = {};
+  if (button.dataset.minutes) body.minutes = Number(button.dataset.minutes);
+  if (button.dataset.days) body.days = Number(button.dataset.days);
+  const done = setButtonBusy(button, "Snoozing");
+  try {
+    await api(`/reminders/${button.dataset.reminderSnooze}/snooze`, { method: "POST", body: JSON.stringify(body) });
+    ui.toast("Reminder snoozed", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 async function completeReminder(button) {

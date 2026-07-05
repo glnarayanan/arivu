@@ -19,13 +19,16 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 
 - `/dashboard`: bookmark list, search, URL capture, quick note, manual tags, PWA share-target prefill, and visible processing status.
 - `/inbox`: capture triage for bookmarks and notes, with per-item stage, priority, next action controls, and inline action items.
-- `/focus`: daily work surface combining pending action items and reminders with links back to their source items.
+- `/focus`: daily work surface combining pending action items and reminders
+  with links back to their source items plus quick reminder completion, snooze,
+  and delete actions.
 - `/assistant`: approval ledger for allowlisted assistant action proposals, with payload/result inspection and approve/reject controls.
-- `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions.
+- `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions. Reminder controls include timezone-aware due times, recurrence, in-app/email channel selection, inline edits, snooze, completion, and deletion.
 - `/notes`: standalone notes for ideas and snippets that are not tied to a URL,
   including note-side action items, reminders, explicit links, backlinks, and
-  note-to-note link creation. `/notes?note=<id>` focuses a specific note from
-  Inbox, backlinks, Focus, or tasks.
+  note-to-note link creation. Reminder controls match bookmark reminder
+  controls. `/notes?note=<id>` focuses a specific note from Inbox, backlinks,
+  Focus, or tasks.
 - `/review`: resurfacing-backed daily review queue with complete and snooze actions.
 - `/duplicates`: duplicate groups and merge workflow.
 - `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.

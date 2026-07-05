@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -507,7 +508,7 @@ func (s *Service) Reminders(w http.ResponseWriter, r *http.Request, user auth.Us
 		where += " AND status=?"
 		args = append(args, status)
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,item_type,item_id,due_at,note,status,created_at,COALESCE(completed_at,'') FROM reminders WHERE `+where+` ORDER BY due_at ASC LIMIT 200`, args...)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,COALESCE(completed_at,''),COALESCE(last_notified_at,''),COALESCE(last_completed_at,'') FROM reminders WHERE `+where+` ORDER BY due_at ASC LIMIT 200`, args...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load reminders")
 		return
@@ -522,10 +523,15 @@ func (s *Service) Reminders(w http.ResponseWriter, r *http.Request, user auth.Us
 
 func (s *Service) CreateReminder(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body struct {
-		ItemType string `json:"item_type"`
-		ItemID   string `json:"item_id"`
-		DueAt    string `json:"due_at"`
-		Note     string `json:"note"`
+		ItemType               string `json:"item_type"`
+		ItemID                 string `json:"item_id"`
+		DueAt                  string `json:"due_at"`
+		Timezone               string `json:"timezone"`
+		Recurrence             string `json:"recurrence"`
+		RecurrenceIntervalDays int    `json:"recurrence_interval_days"`
+		NotificationChannel    string `json:"notification_channel"`
+		EmailEnabled           bool   `json:"email_enabled"`
+		Note                   string `json:"note"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request")
@@ -537,17 +543,12 @@ func (s *Service) CreateReminder(w http.ResponseWriter, r *http.Request, user au
 		writeError(w, http.StatusNotFound, "Reminder item not found")
 		return
 	}
-	due, err := time.Parse(time.RFC3339, strings.TrimSpace(body.DueAt))
+	input, err := reminderInputFromCreate(body.DueAt, body.Timezone, body.Recurrence, body.RecurrenceIntervalDays, body.NotificationChannel, body.EmailEnabled, body.Note)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "due_at must be RFC3339")
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	note := strings.TrimSpace(body.Note)
-	if len(note) > 500 {
-		writeError(w, http.StatusBadRequest, "note is too large")
-		return
-	}
-	reminder, err := s.createReminder(r.Context(), user.ID, body.ItemType, body.ItemID, due.UTC().Format(time.RFC3339), note, time.Now().UTC().Format(time.RFC3339))
+	reminder, err := s.createReminder(r.Context(), user.ID, body.ItemType, body.ItemID, input, time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not create reminder")
 		return
@@ -555,9 +556,101 @@ func (s *Service) CreateReminder(w http.ResponseWriter, r *http.Request, user au
 	writeJSON(w, http.StatusOK, map[string]any{"reminder": reminder})
 }
 
+func (s *Service) UpdateReminder(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		DueAt                  string `json:"due_at"`
+		Timezone               string `json:"timezone"`
+		Recurrence             string `json:"recurrence"`
+		RecurrenceIntervalDays int    `json:"recurrence_interval_days"`
+		NotificationChannel    string `json:"notification_channel"`
+		EmailEnabled           bool   `json:"email_enabled"`
+		Note                   string `json:"note"`
+		Status                 string `json:"status"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	input, err := reminderInputFromCreate(body.DueAt, body.Timezone, body.Recurrence, body.RecurrenceIntervalDays, body.NotificationChannel, body.EmailEnabled, body.Note)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	status := strings.TrimSpace(body.Status)
+	if status == "" {
+		status = "pending"
+	}
+	if status != "pending" && status != "completed" {
+		writeError(w, http.StatusBadRequest, "Invalid reminder status")
+		return
+	}
+	completedAt := any(nil)
+	lastCompletedAt := any(nil)
+	if status == "completed" {
+		completedAt = time.Now().UTC().Format(time.RFC3339)
+		lastCompletedAt = completedAt
+	}
+	res, _ := s.db.ExecContext(r.Context(), `UPDATE reminders SET due_at=?,timezone=?,recurrence=?,recurrence_interval_days=?,notification_channel=?,note=?,status=?,completed_at=?,last_completed_at=COALESCE(?,last_completed_at),last_notified_at=NULL WHERE id=? AND user_id=?`,
+		input.DueAt, input.Timezone, input.Recurrence, input.RecurrenceIntervalDays, input.NotificationChannel, input.Note, status, completedAt, lastCompletedAt, r.PathValue("id"), user.ID)
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Reminder not found")
+		return
+	}
+	if status == "pending" {
+		s.scheduleReminderNotification(r.Context(), user.ID, r.PathValue("id"), input.DueAt, input.NotificationChannel)
+	}
+	reminder, _ := s.reminder(r.Context(), user.ID, r.PathValue("id"))
+	writeJSON(w, http.StatusOK, map[string]any{"reminder": reminder})
+}
+
+func (s *Service) SnoozeReminder(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		Until   string `json:"until"`
+		DueAt   string `json:"due_at"`
+		Minutes int    `json:"minutes"`
+		Days    int    `json:"days"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	due, err := snoozeDueAt(body.Until, body.DueAt, body.Minutes, body.Days)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	var channel string
+	res, _ := s.db.ExecContext(r.Context(), `UPDATE reminders SET due_at=?,status='pending',completed_at=NULL,last_notified_at=NULL WHERE id=? AND user_id=?`, due, r.PathValue("id"), user.ID)
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Reminder not found")
+		return
+	}
+	_ = s.db.QueryRowContext(r.Context(), `SELECT notification_channel FROM reminders WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID).Scan(&channel)
+	s.scheduleReminderNotification(r.Context(), user.ID, r.PathValue("id"), due, channel)
+	reminder, _ := s.reminder(r.Context(), user.ID, r.PathValue("id"))
+	writeJSON(w, http.StatusOK, map[string]any{"reminder": reminder})
+}
+
 func (s *Service) CompleteReminder(w http.ResponseWriter, r *http.Request, user auth.User) {
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, _ := s.db.ExecContext(r.Context(), `UPDATE reminders SET status='completed',completed_at=? WHERE id=? AND user_id=?`, now, r.PathValue("id"), user.ID)
+	reminder, err := s.reminder(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Reminder not found")
+		return
+	}
+	nextDue, hasNext := nextReminderDue(reminder)
+	if hasNext {
+		res, _ := s.db.ExecContext(r.Context(), `UPDATE reminders SET due_at=?,status='pending',completed_at=NULL,last_completed_at=?,last_notified_at=NULL WHERE id=? AND user_id=?`, nextDue, now, r.PathValue("id"), user.ID)
+		if rows, _ := res.RowsAffected(); rows == 0 {
+			writeError(w, http.StatusNotFound, "Reminder not found")
+			return
+		}
+		s.scheduleReminderNotification(r.Context(), user.ID, r.PathValue("id"), nextDue, stringValue(reminder["notification_channel"]))
+		updated, _ := s.reminder(r.Context(), user.ID, r.PathValue("id"))
+		writeJSON(w, http.StatusOK, map[string]any{"message": "Reminder advanced", "completed_at": now, "next_due_at": nextDue, "reminder": updated})
+		return
+	}
+	res, _ := s.db.ExecContext(r.Context(), `UPDATE reminders SET status='completed',completed_at=?,last_completed_at=? WHERE id=? AND user_id=?`, now, now, r.PathValue("id"), user.ID)
 	if rows, _ := res.RowsAffected(); rows == 0 {
 		writeError(w, http.StatusNotFound, "Reminder not found")
 		return
@@ -1041,7 +1134,7 @@ func scanLink(row scanner) map[string]any {
 }
 
 func (s *Service) reminder(ctx context.Context, userID, id string) (map[string]any, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT id,item_type,item_id,due_at,note,status,created_at,COALESCE(completed_at,'') FROM reminders WHERE id=? AND user_id=?`, id, userID)
+	row := s.db.QueryRowContext(ctx, `SELECT id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,COALESCE(completed_at,''),COALESCE(last_notified_at,''),COALESCE(last_completed_at,'') FROM reminders WHERE id=? AND user_id=?`, id, userID)
 	reminder := scanReminder(row)
 	if reminder["id"] == "" {
 		return nil, sql.ErrNoRows
@@ -1050,21 +1143,19 @@ func (s *Service) reminder(ctx context.Context, userID, id string) (map[string]a
 	return reminder, nil
 }
 
-func (s *Service) createReminder(ctx context.Context, userID, itemType, itemID, dueAt, note, now string) (map[string]any, error) {
-	due, err := time.Parse(time.RFC3339, dueAt)
-	if err != nil {
-		return nil, err
-	}
+func (s *Service) createReminder(ctx context.Context, userID, itemType, itemID string, input reminderInput, now string) (map[string]any, error) {
 	id := ids.New()
-	_, err = s.db.ExecContext(ctx, `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,note,status,created_at) VALUES(?,?,?,?,?,?,?,?)`, id, userID, itemType, itemID, due.UTC().Format(time.RFC3339), note, "pending", now)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, userID, itemType, itemID, input.DueAt, input.Timezone, input.Recurrence, input.RecurrenceIntervalDays, input.NotificationChannel, input.Note, "pending", now)
 	if err != nil {
 		return nil, err
 	}
+	s.scheduleReminderNotification(ctx, userID, id, input.DueAt, input.NotificationChannel)
 	return s.reminder(ctx, userID, id)
 }
 
 func (s *Service) itemReminders(ctx context.Context, userID, itemType, itemID string) []map[string]any {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,due_at,note,status,created_at,COALESCE(completed_at,'') FROM reminders WHERE user_id=? AND item_type=? AND item_id=? ORDER BY due_at ASC LIMIT 50`, userID, itemType, itemID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,COALESCE(completed_at,''),COALESCE(last_notified_at,''),COALESCE(last_completed_at,'') FROM reminders WHERE user_id=? AND item_type=? AND item_id=? ORDER BY due_at ASC LIMIT 50`, userID, itemType, itemID)
 	if err != nil {
 		return []map[string]any{}
 	}
@@ -1179,11 +1270,8 @@ func (s *Service) validateAssistantPayload(ctx context.Context, userID, actionTy
 		if !s.reviewItemExists(ctx, userID, itemType, itemID) {
 			return errInvalid("assistant reminder item not found")
 		}
-		if _, err := time.Parse(time.RFC3339, stringValue(payload["due_at"])); err != nil {
-			return errInvalid("invalid reminder due time")
-		}
-		if len(strings.TrimSpace(stringValue(payload["note"]))) > 500 {
-			return errInvalid("invalid reminder note")
+		if _, err := reminderInputFromCreate(stringValue(payload["due_at"]), stringValue(payload["timezone"]), stringValue(payload["recurrence"]), intValue(payload["recurrence_interval_days"]), stringValue(payload["notification_channel"]), boolValue(payload["email_enabled"]), stringValue(payload["note"])); err != nil {
+			return errInvalid(err.Error())
 		}
 	case "create_action_item":
 		itemType, itemID := stringValue(payload["item_type"]), stringValue(payload["item_id"])
@@ -1222,7 +1310,11 @@ func (s *Service) executeAssistantAction(ctx context.Context, userID, actionType
 		}
 		return map[string]any{"link_id": link["id"]}, nil
 	case "create_reminder":
-		reminder, err := s.createReminder(ctx, userID, stringValue(payload["item_type"]), stringValue(payload["item_id"]), stringValue(payload["due_at"]), strings.TrimSpace(stringValue(payload["note"])), now)
+		input, err := reminderInputFromCreate(stringValue(payload["due_at"]), stringValue(payload["timezone"]), stringValue(payload["recurrence"]), intValue(payload["recurrence_interval_days"]), stringValue(payload["notification_channel"]), boolValue(payload["email_enabled"]), stringValue(payload["note"]))
+		if err != nil {
+			return nil, err
+		}
+		reminder, err := s.createReminder(ctx, userID, stringValue(payload["item_type"]), stringValue(payload["item_id"]), input, now)
 		if err != nil {
 			return nil, err
 		}
@@ -1250,16 +1342,174 @@ func (s *Service) scanReminders(ctx context.Context, userID string, rows *sql.Ro
 	rows.Close()
 	for _, reminder := range reminders {
 		reminder["item_title"] = s.itemTitle(ctx, userID, stringValue(reminder["item_type"]), stringValue(reminder["item_id"]))
+		decorateReminderDueState(reminder)
 	}
 	return reminders, nil
 }
 
 func scanReminder(row scanner) map[string]any {
-	var id, itemType, itemID, dueAt, note, status, created, completed string
-	if err := row.Scan(&id, &itemType, &itemID, &dueAt, &note, &status, &created, &completed); err != nil {
+	var id, itemType, itemID, dueAt, timezoneName, recurrence, channel, note, status, created, completed, notified, lastCompleted string
+	var interval int
+	if err := row.Scan(&id, &itemType, &itemID, &dueAt, &timezoneName, &recurrence, &interval, &channel, &note, &status, &created, &completed, &notified, &lastCompleted); err != nil {
 		return map[string]any{"id": ""}
 	}
-	return map[string]any{"id": id, "item_type": itemType, "item_id": itemID, "due_at": dueAt, "note": note, "status": status, "created_at": created, "completed_at": completed}
+	reminder := map[string]any{"id": id, "item_type": itemType, "item_id": itemID, "due_at": dueAt, "timezone": fallback(timezoneName, "UTC"), "recurrence": fallback(recurrence, "none"), "recurrence_interval_days": interval, "notification_channel": fallback(channel, "in_app"), "email_enabled": channel == "email", "note": note, "status": status, "created_at": created, "completed_at": completed, "last_notified_at": notified, "last_completed_at": lastCompleted}
+	decorateReminderDueState(reminder)
+	return reminder
+}
+
+type reminderInput struct {
+	DueAt                  string
+	Timezone               string
+	Recurrence             string
+	RecurrenceIntervalDays int
+	NotificationChannel    string
+	Note                   string
+}
+
+func reminderInputFromCreate(dueAt, timezoneName, recurrence string, intervalDays int, channel string, emailEnabled bool, note string) (reminderInput, error) {
+	due, err := time.Parse(time.RFC3339, strings.TrimSpace(dueAt))
+	if err != nil {
+		return reminderInput{}, fmt.Errorf("due_at must be RFC3339")
+	}
+	timezoneName = strings.TrimSpace(timezoneName)
+	if timezoneName == "" {
+		timezoneName = "UTC"
+	}
+	if _, err := time.LoadLocation(timezoneName); err != nil {
+		return reminderInput{}, fmt.Errorf("timezone is invalid")
+	}
+	recurrence = strings.TrimSpace(recurrence)
+	if recurrence == "" {
+		recurrence = "none"
+	}
+	if !validReminderRecurrence(recurrence) {
+		return reminderInput{}, fmt.Errorf("Invalid reminder recurrence")
+	}
+	if recurrence == "custom" {
+		if intervalDays < 1 || intervalDays > 365 {
+			return reminderInput{}, fmt.Errorf("custom recurrence interval must be between 1 and 365 days")
+		}
+	} else {
+		intervalDays = 0
+	}
+	channel = strings.TrimSpace(channel)
+	if channel == "" {
+		if emailEnabled {
+			channel = "email"
+		} else {
+			channel = "in_app"
+		}
+	}
+	if channel != "in_app" && channel != "email" {
+		return reminderInput{}, fmt.Errorf("Invalid notification channel")
+	}
+	note = strings.TrimSpace(note)
+	if len(note) > 500 {
+		return reminderInput{}, fmt.Errorf("note is too large")
+	}
+	return reminderInput{DueAt: due.UTC().Format(time.RFC3339), Timezone: timezoneName, Recurrence: recurrence, RecurrenceIntervalDays: intervalDays, NotificationChannel: channel, Note: note}, nil
+}
+
+func validReminderRecurrence(value string) bool {
+	return value == "none" || value == "daily" || value == "weekly" || value == "monthly" || value == "custom"
+}
+
+func snoozeDueAt(until string, dueAt string, minutes int, days int) (string, error) {
+	if target := strings.TrimSpace(firstNonEmpty(until, dueAt)); target != "" {
+		due, err := time.Parse(time.RFC3339, target)
+		if err != nil {
+			return "", fmt.Errorf("snooze due time must be RFC3339")
+		}
+		return due.UTC().Format(time.RFC3339), nil
+	}
+	if minutes <= 0 && days <= 0 {
+		minutes = 30
+	}
+	if minutes < 0 || days < 0 || days > 90 || minutes > 60*24*90 {
+		return "", fmt.Errorf("snooze must be between 1 minute and 90 days")
+	}
+	return time.Now().UTC().Add(time.Duration(minutes)*time.Minute).AddDate(0, 0, days).Format(time.RFC3339), nil
+}
+
+func decorateReminderDueState(reminder map[string]any) {
+	if stringValue(reminder["status"]) == "completed" {
+		reminder["is_due"] = false
+		reminder["due_state"] = "completed"
+		return
+	}
+	due, err := time.Parse(time.RFC3339, stringValue(reminder["due_at"]))
+	if err != nil {
+		reminder["is_due"] = false
+		reminder["due_state"] = "upcoming"
+		return
+	}
+	now := time.Now().UTC()
+	reminder["is_due"] = !due.After(now)
+	switch {
+	case due.Before(now):
+		reminder["due_state"] = "overdue"
+	case sameUTCDate(due, now):
+		reminder["due_state"] = "today"
+	default:
+		reminder["due_state"] = "upcoming"
+	}
+}
+
+func sameUTCDate(a, b time.Time) bool {
+	ay, am, ad := a.UTC().Date()
+	by, bm, bd := b.UTC().Date()
+	return ay == by && am == bm && ad == bd
+}
+
+func nextReminderDue(reminder map[string]any) (string, bool) {
+	recurrence := stringValue(reminder["recurrence"])
+	if recurrence == "" || recurrence == "none" {
+		return "", false
+	}
+	due, err := time.Parse(time.RFC3339, stringValue(reminder["due_at"]))
+	if err != nil {
+		return "", false
+	}
+	loc, err := time.LoadLocation(fallback(stringValue(reminder["timezone"]), "UTC"))
+	if err != nil {
+		loc = time.UTC
+	}
+	localDue := due.In(loc)
+	for i := 0; i < 500; i++ {
+		switch recurrence {
+		case "daily":
+			localDue = localDue.AddDate(0, 0, 1)
+		case "weekly":
+			localDue = localDue.AddDate(0, 0, 7)
+		case "monthly":
+			localDue = localDue.AddDate(0, 1, 0)
+		case "custom":
+			days := intValue(reminder["recurrence_interval_days"])
+			if days < 1 || days > 365 {
+				return "", false
+			}
+			localDue = localDue.AddDate(0, 0, days)
+		default:
+			return "", false
+		}
+		if localDue.After(time.Now().In(loc)) {
+			return localDue.UTC().Format(time.RFC3339), true
+		}
+	}
+	return localDue.UTC().Format(time.RFC3339), true
+}
+
+func (s *Service) scheduleReminderNotification(ctx context.Context, userID, reminderID, dueAt, channel string) {
+	if channel != "email" || s.jobs == nil {
+		return
+	}
+	due, err := time.Parse(time.RFC3339, dueAt)
+	if err != nil {
+		return
+	}
+	payload, _ := json.Marshal(map[string]string{"reminder_id": reminderID, "due_at": due.UTC().Format(time.RFC3339)})
+	_, _ = s.jobs.EnqueueAt(ctx, userID, "reminder.email", string(payload), due)
 }
 
 func (s *Service) itemTitle(ctx context.Context, userID, itemType, itemID string) string {

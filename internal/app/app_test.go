@@ -790,7 +790,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	deleteCleanupTarget.Body.Close()
 	reminderDue := now.Add(48 * time.Hour).UTC().Format(time.RFC3339)
-	reminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"bookmark","item_id":"capture","due_at":"`+reminderDue+`","note":"Use this in planning."}`, accessCookie, csrfCookie)
+	reminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"bookmark","item_id":"capture","due_at":"`+reminderDue+`","timezone":"Asia/Kolkata","recurrence":"weekly","notification_channel":"email","note":"Use this in planning."}`, accessCookie, csrfCookie)
 	if reminderResp.StatusCode != http.StatusOK {
 		t.Fatalf("create reminder status = %d body=%s", reminderResp.StatusCode, readBody(reminderResp))
 	}
@@ -800,7 +800,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	_ = json.NewDecoder(reminderResp.Body).Decode(&reminderBody)
 	reminderResp.Body.Close()
 	reminderID, _ := reminderBody.Reminder["id"].(string)
-	if reminderID == "" || reminderBody.Reminder["item_title"] != "Capture Loop" {
+	if reminderID == "" || reminderBody.Reminder["item_title"] != "Capture Loop" || reminderBody.Reminder["timezone"] != "Asia/Kolkata" || reminderBody.Reminder["recurrence"] != "weekly" || reminderBody.Reminder["notification_channel"] != "email" || reminderBody.Reminder["due_state"] == "" {
 		t.Fatalf("unexpected reminder body: %#v", reminderBody)
 	}
 	crossReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"note","item_id":"`+otherNoteID+`","due_at":"`+reminderDue+`"}`, accessCookie, csrfCookie)
@@ -817,7 +817,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	_ = json.NewDecoder(remindersResp.Body).Decode(&remindersBody)
 	remindersResp.Body.Close()
-	if len(remindersBody.Reminders) != 1 || remindersBody.Reminders[0]["id"] != reminderID || remindersBody.Reminders[0]["note"] != "Use this in planning." {
+	if len(remindersBody.Reminders) != 1 || remindersBody.Reminders[0]["id"] != reminderID || remindersBody.Reminders[0]["note"] != "Use this in planning." || remindersBody.Reminders[0]["email_enabled"] != true {
 		t.Fatalf("unexpected reminders body: %#v", remindersBody)
 	}
 	noteReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"note","item_id":"`+searchNoteID+`","due_at":"`+now.Add(96*time.Hour).UTC().Format(time.RFC3339)+`","note":"Bring this note back."}`, accessCookie, csrfCookie)
@@ -863,11 +863,64 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	_ = json.NewDecoder(tempReminderResp.Body).Decode(&tempReminderBody)
 	tempReminderResp.Body.Close()
 	tempReminderID, _ := tempReminderBody.Reminder["id"].(string)
+	missingPatchReminderCSRF := httptest.NewRequest(http.MethodPatch, "/api/reminders/"+tempReminderID, strings.NewReader(`{"due_at":"`+now.Add(73*time.Hour).UTC().Format(time.RFC3339)+`"}`))
+	missingPatchReminderCSRF.Header.Set("Content-Type", "application/json")
+	missingPatchReminderCSRF.AddCookie(accessCookie)
+	missingPatchReminderRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingPatchReminderRec, missingPatchReminderCSRF)
+	missingPatchReminderResp := missingPatchReminderRec.Result()
+	if missingPatchReminderResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("reminder patch without csrf status = %d body=%s", missingPatchReminderResp.StatusCode, readBody(missingPatchReminderResp))
+	}
+	missingPatchReminderResp.Body.Close()
+	updatedDue := now.Add(74 * time.Hour).UTC().Format(time.RFC3339)
+	updateReminderResp := adminRequest(t, handler, http.MethodPatch, "/api/reminders/"+tempReminderID, `{"due_at":"`+updatedDue+`","timezone":"America/New_York","recurrence":"custom","recurrence_interval_days":3,"notification_channel":"in_app","note":"Updated temporary reminder."}`, accessCookie, csrfCookie)
+	if updateReminderResp.StatusCode != http.StatusOK {
+		t.Fatalf("update reminder status = %d body=%s", updateReminderResp.StatusCode, readBody(updateReminderResp))
+	}
+	var updateReminderBody struct {
+		Reminder map[string]any `json:"reminder"`
+	}
+	_ = json.NewDecoder(updateReminderResp.Body).Decode(&updateReminderBody)
+	updateReminderResp.Body.Close()
+	if updateReminderBody.Reminder["due_at"] != updatedDue || updateReminderBody.Reminder["timezone"] != "America/New_York" || updateReminderBody.Reminder["recurrence"] != "custom" || int(updateReminderBody.Reminder["recurrence_interval_days"].(float64)) != 3 || updateReminderBody.Reminder["notification_channel"] != "in_app" {
+		t.Fatalf("unexpected updated reminder: %#v", updateReminderBody)
+	}
+	crossUpdateReminder := adminRequest(t, handler, http.MethodPatch, "/api/reminders/"+tempReminderID, `{"due_at":"`+updatedDue+`"}`, otherAccess, otherCSRF)
+	if crossUpdateReminder.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-user reminder update status = %d body=%s", crossUpdateReminder.StatusCode, readBody(crossUpdateReminder))
+	}
+	crossUpdateReminder.Body.Close()
+	missingSnoozeReminderCSRF := httptest.NewRequest(http.MethodPost, "/api/reminders/"+tempReminderID+"/snooze", strings.NewReader(`{"minutes":30}`))
+	missingSnoozeReminderCSRF.Header.Set("Content-Type", "application/json")
+	missingSnoozeReminderCSRF.AddCookie(accessCookie)
+	missingSnoozeReminderRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingSnoozeReminderRec, missingSnoozeReminderCSRF)
+	missingSnoozeReminderResp := missingSnoozeReminderRec.Result()
+	if missingSnoozeReminderResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("reminder snooze without csrf status = %d body=%s", missingSnoozeReminderResp.StatusCode, readBody(missingSnoozeReminderResp))
+	}
+	missingSnoozeReminderResp.Body.Close()
+	snoozeReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+tempReminderID+"/snooze", `{"days":1}`, accessCookie, csrfCookie)
+	if snoozeReminderResp.StatusCode != http.StatusOK {
+		t.Fatalf("snooze reminder status = %d body=%s", snoozeReminderResp.StatusCode, readBody(snoozeReminderResp))
+	}
+	snoozeReminderResp.Body.Close()
+	crossSnoozeReminder := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+tempReminderID+"/snooze", `{"days":1}`, otherAccess, otherCSRF)
+	if crossSnoozeReminder.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-user reminder snooze status = %d body=%s", crossSnoozeReminder.StatusCode, readBody(crossSnoozeReminder))
+	}
+	crossSnoozeReminder.Body.Close()
 	completeTempReminder := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+tempReminderID+"/complete", `{}`, accessCookie, csrfCookie)
 	if completeTempReminder.StatusCode != http.StatusOK {
 		t.Fatalf("complete temp reminder status = %d body=%s", completeTempReminder.StatusCode, readBody(completeTempReminder))
 	}
+	var completeTempReminderBody map[string]any
+	_ = json.NewDecoder(completeTempReminder.Body).Decode(&completeTempReminderBody)
 	completeTempReminder.Body.Close()
+	if completeTempReminderBody["next_due_at"] == "" || completeTempReminderBody["message"] != "Reminder advanced" {
+		t.Fatalf("recurring reminder did not advance: %#v", completeTempReminderBody)
+	}
 	deleteTempReminder := adminRequest(t, handler, http.MethodDelete, "/api/reminders/"+tempReminderID, "", accessCookie, csrfCookie)
 	if deleteTempReminder.StatusCode != http.StatusOK {
 		t.Fatalf("delete temp reminder status = %d body=%s", deleteTempReminder.StatusCode, readBody(deleteTempReminder))
@@ -1348,6 +1401,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	var sawBookmarkReminder, sawNoteReminder bool
 	for _, reminder := range exportBody.Reminders {
 		if reminder["item_id"] == "capture" && reminder["note"] == "Use this in planning." {
+			if reminder["timezone"] != "Asia/Kolkata" || reminder["recurrence"] != "weekly" || reminder["notification_channel"] != "email" {
+				t.Fatalf("export missing reminder recurrence fields: %#v", reminder)
+			}
 			sawBookmarkReminder = true
 		}
 		if reminder["item_id"] == searchNoteID && reminder["note"] == "Bring this note back." {
@@ -1530,6 +1586,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 			t.Fatalf("restored export kept original reminder item id: %#v", restoredExport.Reminders)
 		}
 		if reminder["item_type"] == "bookmark" && reminder["note"] == "Use this in planning." {
+			if reminder["timezone"] != "Asia/Kolkata" || reminder["recurrence"] != "weekly" || reminder["notification_channel"] != "email" {
+				t.Fatalf("restored export missing reminder recurrence fields: %#v", reminder)
+			}
 			restoredBookmarkReminder = true
 		}
 		if reminder["item_type"] == "note" && reminder["note"] == "Bring this note back." {
@@ -1867,6 +1926,68 @@ func TestImportQueuesJobsWithVisibleProgressID(t *testing.T) {
 	}
 }
 
+func TestReminderEmailJobsAreIdempotent(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+		ResendAPIKey:   "resend-test",
+		ResendFrom:     "noreply@example.com",
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	sendCount := 0
+	a.resendHTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		sendCount++
+		if req.URL.String() != "https://api.resend.com/emails" {
+			t.Fatalf("unexpected resend URL: %s", req.URL.String())
+		}
+		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
+	})}
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "reminder-email@example.com")
+	userID := userIDForEmail(t, a, "reminder-email@example.com")
+	now := time.Now().UTC()
+	insertBookmarkForTest(t, a, userID, "email-reminder", "Email Reminder", now, now, 0, 1)
+	dueAt := now.Add(24 * time.Hour).UTC().Format(time.RFC3339)
+	create := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"bookmark","item_id":"email-reminder","due_at":"`+dueAt+`","notification_channel":"email","note":"Send safely <now>."}`, accessCookie, csrfCookie)
+	if create.StatusCode != http.StatusOK {
+		t.Fatalf("create email reminder status = %d body=%s", create.StatusCode, readBody(create))
+	}
+	var body struct {
+		Reminder map[string]any `json:"reminder"`
+	}
+	_ = json.NewDecoder(create.Body).Decode(&body)
+	create.Body.Close()
+	reminderID, _ := body.Reminder["id"].(string)
+	if reminderID == "" {
+		t.Fatalf("missing reminder id: %#v", body)
+	}
+	payload, _ := json.Marshal(reminderEmailPayload{ReminderID: reminderID, DueAt: dueAt})
+	if err := a.processReminderEmailJob(context.Background(), userID, string(payload)); err != nil {
+		t.Fatalf("process reminder email: %v", err)
+	}
+	if err := a.processReminderEmailJob(context.Background(), userID, string(payload)); err != nil {
+		t.Fatalf("process reminder email twice: %v", err)
+	}
+	if sendCount != 1 {
+		t.Fatalf("expected one email send, got %d", sendCount)
+	}
+	var notified string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(last_notified_at,'') FROM reminders WHERE id=? AND user_id=?`, reminderID, userID).Scan(&notified); err != nil {
+		t.Fatalf("load last_notified_at: %v", err)
+	}
+	if notified == "" {
+		t.Fatalf("last_notified_at not recorded")
+	}
+}
+
 func assertSourceReport(t *testing.T, report []map[string]any, source string, count int) {
 	t.Helper()
 	for _, item := range report {
@@ -1919,7 +2040,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `/notes?note=${encodeURIComponent(item.id)}`, `function focusNoteFromQuery()`, `async function focusPage()`, `/action-items?status=pending`, `/reminders?status=pending`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function bindReminderControls()`, `noteLinkForm(note, notes)`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `/notes?note=${encodeURIComponent(item.id)}`, `function focusNoteFromQuery()`, `async function focusPage()`, `/action-items?status=pending`, `/reminders?status=pending`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `function bindReminderControls()`, `noteLinkForm(note, notes)`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}

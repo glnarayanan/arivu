@@ -38,9 +38,10 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Explicit links connect bookmarks and notes with user-authored labels. Link
   reads return outgoing and incoming relationships so a saved item can show both
   what it points to and what points back to it.
-- One-time reminders attach due times and reminder notes to bookmarks or notes.
-  Reminder reads decorate each row with the item title while mutations continue
-  to validate item ownership.
+- Reminders attach due times, local timezone, recurrence, notification channel,
+  and reminder notes to bookmarks or notes. Reminder reads decorate each row
+  with the item title, due state, and completion/notification timestamps while
+  mutations continue to validate item ownership.
 - Action items attach multiple completable tasks to a bookmark or note. They are
   separate from the single `next_action` processing prompt and from dated
   reminders, so one saved item can carry a checklist without becoming a project
@@ -53,7 +54,7 @@ Second-brain v1 adds user-authored context around bookmarks:
   giving users one working surface for open loops without introducing a new
   backend workflow.
 - Assistant proposals can suggest only bounded second-brain mutations: item
-  state updates, explicit links, one-time reminders, and action items. The
+  state updates, explicit links, reminders, and action items. The
   Assistant page presents the proposal ledger; nothing executes until a user
   approves it.
 - The review queue is powered by resurfacing candidates and records completion or snooze events.
@@ -87,8 +88,9 @@ Second-brain v1 adds user-authored context around bookmarks:
   importing user.
 - Explicit item links are also exported and restored with remapped bookmark and
   note IDs.
-- Reminder rows are exported and restored with remapped item IDs and UTC due
-  times.
+- Reminder rows are exported and restored with remapped item IDs, UTC due
+  times, timezone, recurrence, notification channel, and completion state.
+  Restores schedule only future email reminders to avoid flooding old backups.
 
 ---
 
