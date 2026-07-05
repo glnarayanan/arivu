@@ -72,6 +72,10 @@ All notable changes to this project will be documented in this file.
 - Polished the embedded frontend with stronger interaction states, route loading feedback, semantic toasts, accessible search and navigation affordances, safer mobile layout behavior, and refined design tokens.
 - Resolved the frontend audit findings with explicit route access metadata, inline form errors, assertive error toasts, and a quieter OKLCH-based visual system.
 - Optimized embedded frontend asset delivery with content ETags, cache revalidation headers, zero-copy byte readers, and offscreen grid rendering containment.
+- Refined the embedded second-brain workflow UI so Dashboard is capture-first
+  with collapsible filters and saved searches, bookmark detail is reader-first
+  with collapsed workbench groups, Inbox/Focus/Review use clearer user-facing
+  labels, and the mobile shell keeps brutalist navigation compact.
 - Bookmark saves now accept quick notes, selected quotes, and manual tags, and return a `job_id` so the UI can show enrichment progress.
 - Extension selected-text saves now persist as quote annotations, with a backend compatibility alias for the older `annotation` payload field.
 - Extension popup saves now accept quick notes and comma-separated tags.

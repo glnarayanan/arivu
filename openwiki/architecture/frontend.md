@@ -17,7 +17,9 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 
 ### Product Routes
 
-- `/dashboard`: bookmark list, search, URL capture, quick note, manual tags, PWA share-target prefill, and visible processing status.
+- `/dashboard`: capture-first cockpit for URL saves, quick notes, manual tags,
+  PWA share-target prefill, visible processing status, saved-page search,
+  collapsible filters, and collapsible saved-search management.
 - `/inbox`: capture triage for bookmarks and notes, with per-item stage,
   priority, next action controls, inline action items, bulk selection, and
   keyboard triage for stage changes.
@@ -28,14 +30,21 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
   proposals for allowlisted actions, with payload/result inspection and
   explicit execute/reject controls. Draft cards expose the source item and JSON
   payload before they can be queued as proposals.
-- `/bookmark/:id`: sanitized reader view, summaries, processing state, read state, tags, related items, annotations, linked notes, explicit note links/backlinks, action items, reminders, and review actions. Reminder controls include timezone-aware due times, recurrence, in-app/email channel selection, inline edits, snooze, completion, and deletion. Link selectors use slim `/api/link-targets` reads rather than full archive rows.
+- `/bookmark/:id`: sanitized reader-first workspace with summaries, read
+  state, tags, a compact next-step workflow panel, and collapsed workbench
+  groups for annotations, linked notes, explicit note links/backlinks, action
+  items, reminders, related items, and review actions. Reminder controls include
+  timezone-aware due times, recurrence, in-app/email channel selection, inline
+  edits, snooze, completion, and deletion. Link selectors use slim
+  `/api/link-targets` reads rather than full archive rows.
 - `/notes`: compact standalone-note list. `/notes/:id` is the full note
   workspace for editing, action items, reminders, explicit links, backlinks,
   note-to-note links, and note-to-bookmark links. Reminder controls match
   bookmark reminder controls. Note link selectors also use `/api/link-targets`.
   `/notes?note=<id>` redirects to `/notes/:id` for compatibility.
-- `/review`: resurfacing-backed daily review queue with complete and snooze
-  actions, reason labels, priority metadata, and inline task/reminder controls.
+- `/review`: daily review queue with complete and snooze actions, "why this
+  came back" reason labels, priority metadata, and inline task/reminder
+  controls.
 - `/duplicates`: duplicate groups and merge workflow.
 - `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.
 - `/analytics`: summary counts, topics, and actionable insight signals.

@@ -9,12 +9,16 @@ Arivu's working loop is:
 
 ## Capture
 
-`/dashboard` captures URLs with optional quick notes, quotes, and tags.
-`/notes` captures URL-free thoughts. New bookmarks and notes enter Inbox.
+`/dashboard` captures URLs with optional quick notes, quotes, and tags. It
+keeps capture and search visible, while filters and saved-search management stay
+behind disclosures so the first screen stays focused. `/notes` captures URL-free
+thoughts. New bookmarks and notes enter Inbox.
 
 ## Inbox
 
-Inbox stages are `inbox`, `processing`, `processed`, and `archived`.
+Inbox stores stages as `inbox`, `processing`, `processed`, and `archived`.
+The embedded UI labels these as Inbox, Working, Kept, and Archived so people do
+not need to think in internal state names.
 Single-item edits use `PATCH /api/inbox/{item}`. Bulk triage uses
 `POST /api/inbox/bulk` with up to 100 `bookmark:<id>` or `note:<id>` entries.
 The bulk response includes updated and failed rows so cross-user or stale items
@@ -41,4 +45,4 @@ tasks, reminders, explicit links, backlinks, and linking the note to bookmarks.
 Review prioritizes processed or processing items, high importance, explicit next
 actions, due reminders, stale action items, older unreviewed notes, and the
 resurfacing score. Each item returns `review_reasons` and `review_priority` so
-the UI can explain why it appeared.
+the UI can explain why it came back.
