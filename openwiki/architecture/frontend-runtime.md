@@ -34,6 +34,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - Route changes update the document title, announce the active route, and move
   focus to the main content after internal navigation or browser history
   navigation.
+- The Actions button and `Cmd/Ctrl+K` open the command palette. Palette commands
+  reuse existing bookmark, note, search, action item, reminder, link, and
+  link-target APIs; current-item commands appear only on bookmark and note
+  detail routes.
 - Form actions disable the initiating button and swap to specific busy labels.
 - Form failures render inline messages linked to the affected fields with
   `aria-describedby`.

@@ -40,6 +40,9 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
   timezone-aware due times, recurrence, in-app/email channel selection, inline
   edits, snooze, completion, and deletion. Link selectors use slim
   `/api/link-targets` reads rather than full archive rows.
+- Command palette: the global Actions button and `Cmd/Ctrl+K` expose route
+  jumps, capture, note creation, search/cited answer, and current-item task,
+  reminder, and link creation through existing APIs.
 - `/notes`: compact standalone-note list. `/notes/:id` is the full note
   workspace for editing, action items, reminders, explicit links, backlinks,
   note-to-note links, and note-to-bookmark links. Reminder controls match

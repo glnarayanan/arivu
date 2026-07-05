@@ -711,6 +711,25 @@ input::placeholder, textarea::placeholder {
   margin: var(--space-4) 0;
   line-height: 1.55;
 }
+.command-palette {
+  display: grid;
+  gap: var(--space-4);
+}
+.command-palette section,
+.command-palette form {
+  border-top: 2px solid var(--line-soft);
+  padding-top: var(--space-4);
+}
+.command-palette section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.command-palette h3 {
+  font: 800 1rem/1 var(--font-ui);
+  margin: 0 0 var(--space-3);
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
 .menu {
   position: absolute;
   right: 0;

@@ -47,6 +47,9 @@ All notable changes to this project will be documented in this file.
   or bookmark archive text.
 - Added a `/today` signed-in cockpit with per-day daily notes and existing
   Inbox, Focus, Review, recent-note, and memory-jogger signals.
+- Added a dependency-free command palette on the global Actions button and
+  `Cmd/Ctrl+K` for navigation, capture, notes, search, cited answers, and
+  current-item task/reminder/link actions.
 
 ### Changed
 

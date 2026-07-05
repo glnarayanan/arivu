@@ -53,6 +53,10 @@ Use `/today` for the daily operating note. It is intentionally separate from the
 standalone note list: one dated note per user per day, optimized for planning
 and end-of-day wrap-up rather than long-term knowledge pages.
 
+Use the Actions button or `Cmd/Ctrl+K` for the command palette. It opens core
+routes, saves a URL, creates a note, runs search or cited-answer mode, and can
+add a task, reminder, or explicit link when a bookmark or note is already open.
+
 Tasks are undated checklist items. Reminders have due times, timezone metadata,
 optional recurrence, and in-app due state. Email reminders are sent only when
 Resend is configured.

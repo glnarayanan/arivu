@@ -667,6 +667,149 @@ function todayNoteItem(note) {
   </article>`;
 }
 
+function currentItemRef() {
+  const bookmark = location.pathname.match(/^\/bookmark\/([^/]+)/);
+  if (bookmark) return { type: "bookmark", id: decodeURIComponent(bookmark[1]) };
+  const note = location.pathname.match(/^\/notes\/([^/]+)/);
+  if (note) return { type: "note", id: decodeURIComponent(note[1]) };
+  return null;
+}
+
+async function openCommandPalette() {
+  const current = currentItemRef();
+  const body = document.createElement("div");
+  body.className = "command-palette";
+  body.innerHTML = `
+    <section>
+      <h3>Open</h3>
+      <div class="chips">
+        ${[
+          ["/today", "Today"],
+          ["/dashboard", "Capture"],
+          ["/inbox", "Inbox"],
+          ["/focus", "Focus"],
+          ["/review", "Review"],
+          ["/notes", "Notes"],
+          ["/assistant", "Assistant"],
+        ].map(([href, label]) => `<button type="button" class="secondary" data-command-nav="${href}">${label}</button>`).join("")}
+      </div>
+    </section>
+    <form class="form" data-command-save>
+      <h3>Save URL</h3>
+      <div class="field"><label for="command-url">URL</label><input id="command-url" type="url" placeholder="https://example.com/article"></div>
+      <div class="field"><label for="command-save-note">Quick note</label><textarea id="command-save-note" rows="2"></textarea></div>
+      <button type="submit">Save</button>
+    </form>
+    <form class="form" data-command-note>
+      <h3>Create Note</h3>
+      <div class="field"><label for="command-note-title">Title</label><input id="command-note-title" type="text"></div>
+      <div class="field"><label for="command-note-body">Body</label><textarea id="command-note-body" rows="3"></textarea></div>
+      <button type="submit">Create note</button>
+    </form>
+    <form class="form" data-command-search>
+      <h3>Search</h3>
+      <div class="field"><label for="command-query">Query</label><input id="command-query" type="search"></div>
+      <div class="button-row">
+        <button type="submit" data-command-search-type="search">Search</button>
+        <button type="submit" class="secondary" data-command-search-type="answer">Cited answer</button>
+      </div>
+    </form>
+    <form class="form" data-command-current ${current ? "" : "hidden"}>
+      <h3>Current Item</h3>
+      <p class="meta">${current ? `${escapeHTML(current.type)}:${escapeHTML(current.id)}` : "Open a bookmark or note first."}</p>
+      <div class="field"><label for="command-task">Task</label><input id="command-task" type="text" placeholder="Next concrete action"></div>
+      <div class="field"><label for="command-reminder">Reminder</label><input id="command-reminder" type="datetime-local"></div>
+      <div class="field"><label for="command-link-query">Link target search</label><input id="command-link-query" type="search" placeholder="Search bookmark or note title"></div>
+      <div class="field"><label for="command-link-target">Link target</label><select id="command-link-target"><option value="">Search to choose target</option></select></div>
+      <div class="field"><label for="command-link-label">Link label</label><input id="command-link-label" type="text" placeholder="related"></div>
+      <div class="button-row">
+        <button type="submit" data-command-current-type="task">Add task</button>
+        <button type="submit" class="secondary" data-command-current-type="reminder">Add reminder</button>
+        <button type="submit" class="secondary" data-command-current-type="link">Link item</button>
+      </div>
+    </form>
+  `;
+  body.querySelectorAll("[data-command-nav]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelector("[data-dialog-close]")?.click();
+      navigate(button.dataset.commandNav);
+    });
+  });
+  body.querySelector("[data-command-save]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const url = body.querySelector("#command-url").value.trim();
+    if (!url) return;
+    await commandRun(event.submitter, "Saving", async () => {
+      const result = await api("/bookmarks", { method: "POST", body: JSON.stringify({ url, note: body.querySelector("#command-save-note").value }) });
+      document.querySelector("[data-dialog-close]")?.click();
+      navigate(`/bookmark/${result.bookmark.id}`, true);
+      return "Bookmark saved";
+    });
+  });
+  body.querySelector("[data-command-note]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await commandRun(event.submitter, "Creating", async () => {
+      const result = await api("/notes", { method: "POST", body: JSON.stringify({ title: body.querySelector("#command-note-title").value, body: body.querySelector("#command-note-body").value }) });
+      document.querySelector("[data-dialog-close]")?.click();
+      navigate(`/notes/${result.note.id}`, true);
+      return "Note created";
+    });
+  });
+  body.querySelector("[data-command-search]").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = body.querySelector("#command-query").value.trim();
+    if (!query) return;
+    document.querySelector("[data-dialog-close]")?.click();
+    if (event.submitter.dataset.commandSearchType === "answer") navigate(`/dashboard?search=${encodeURIComponent(query)}&answer=1`);
+    else navigate(`/dashboard?search=${encodeURIComponent(query)}`);
+  });
+  const linkQuery = body.querySelector("#command-link-query");
+  linkQuery?.addEventListener("change", async () => {
+    const query = linkQuery.value.trim();
+    const target = body.querySelector("#command-link-target");
+    target.innerHTML = `<option value="">Searching...</option>`;
+    const result = await api(`/link-targets?q=${encodeURIComponent(query)}&limit=20`).catch(() => ({ targets: [] }));
+    target.innerHTML = `<option value="">Choose target</option>${(result.targets || []).map((item) => `<option value="${escapeHTML(`${item.type}:${item.id}`)}">${escapeHTML(item.type)} · ${escapeHTML(item.title || item.url || item.id)}</option>`).join("")}`;
+  });
+  body.querySelector("[data-command-current]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!current) return;
+    const type = event.submitter.dataset.commandCurrentType;
+    await commandRun(event.submitter, "Saving", async () => {
+      if (type === "task") {
+        const title = body.querySelector("#command-task").value.trim();
+        if (!title) throw new Error("Task is required.");
+        await api("/action-items", { method: "POST", body: JSON.stringify({ item_type: current.type, item_id: current.id, title }) });
+        return "Task added";
+      }
+      if (type === "reminder") {
+        const due = body.querySelector("#command-reminder").value;
+        if (!due) throw new Error("Reminder time is required.");
+        await api("/reminders", { method: "POST", body: JSON.stringify({ item_type: current.type, item_id: current.id, due_at: new Date(due).toISOString(), notification_channel: "in_app" }) });
+        return "Reminder added";
+      }
+      const rawTarget = body.querySelector("#command-link-target").value;
+      const [toType, toID] = rawTarget.split(":");
+      if (!toType || !toID) throw new Error("Link target is required.");
+      await api("/links", { method: "POST", body: JSON.stringify({ from_type: current.type, from_id: current.id, to_type: toType, to_id: toID, label: body.querySelector("#command-link-label").value || "related" }) });
+      return "Link created";
+    });
+  });
+  await ui.dialog({ title: "Command Palette", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
+}
+
+async function commandRun(button, busyLabel, action) {
+  const done = setButtonBusy(button, busyLabel);
+  try {
+    const message = await action();
+    ui.toast(message, "success");
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
 async function dashboardPage() {
   await requireUser();
   const [bookmarks, savedSearches] = await Promise.all([
@@ -788,6 +931,9 @@ async function dashboardPage() {
       done();
     }
   });
+  if (params.get("answer") === "1" && document.querySelector("#search").value.trim()) {
+    document.querySelector("#answer-button").click();
+  }
   const savedSearchForm = document.querySelector("#saved-search-form");
   savedSearchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -3435,15 +3581,13 @@ async function render() {
     if (route?.access === "protected") await requireUser();
     await page();
     syncRouteAccessibility();
-    const actions = document.querySelector("#global-actions");
-    if (actions) {
-      ui.menu(actions, [
-        { label: "Today", action: () => navigate("/today") },
-        { label: "Dashboard", action: () => navigate("/dashboard") },
-        { label: "Settings", action: () => navigate("/settings") },
-        { label: "Admin", action: () => navigate("/admin") },
-      ]);
-    }
+    document.querySelector("#global-actions")?.addEventListener("click", openCommandPalette);
+    ui.on(document, "keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openCommandPalette();
+      }
+    });
     document.querySelector("#logout")?.addEventListener("click", async (event) => {
       const done = setButtonBusy(event.currentTarget, "Signing out");
       await api("/auth/logout", { method: "POST" }).catch(() => {});
