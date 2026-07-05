@@ -552,6 +552,38 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	badInboxResp.Body.Close()
 
+	linkResp := adminRequest(t, handler, http.MethodPost, "/api/links", `{"from_type":"bookmark","from_id":"capture","to_type":"note","to_id":"`+searchNoteID+`","label":"supports"}`, accessCookie, csrfCookie)
+	if linkResp.StatusCode != http.StatusOK {
+		t.Fatalf("create link status = %d body=%s", linkResp.StatusCode, readBody(linkResp))
+	}
+	var linkBody struct {
+		Link map[string]any `json:"link"`
+	}
+	_ = json.NewDecoder(linkResp.Body).Decode(&linkBody)
+	linkResp.Body.Close()
+	linkID, _ := linkBody.Link["id"].(string)
+	if linkID == "" || linkBody.Link["to_title"] != "Recall field note" {
+		t.Fatalf("unexpected link body: %#v", linkBody)
+	}
+	crossLinkResp := adminRequest(t, handler, http.MethodPost, "/api/links", `{"from_type":"bookmark","from_id":"capture","to_type":"note","to_id":"`+otherNoteID+`"}`, accessCookie, csrfCookie)
+	if crossLinkResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("cross-user link status = %d body=%s", crossLinkResp.StatusCode, readBody(crossLinkResp))
+	}
+	crossLinkResp.Body.Close()
+	linksResp := adminRequest(t, handler, http.MethodGet, "/api/links?item=bookmark:capture", "", accessCookie, csrfCookie)
+	if linksResp.StatusCode != http.StatusOK {
+		t.Fatalf("links status = %d body=%s", linksResp.StatusCode, readBody(linksResp))
+	}
+	var linksBody struct {
+		Outgoing []map[string]any `json:"outgoing"`
+		Incoming []map[string]any `json:"incoming"`
+	}
+	_ = json.NewDecoder(linksResp.Body).Decode(&linksBody)
+	linksResp.Body.Close()
+	if len(linksBody.Outgoing) != 1 || linksBody.Outgoing[0]["id"] != linkID || linksBody.Outgoing[0]["to_id"] != searchNoteID {
+		t.Fatalf("unexpected links body: %#v", linksBody)
+	}
+
 	annotationResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/capture/annotations", `{"quote":"Recall with evidence","note":"Promote this into review.","selector":{"type":"quote"},"tags":["Evidence","evidence"]}`, accessCookie, csrfCookie)
 	if annotationResp.StatusCode != http.StatusOK {
 		t.Fatalf("create annotation status = %d body=%s", annotationResp.StatusCode, readBody(annotationResp))
@@ -649,6 +681,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if state, _ := detail["item_state"].(map[string]any); state["stage"] != "inbox" {
 		t.Fatalf("bookmark detail missing item state: %#v", detail["item_state"])
+	}
+	if links, _ := detail["links"].(map[string]any); len(links["outgoing"].([]any)) != 1 {
+		t.Fatalf("bookmark detail missing links: %#v", detail["links"])
 	}
 
 	filteredResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks?tag=evidence&date_from="+url.QueryEscape(now.AddDate(0, 0, -30).Format(time.RFC3339)), "", accessCookie, csrfCookie)
@@ -783,6 +818,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		SavedSearches []map[string]any `json:"saved_searches"`
 		ReviewEvents  []map[string]any `json:"review_events"`
 		ItemStates    []map[string]any `json:"item_states"`
+		ItemLinks     []map[string]any `json:"item_links"`
 	}
 	_ = json.Unmarshal(exportRaw, &exportBody)
 	exportResp.Body.Close()
@@ -800,6 +836,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if !sawProcessingState {
 		t.Fatalf("export missing item state: %#v", exportBody.ItemStates)
+	}
+	if len(exportBody.ItemLinks) != 1 || exportBody.ItemLinks[0]["to_id"] != searchNoteID {
+		t.Fatalf("export missing item link: %#v", exportBody.ItemLinks)
 	}
 	bookmarkExport := exportBody.Bookmarks[0]
 	if bookmarkExport["id"] != "capture" || len(bookmarkExport["annotations"].([]any)) == 0 || len(bookmarkExport["notes"].([]any)) == 0 || len(bookmarkExport["tags"].([]any)) == 0 {
@@ -899,6 +938,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		SavedSearches []map[string]any `json:"saved_searches"`
 		ReviewEvents  []map[string]any `json:"review_events"`
 		ItemStates    []map[string]any `json:"item_states"`
+		ItemLinks     []map[string]any `json:"item_links"`
 	}
 	_ = json.NewDecoder(restoreExportResp.Body).Decode(&restoredExport)
 	restoreExportResp.Body.Close()
@@ -913,6 +953,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if !sawRestoredProcessingState {
 		t.Fatalf("restored export missing item state: %#v", restoredExport.ItemStates)
+	}
+	if len(restoredExport.ItemLinks) != 1 || restoredExport.ItemLinks[0]["to_id"] == searchNoteID || restoredExport.ItemLinks[0]["label"] != "supports" {
+		t.Fatalf("restored export missing remapped item link: %#v", restoredExport.ItemLinks)
 	}
 	restoredBookmark := restoredExport.Bookmarks[0]
 	if restoredBookmark["id"] == "capture" || len(restoredBookmark["annotations"].([]any)) == 0 || len(restoredBookmark["notes"].([]any)) == 0 || len(restoredBookmark["tags"].([]any)) == 0 {

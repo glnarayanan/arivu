@@ -997,8 +997,11 @@ async function deleteStandaloneNote(button) {
 async function bookmarkPage() {
   await requireUser();
   const id = location.pathname.split("/").pop();
-  const bookmark = await api(`/bookmarks/${id}`);
-  const related = await api(`/bookmarks/${id}/related?limit=4`).catch(() => ({ related: [] }));
+  const [bookmark, related, notesResult] = await Promise.all([
+    api(`/bookmarks/${id}`),
+    api(`/bookmarks/${id}/related?limit=4`).catch(() => ({ related: [] })),
+    api("/notes").catch(() => ({ notes: [] })),
+  ]);
   const summary = bookmark.ai_summary || {};
   const itemState = bookmark.item_state || { stage: "inbox", importance: 0, next_action: "" };
   setRoot(shell(bookmark.title || "Bookmark", `
@@ -1043,6 +1046,19 @@ async function bookmarkPage() {
       <section class="panel">
         <h2>Linked notes</h2>
         ${noteList(bookmark.notes || [])}
+      </section>
+    </section>
+    <section class="split">
+      <form class="panel form" id="link-form">
+        <h2>Link note</h2>
+        <div class="field"><label for="link-note">Note</label><select id="link-note">${noteOptions(notesResult.notes || [], bookmark.notes || [])}</select></div>
+        <div class="field"><label for="link-label">Label</label><input id="link-label" type="text" maxlength="80" placeholder="supports, contradicts, next step"></div>
+        <p class="form-message" id="link-message" data-form-message hidden></p>
+        <button type="submit">Create link</button>
+      </form>
+      <section class="panel">
+        <h2>Linked graph</h2>
+        ${linkList(bookmark.links || {})}
       </section>
     </section>
     <section class="panel">
@@ -1135,6 +1151,39 @@ async function bookmarkPage() {
       done();
     }
   });
+  const linkForm = document.querySelector("#link-form");
+  linkForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const noteID = document.querySelector("#link-note").value;
+    if (!noteID) {
+      setFormMessage(linkForm, "Choose a note to link.");
+      return;
+    }
+    const done = setButtonBusy(event.submitter, "Linking");
+    setFormMessage(linkForm);
+    try {
+      await api("/links", {
+        method: "POST",
+        body: JSON.stringify({
+          from_type: "bookmark",
+          from_id: id,
+          to_type: "note",
+          to_id: noteID,
+          label: document.querySelector("#link-label").value,
+        }),
+      });
+      ui.toast("Link created", "success");
+      render();
+    } catch (err) {
+      setFormMessage(linkForm, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  document.querySelectorAll("[data-link-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteLink(button));
+  });
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;
@@ -1152,6 +1201,52 @@ async function bookmarkPage() {
   document.querySelectorAll("[data-annotation-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteAnnotation(button));
   });
+}
+
+function noteOptions(notes, linkedNotes) {
+  const linked = new Set((linkedNotes || []).map((note) => note.id));
+  const available = (notes || []).filter((note) => !linked.has(note.id));
+  if (!available.length) return `<option value="">No standalone notes available</option>`;
+  return `<option value="">Choose note</option>${available.map((note) => `<option value="${escapeHTML(note.id)}">${escapeHTML(note.title || "Untitled note")}</option>`).join("")}`;
+}
+
+function linkList(links) {
+  const outgoing = links.outgoing || [];
+  const incoming = links.incoming || [];
+  if (!outgoing.length && !incoming.length) return `<p class="meta">No explicit links yet.</p>`;
+  return `<div class="stack">
+    ${outgoing.map((link) => linkCard(link, "To")).join("")}
+    ${incoming.map((link) => linkCard(link, "From")).join("")}
+  </div>`;
+}
+
+function linkCard(link, prefix) {
+  const targetType = prefix === "To" ? link.to_type : link.from_type;
+  const targetID = prefix === "To" ? link.to_id : link.from_id;
+  const title = prefix === "To" ? link.to_title : link.from_title;
+  const href = targetType === "note" ? `/notes?note=${encodeURIComponent(targetID)}` : `/bookmark/${escapeHTML(targetID)}`;
+  return `<article class="annotation">
+    <p><strong>${prefix} ${escapeHTML(title || targetID)}</strong> <span class="meta">${escapeHTML(link.label || "linked")} · ${escapeHTML(targetType)}</span></p>
+    <p class="button-row">
+      <a class="button secondary" href="${href}">Open</a>
+      <button type="button" class="danger" data-link-delete="${escapeHTML(link.id)}">Delete link</button>
+    </p>
+  </article>`;
+}
+
+async function deleteLink(button) {
+  const confirmed = await ui.confirmDestructive({ title: "Delete link", body: "This removes only the explicit relationship, not either item.", confirm: "Delete link", cancel: "Keep link" });
+  if (!confirmed) return;
+  const done = setButtonBusy(button, "Deleting");
+  try {
+    await api(`/links/${button.dataset.linkDelete}`, { method: "DELETE" });
+    ui.toast("Link deleted", "success");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 function processingStrip(bookmarkID, itemState) {

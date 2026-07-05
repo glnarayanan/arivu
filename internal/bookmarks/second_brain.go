@@ -398,6 +398,64 @@ func (s *Service) UpdateInboxItem(w http.ResponseWriter, r *http.Request, user a
 	writeJSON(w, http.StatusOK, map[string]any{"item_type": itemType, "item_id": itemID, "stage": stage, "importance": body.Importance, "next_action": nextAction, "updated_at": now})
 }
 
+func (s *Service) Links(w http.ResponseWriter, r *http.Request, user auth.User) {
+	itemType, itemID, ok := splitReviewItem(r.URL.Query().Get("item"))
+	if !ok || !s.reviewItemExists(r.Context(), user.ID, itemType, itemID) {
+		writeError(w, http.StatusNotFound, "Item not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, s.itemLinks(r.Context(), user.ID, itemType, itemID))
+}
+
+func (s *Service) CreateLink(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		FromType string `json:"from_type"`
+		FromID   string `json:"from_id"`
+		ToType   string `json:"to_type"`
+		ToID     string `json:"to_id"`
+		Label    string `json:"label"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	body.FromType = strings.TrimSpace(body.FromType)
+	body.FromID = strings.TrimSpace(body.FromID)
+	body.ToType = strings.TrimSpace(body.ToType)
+	body.ToID = strings.TrimSpace(body.ToID)
+	label := strings.TrimSpace(body.Label)
+	if len(label) > 80 {
+		writeError(w, http.StatusBadRequest, "label is too large")
+		return
+	}
+	if !s.reviewItemExists(r.Context(), user.ID, body.FromType, body.FromID) || !s.reviewItemExists(r.Context(), user.ID, body.ToType, body.ToID) {
+		writeError(w, http.StatusNotFound, "Link item not found")
+		return
+	}
+	if body.FromType == body.ToType && body.FromID == body.ToID {
+		writeError(w, http.StatusBadRequest, "Cannot link an item to itself")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	id := ids.New()
+	_, err := s.db.ExecContext(r.Context(), `INSERT INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, user.ID, body.FromType, body.FromID, body.ToType, body.ToID, label, "manual", now)
+	if err != nil {
+		writeError(w, http.StatusConflict, "Link already exists")
+		return
+	}
+	link, _ := s.link(r.Context(), user.ID, id)
+	writeJSON(w, http.StatusOK, map[string]any{"link": link})
+}
+
+func (s *Service) DeleteLink(w http.ResponseWriter, r *http.Request, user auth.User) {
+	res, _ := s.db.ExecContext(r.Context(), `DELETE FROM item_links WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID)
+	if rows, _ := res.RowsAffected(); rows == 0 {
+		writeError(w, http.StatusNotFound, "Link not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "Link deleted"})
+}
+
 func (s *Service) inboxItems(ctx context.Context, userID, stage string, limit int) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT 'bookmark',b.id,b.title,b.url,COALESCE(b.description,''),b.source,b.domain,COALESCE(st.stage,'inbox'),COALESCE(st.importance,0),COALESCE(st.next_action,''),b.created_at,b.updated_at
@@ -610,6 +668,63 @@ func (s *Service) bookmarkNotes(ctx context.Context, userID, bookmarkID string) 
 		result = append(result, map[string]any{"id": id, "title": title, "body": body, "source": source, "bookmark_id": bookmarkID, "created_at": created, "updated_at": updated})
 	}
 	return result
+}
+
+func (s *Service) itemLinks(ctx context.Context, userID, itemType, itemID string) map[string]any {
+	outgoing := s.links(ctx, userID, `from_type=? AND from_id=?`, itemType, itemID)
+	incoming := s.links(ctx, userID, `to_type=? AND to_id=?`, itemType, itemID)
+	return map[string]any{"outgoing": outgoing, "incoming": incoming}
+}
+
+func (s *Service) links(ctx context.Context, userID, predicate, itemType, itemID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,from_type,from_id,to_type,to_id,label,source,created_at FROM item_links WHERE user_id=? AND `+predicate+` ORDER BY created_at DESC LIMIT 100`, userID, itemType, itemID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	result := []map[string]any{}
+	for rows.Next() {
+		result = append(result, scanLink(rows))
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return []map[string]any{}
+	}
+	rows.Close()
+	for _, link := range result {
+		link["from_title"] = s.itemTitle(ctx, userID, stringValue(link["from_type"]), stringValue(link["from_id"]))
+		link["to_title"] = s.itemTitle(ctx, userID, stringValue(link["to_type"]), stringValue(link["to_id"]))
+	}
+	return result
+}
+
+func (s *Service) link(ctx context.Context, userID, id string) (map[string]any, error) {
+	row := s.db.QueryRowContext(ctx, `SELECT id,from_type,from_id,to_type,to_id,label,source,created_at FROM item_links WHERE id=? AND user_id=?`, id, userID)
+	link := scanLink(row)
+	if link["id"] == "" {
+		return nil, sql.ErrNoRows
+	}
+	link["from_title"] = s.itemTitle(ctx, userID, stringValue(link["from_type"]), stringValue(link["from_id"]))
+	link["to_title"] = s.itemTitle(ctx, userID, stringValue(link["to_type"]), stringValue(link["to_id"]))
+	return link, nil
+}
+
+func scanLink(row scanner) map[string]any {
+	var id, fromType, fromID, toType, toID, label, source, created string
+	if err := row.Scan(&id, &fromType, &fromID, &toType, &toID, &label, &source, &created); err != nil {
+		return map[string]any{"id": ""}
+	}
+	return map[string]any{"id": id, "from_type": fromType, "from_id": fromID, "to_type": toType, "to_id": toID, "label": label, "source": source, "created_at": created}
+}
+
+func (s *Service) itemTitle(ctx context.Context, userID, itemType, itemID string) string {
+	var title string
+	switch itemType {
+	case "bookmark":
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(title,''),url) FROM bookmarks WHERE id=? AND user_id=?`, itemID, userID).Scan(&title)
+	case "note":
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(NULLIF(title,''),'Untitled note') FROM notes WHERE id=? AND user_id=?`, itemID, userID).Scan(&title)
+	}
+	return title
 }
 
 func (s *Service) bookmarkTags(ctx context.Context, userID, bookmarkID string) []map[string]any {

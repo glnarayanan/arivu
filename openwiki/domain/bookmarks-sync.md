@@ -35,6 +35,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Processing state stores priority and the next action separately from the
   original bookmark or note, so review and exports preserve why an item was kept.
 - Bookmark detail renders summaries, tags, related items, read state, annotations, linked notes, and review completion in one place.
+- Explicit links connect bookmarks and notes with user-authored labels. Link
+  reads return outgoing and incoming relationships so a saved item can show both
+  what it points to and what points back to it.
 - The review queue is powered by resurfacing candidates and records completion or snooze events.
 - Tags are normalized and alias-aware so manual tags and provider suggestions converge.
 - Retrieval filters by query, tag, domain, source, read state, and dates. Query
@@ -56,6 +59,8 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Full JSON export and restore include inbox processing state, remapped under
   the importing user alongside notes, annotations, tags, searches, and review
   events.
+- Explicit item links are also exported and restored with remapped bookmark and
+  note IDs.
 
 ---
 

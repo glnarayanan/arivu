@@ -20,6 +20,8 @@ with foreign keys.
 - `review_events`: review completion and snooze history for bookmarks and notes.
 - `item_states`: per-user processing stage, priority, and next action for bookmark
   and note inbox workflows.
+- `item_links`: explicit per-user bookmark/note relationships with labels and
+  source provenance.
 - `import_sources`: source metadata for migration/import reports, grouped into
   per-import source reports for the Settings import status view.
 - `import_jobs`: user-facing import progress with fetched, AI-processed,
@@ -39,6 +41,9 @@ with foreign keys.
 - New bookmarks and notes enter `item_states` as `inbox`. Users can move them
   through `processing`, `processed`, and `archived` without changing the source
   bookmark or note content.
+- `item_links` is polymorphic, so API handlers must validate that both endpoints
+  belong to the authenticated user before inserts or reads expose relationship
+  metadata.
 - Tags are user-scoped and normalized by slug. Aliases are also user-scoped and
   unique by normalized alias slug.
 - Annotation selectors and saved-search filters are stored as bounded JSON

@@ -177,6 +177,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreSavedSearches(ctx, userID, backup["saved_searches"], now)
 	s.restoreReviewEvents(ctx, userID, backup["review_events"], oldBookmarks, oldNotes, now)
 	s.restoreItemStates(ctx, userID, backup["item_states"], oldBookmarks, oldNotes, now)
+	s.restoreItemLinks(ctx, userID, backup["item_links"], oldBookmarks, oldNotes, now)
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	return map[string]any{"message": "Backup restored", "count": restored, "import_job_id": jobID, "source_report": s.importSourceReport(ctx, userID, jobID)}, true, nil
@@ -505,6 +506,7 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"import_sources": s.exportImportSources(ctx, userID),
 		"review_events":  s.exportReviewEvents(ctx, userID),
 		"item_states":    s.exportItemStates(ctx, userID),
+		"item_links":     s.exportItemLinks(ctx, userID),
 	}, nil
 }
 
@@ -641,6 +643,19 @@ func (s *Service) exportItemStates(ctx context.Context, userID string) []map[str
 	return states
 }
 
+func (s *Service) exportItemLinks(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,from_type,from_id,to_type,to_id,label,source,created_at FROM item_links WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	links := []map[string]any{}
+	for rows.Next() {
+		links = append(links, scanLink(rows))
+	}
+	return links
+}
+
 func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
 	for _, rawState := range listValue(raw) {
 		state, ok := rawState.(map[string]any)
@@ -668,6 +683,34 @@ func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any,
 		}
 		_ = s.upsertItemState(ctx, userID, itemType, itemID, stage, importance, nextAction, fallback(stringValue(state["updated_at"]), now))
 	}
+}
+
+func (s *Service) restoreItemLinks(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawLink := range listValue(raw) {
+		link, ok := rawLink.(map[string]any)
+		if !ok {
+			continue
+		}
+		fromType := stringValue(link["from_type"])
+		toType := stringValue(link["to_type"])
+		fromID := remapItemID(fromType, stringValue(link["from_id"]), oldBookmarks, oldNotes)
+		toID := remapItemID(toType, stringValue(link["to_id"]), oldBookmarks, oldNotes)
+		label := strings.TrimSpace(stringValue(link["label"]))
+		if fromID == "" || toID == "" || !s.reviewItemExists(ctx, userID, fromType, fromID) || !s.reviewItemExists(ctx, userID, toType, toID) || len(label) > 80 {
+			continue
+		}
+		_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), userID, fromType, fromID, toType, toID, label, fallback(stringValue(link["source"]), "restore"), fallback(stringValue(link["created_at"]), now))
+	}
+}
+
+func remapItemID(itemType, itemID string, oldBookmarks, oldNotes map[string]string) string {
+	if itemType == "bookmark" {
+		return oldBookmarks[itemID]
+	}
+	if itemType == "note" {
+		return oldNotes[itemID]
+	}
+	return ""
 }
 
 func writeObsidianBookmark(w io.Writer, bookmark map[string]any) {

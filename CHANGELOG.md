@@ -31,6 +31,7 @@ All notable changes to this project will be documented in this file.
 - Added inline reader controls for editing and deleting saved annotations.
 - Added standalone notes to the daily review queue, with note completion and snooze support.
 - Added a durable Inbox processing loop for bookmarks and notes, including per-item stage, priority, next action, reader controls, review context, and JSON backup/restore support.
+- Added explicit bookmark/note links with backlink reads, bookmark-page controls, per-user ownership validation, and JSON backup/restore support.
 
 ### Changed
 

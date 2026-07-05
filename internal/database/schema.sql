@@ -198,6 +198,22 @@ CREATE TABLE IF NOT EXISTS item_states (
 
 CREATE INDEX IF NOT EXISTS idx_item_states_user_stage ON item_states(user_id, stage, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS item_links (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  from_type TEXT NOT NULL CHECK (from_type IN ('bookmark','note')),
+  from_id TEXT NOT NULL,
+  to_type TEXT NOT NULL CHECK (to_type IN ('bookmark','note')),
+  to_id TEXT NOT NULL,
+  label TEXT NOT NULL DEFAULT '',
+  source TEXT NOT NULL DEFAULT 'manual',
+  created_at TEXT NOT NULL,
+  UNIQUE(user_id, from_type, from_id, to_type, to_id, label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_links_from ON item_links(user_id, from_type, from_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_item_links_to ON item_links(user_id, to_type, to_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS collections (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
