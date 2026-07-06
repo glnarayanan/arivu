@@ -110,7 +110,9 @@ review. Image uploads use pasted OCR text when provided; if Gemini is configured
 Arivu can attempt image text extraction automatically.
 
 Calendar imports accept pasted ICS text and create meeting objects with UID,
-start, end, location, description, and source fields.
+start, end, location, description, and source fields. Full JSON backups include
+knowledge objects and restore their source bookmark/note/object references under
+the importing account.
 
 CLI tokens can call the agent-oriented `/api/agent/*` routes for scoped search,
 reading saved bookmarks/notes, creating notes, adding tasks/reminders, and

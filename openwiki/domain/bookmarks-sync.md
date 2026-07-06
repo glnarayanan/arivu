@@ -125,6 +125,8 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Full JSON export and restore include inbox processing state, action items,
   notes, annotations, tags, searches, and review events remapped under the
   importing user.
+- Full JSON export and restore also include knowledge objects, remapping
+  bookmark, note, and object source references under the importing user.
 - Explicit item links are also exported and restored with remapped bookmark and
   note IDs.
 - Reminder rows are exported and restored with remapped item IDs, UTC due

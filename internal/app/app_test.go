@@ -470,6 +470,47 @@ func TestKnowledgeObjectsEvolutionCalendarAndAgentRoutes(t *testing.T) {
 		t.Fatalf("calendar did not create meeting object: %#v", calendarBody)
 	}
 
+	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
+	if exportResp.StatusCode != http.StatusOK {
+		t.Fatalf("object export status = %d body=%s", exportResp.StatusCode, readBody(exportResp))
+	}
+	exportRaw, err := io.ReadAll(exportResp.Body)
+	if err != nil {
+		t.Fatalf("read object export: %v", err)
+	}
+	exportResp.Body.Close()
+	var exported struct {
+		KnowledgeObjects []map[string]any `json:"knowledge_objects"`
+	}
+	_ = json.Unmarshal(exportRaw, &exported)
+	if len(exported.KnowledgeObjects) < 2 {
+		t.Fatalf("export missing knowledge objects: %#v", exported.KnowledgeObjects)
+	}
+	restoreAccess, restoreCSRF := signupForCookies(t, handler, "objects-restore@example.com")
+	restoreResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(exportRaw), restoreAccess, restoreCSRF)
+	if restoreResp.StatusCode != http.StatusOK {
+		t.Fatalf("object restore status = %d body=%s", restoreResp.StatusCode, readBody(restoreResp))
+	}
+	restoreResp.Body.Close()
+	restoredObjects := adminRequest(t, handler, http.MethodGet, "/api/objects?q=Roadmap", "", restoreAccess, restoreCSRF)
+	if restoredObjects.StatusCode != http.StatusOK {
+		t.Fatalf("restored objects status = %d body=%s", restoredObjects.StatusCode, readBody(restoredObjects))
+	}
+	var restoredObjectBody struct {
+		Objects []map[string]any `json:"objects"`
+	}
+	_ = json.NewDecoder(restoredObjects.Body).Decode(&restoredObjectBody)
+	restoredObjects.Body.Close()
+	restoredProjectSource := ""
+	for _, object := range restoredObjectBody.Objects {
+		if object["object_type"] == "project" {
+			restoredProjectSource, _ = object["source_item_id"].(string)
+		}
+	}
+	if len(restoredObjectBody.Objects) < 2 || restoredProjectSource == "" || restoredProjectSource == noteID {
+		t.Fatalf("restored objects missing or source id was not remapped: %#v", restoredObjectBody.Objects)
+	}
+
 	evolutionResp := adminRequest(t, handler, http.MethodGet, "/api/evolution?q=Roadmap", "", accessCookie, csrfCookie)
 	if evolutionResp.StatusCode != http.StatusOK {
 		t.Fatalf("evolution status = %d body=%s", evolutionResp.StatusCode, readBody(evolutionResp))

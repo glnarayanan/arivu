@@ -72,6 +72,8 @@ All notable changes to this project will be documented in this file.
 - Added typed knowledge objects, topic evolution, a fixed Today board, ICS
   meeting import, and CLI-audience agent routes for scoped search, reads, notes,
   tasks, reminders, and decision recording.
+- Added JSON backup/restore coverage for knowledge objects with source-reference
+  remapping.
 
 ### Changed
 
