@@ -4,6 +4,7 @@ const state = {
   pendingRoutes: 0,
   focusMainAfterRender: false,
 };
+const offlineQueueKey = "arivu.offline.bookmarks";
 
 const routes = [
   { prefix: "/auth", page: authPage, access: "public" },
@@ -142,6 +143,44 @@ function setButtonBusy(button, busyLabel) {
     button.removeAttribute("aria-busy");
     button.textContent = previousLabel;
   };
+}
+
+function offlineBookmarkQueue() {
+  try {
+    return JSON.parse(localStorage.getItem(offlineQueueKey) || "[]").filter((item) => item?.url);
+  } catch {
+    return [];
+  }
+}
+
+function setOfflineBookmarkQueue(items) {
+  localStorage.setItem(offlineQueueKey, JSON.stringify(items.slice(0, 50)));
+}
+
+function queueOfflineBookmark(payload) {
+  setOfflineBookmarkQueue([...offlineBookmarkQueue(), { ...payload, queued_at: new Date().toISOString() }]);
+}
+
+async function flushOfflineBookmarks({ quiet = false } = {}) {
+  if (!navigator.onLine || !state.user) return;
+  const queue = offlineBookmarkQueue();
+  if (!queue.length) return;
+  const remaining = [];
+  for (const item of queue) {
+    try {
+      await api("/bookmarks", { method: "POST", body: JSON.stringify({ url: item.url, note: item.note || "", tags: item.tags || [] }) });
+    } catch (err) {
+      if (err.status && err.status !== 401) continue;
+      remaining.push(item);
+    }
+  }
+  setOfflineBookmarkQueue(remaining);
+  if (!quiet && queue.length !== remaining.length) ui.toast(`${queue.length - remaining.length} offline captures synced`, "success");
+}
+
+function offlineQueueMessage() {
+  const count = offlineBookmarkQueue().length;
+  return count ? `<p class="meta offline-status">${count} offline capture${count === 1 ? "" : "s"} waiting to sync.</p>` : "";
 }
 
 const ui = {
@@ -828,6 +867,7 @@ async function dashboardPage() {
         <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea></div>
         <div class="field"><label for="save-tags">Tags</label><input id="save-tags" type="text" placeholder="research, idea, later"></div>
         <button type="submit">Save bookmark</button>
+        ${offlineQueueMessage()}
         <p class="meta" id="job-status" hidden></p>
       </form>
       <section class="panel">
@@ -889,20 +929,25 @@ async function dashboardPage() {
   saveForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Saving bookmark");
+    const payload = {
+      url: document.querySelector("#url").value,
+      note: document.querySelector("#save-note").value,
+      tags: splitTags(document.querySelector("#save-tags").value),
+    };
     setFormMessage(saveForm);
     try {
-      const result = await api("/bookmarks", {
-        method: "POST",
-        body: JSON.stringify({
-          url: document.querySelector("#url").value,
-          note: document.querySelector("#save-note").value,
-          tags: splitTags(document.querySelector("#save-tags").value),
-        }),
-      });
+      const result = await api("/bookmarks", { method: "POST", body: JSON.stringify(payload) });
       ui.toast("Bookmark saved", "success");
       await showJobStatus(result.job_id);
       navigate(`/bookmark/${result.bookmark.id}`, true);
     } catch (err) {
+      if (!navigator.onLine || err.message.includes("couldn't reach Arivu")) {
+        queueOfflineBookmark(payload);
+        setFormMessage(saveForm, "Saved offline. Arivu will sync it when this browser is online.", "success");
+        ui.toast("Bookmark queued offline", "success");
+        saveForm.reset();
+        return;
+      }
       setFormMessage(saveForm, err.message);
       ui.toast(err.message, "error");
     } finally {
@@ -3610,6 +3655,7 @@ async function requireUser() {
   if (state.user) return state.user;
   try {
     state.user = await api("/auth/me");
+    flushOfflineBookmarks({ quiet: true });
     return state.user;
   } catch {
     navigate("/auth", true);
@@ -3666,4 +3712,5 @@ addEventListener("popstate", () => {
   state.focusMainAfterRender = true;
   render();
 });
+addEventListener("online", () => flushOfflineBookmarks());
 render();

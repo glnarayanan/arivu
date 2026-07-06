@@ -55,6 +55,8 @@ All notable changes to this project will be documented in this file.
 - Added user-scoped recall feedback for search, cited answers, and Review,
   including why-shown metadata, freshness scores, backup/restore support, and
   never-resurface handling.
+- Added an app-shell service worker and offline dashboard capture queue that
+  replays saved URLs when the signed-in browser comes back online.
 
 ### Changed
 

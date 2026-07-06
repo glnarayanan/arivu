@@ -14,6 +14,7 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 - `styles.css`: Hardened stylesheet implementing structural layouts with support for theme scaling.
 - `favicon.svg`: Icon asset.
 - `manifest.webmanifest`: PWA metadata plus a GET share target for mobile/browser capture into the dashboard.
+- `sw.js`: app-shell cache for offline startup; `/api/*` is network-only.
 
 ### Product Routes
 

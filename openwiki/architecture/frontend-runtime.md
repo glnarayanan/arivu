@@ -11,6 +11,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   legacy `/favicon.ico` requests.
 - `manifest.webmanifest`: installable PWA metadata and GET share-target
   definition for mobile/browser capture into `/dashboard`.
+- `sw.js`: service worker that caches the app shell and bypasses `/api/*`
+  requests so authenticated data is never cached by the browser worker.
 - `app.js` UI primitives: toasts, modal dialogs, destructive confirmations,
   focus trapping, menu roving focus, settings tabs, escape handling, and route
   cleanup for global listeners.
@@ -52,6 +54,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - `/dashboard` pre-fills the save form from PWA share-target `title`, `text`,
   and `url` query parameters. The URL field prefers the explicit `url`
   parameter, then falls back to the first URL found in shared text.
+- If dashboard capture cannot reach the server, the browser stores only the URL,
+  quick note, tags, and queued timestamp in local storage, then replays those
+  saves through `/api/bookmarks` after the signed-in browser is online again.
 - Dashboard retrieval supports query, tag, domain, source, read-status, and
   saved-date range filters, saving the current search, replaying saved searches,
   and a cited answer panel sourced only from matching saved items. Cited answers
