@@ -52,6 +52,9 @@ All notable changes to this project will be documented in this file.
   current-item task/reminder/link actions.
 - Added URL-bearing OPML, RSS/Atom, and CSV/TSV import parsing for feed lists
   and Readwise/Kindle-style exports that include source URLs.
+- Added user-scoped recall feedback for search, cited answers, and Review,
+  including why-shown metadata, freshness scores, backup/restore support, and
+  never-resurface handling.
 
 ### Changed
 

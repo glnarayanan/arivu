@@ -58,6 +58,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   synthesize from saved summaries, highlights, snippets, and standalone notes
   while keeping citations back to the source items. Bookmark-only filters such
   as tag, domain, source, and read status keep results bookmark-scoped.
+- Cited-answer citations and Review cards expose feedback controls that call
+  `POST /api/feedback`. Result metadata includes why-shown labels, freshness
+  score, and current feedback state.
 - `/notes` is the compact standalone-note list. `/notes/:id` is the full note
   workspace for editing, action items, reminders, explicit links, backlinks,
   note-to-note links, and note-to-bookmark links. Link selectors call

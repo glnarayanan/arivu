@@ -66,6 +66,7 @@ var (
 	quotaAssistantPropose = mutationQuota{name: "assistant.propose", limit: 60, window: time.Hour}
 	quotaAssistantApprove = mutationQuota{name: "assistant.approve", limit: 60, window: time.Hour}
 	quotaSearchRebuild    = mutationQuota{name: "search.rebuild", limit: 12, window: time.Hour}
+	quotaFeedback         = mutationQuota{name: "feedback.write", limit: 600, window: time.Hour}
 )
 
 func New(cfg config.Config) (*App, error) {
@@ -140,6 +141,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search/items", a.withUser(a.bookmarks.SearchItems))
 	mux.HandleFunc("GET /api/search/answer", a.withUser(a.bookmarks.SearchAnswer))
 	mux.HandleFunc("POST /api/search/rebuild", a.withUserQuota(quotaSearchRebuild, a.bookmarks.RebuildSearch))
+	mux.HandleFunc("POST /api/feedback", a.withUserQuota(quotaFeedback, a.bookmarks.SaveFeedback))
 	mux.HandleFunc("GET /api/collections", a.withUser(a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/collections", a.withUser(a.bookmarks.CreateCollection))
 	mux.HandleFunc("POST /api/collections/{id}/add", a.withUser(a.bookmarks.AddToCollection))

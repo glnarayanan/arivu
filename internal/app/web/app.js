@@ -925,6 +925,7 @@ async function dashboardPage() {
       const answer = await api(`/search/answer${dashboardQueryString("q")}`);
       panel.hidden = false;
       panel.innerHTML = answerPanel(answer);
+      bindFeedbackControls();
     } catch (err) {
       ui.toast(err.message, "error");
     } finally {
@@ -1019,6 +1020,8 @@ function answerPanel(answer) {
       return `<article class="annotation">
       <p><strong>[${index + 1}] ${escapeHTML(item.title || item.url)}</strong> <span class="meta">${escapeHTML(item.type || "bookmark")} · ${escapeHTML(item.domain || "")}</span></p>
       <p>${escapeHTML(item.snippet || "")}</p>
+      ${feedbackControls(item.type || "bookmark", item.id || "", "answer", item.feedback_state)}
+      ${item.why_shown?.length ? `<p class="meta">Why shown: ${item.why_shown.map(escapeHTML).join(" · ")} · freshness ${Number(item.freshness_score || 0)}</p>` : ""}
       <a class="text-link" href="${item.type === "note" ? `/notes/${itemID}` : `/bookmark/${itemID}`}">Open citation</a>
     </article>`;
     }).join("") || `<p class="meta">No citations found.</p>`}</div>`;
@@ -3100,6 +3103,7 @@ async function reviewPage() {
   document.querySelectorAll("[data-review-archive]").forEach((button) => {
     button.addEventListener("click", () => reviewAction(button, "archive"));
   });
+  bindFeedbackControls();
   bindActionItemControls();
   bindReminderControls();
 }
@@ -3137,6 +3141,7 @@ function reviewCard(item) {
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
     <p>${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
     ${reasons.length ? `<div class="chips">${reasons.slice(0, 4).map((reason) => `<span>${escapeHTML(reason)}</span>`).join("")}</div>` : ""}
+    ${feedbackControls(item.item_type || "bookmark", item.id || "", "review", item.feedback_state)}
     ${nextAction || importance ? `<p class="meta">${nextAction ? `Next: ${escapeHTML(nextAction)}` : ""}${nextAction && importance ? " · " : ""}${importance ? `Priority ${importance}` : ""}</p>` : ""}
     <p class="button-row">
       <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
@@ -3154,6 +3159,46 @@ function reviewCard(item) {
       ${reminderList(item.reminders || [])}
     </section>
   </article>`;
+}
+
+function feedbackControls(itemType, itemID, surface, stateValue = "") {
+  if (!itemID) return "";
+  const options = [
+    ["useful", "Useful"],
+    ["not_useful", "Not useful"],
+    ["snooze_longer", "Snooze longer"],
+    ["never_resurface", "Never resurface"],
+  ];
+  return `<div class="chips feedback-controls" aria-label="Feedback">${options.map(([value, label]) => `<button type="button" class="secondary ${stateValue === value ? "active" : ""}" data-feedback="${value}" data-feedback-type="${escapeHTML(itemType)}" data-feedback-id="${escapeHTML(itemID)}" data-feedback-surface="${escapeHTML(surface)}" aria-pressed="${stateValue === value}">${label}</button>`).join("")}</div>`;
+}
+
+function bindFeedbackControls() {
+  document.querySelectorAll("[data-feedback]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const done = setButtonBusy(button, "Saving");
+      try {
+        await api("/feedback", {
+          method: "POST",
+          body: JSON.stringify({
+            item_type: button.dataset.feedbackType,
+            item_id: button.dataset.feedbackId,
+            surface: button.dataset.feedbackSurface,
+            feedback: button.dataset.feedback,
+          }),
+        });
+        button.closest(".feedback-controls")?.querySelectorAll("[data-feedback]").forEach((item) => {
+          const active = item === button;
+          item.classList.toggle("active", active);
+          item.setAttribute("aria-pressed", String(active));
+        });
+        ui.toast("Feedback saved", "success");
+      } catch (err) {
+        ui.toast(err.message, "error");
+      } finally {
+        done();
+      }
+    });
+  });
 }
 
 async function reviewAction(button, action) {

@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/glnarayanan/arivu/internal/auth"
 )
@@ -118,10 +120,29 @@ func (s *Service) insertSearchRow(ctx context.Context, ftsEnabled bool, userID, 
 
 func (s *Service) searchIndex(ctx context.Context, userID, query string, values url.Values, limit int) ([]map[string]any, string, error) {
 	if rows, err := s.searchIndexFTS(ctx, userID, query, values, limit); err == nil {
-		return rows, "fts", nil
+		return s.decorateSearchResults(ctx, userID, rows, "search"), "fts", nil
 	}
 	rows, err := s.searchIndexLike(ctx, userID, query, values, limit)
-	return rows, "like", err
+	if err != nil {
+		return rows, "like", err
+	}
+	return s.decorateSearchResults(ctx, userID, rows, "search"), "like", nil
+}
+
+func (s *Service) decorateSearchResults(ctx context.Context, userID string, results []map[string]any, surface string) []map[string]any {
+	for index, result := range results {
+		itemType := stringValue(result["item_type"])
+		itemID := stringValue(result["item_id"])
+		freshness := freshnessScore(stringValue(result["updated_at"]))
+		feedback := s.feedbackState(ctx, userID, itemType, itemID, surface)
+		result["freshness_score"] = freshness
+		result["feedback_state"] = feedback
+		result["result_score"] = roundFloat(100-float64(index*2)+freshness+feedbackSearchWeight(feedback), 2)
+	}
+	sort.SliceStable(results, func(i, j int) bool {
+		return numberValue(results[i]["result_score"]) > numberValue(results[j]["result_score"])
+	})
+	return results
 }
 
 func (s *Service) searchIndexFTS(ctx context.Context, userID, query string, values url.Values, limit int) ([]map[string]any, error) {
@@ -189,9 +210,67 @@ func scanSearchResults(rows *sql.Rows, query string) ([]map[string]any, error) {
 			"source":     source,
 			"updated_at": updated,
 			"href":       itemHref(itemType, itemID),
+			"why_shown":  searchWhyShown(query, title, body, tags, links, source),
 		})
 	}
 	return results, rows.Err()
+}
+
+func searchWhyShown(query, title, body, tags, links, source string) []string {
+	query = strings.ToLower(query)
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{"title match", title},
+		{"saved text match", body},
+		{"tag match", tags},
+		{"link context match", links},
+		{"source match", source},
+	}
+	var reasons []string
+	for _, field := range fields {
+		if strings.Contains(strings.ToLower(field.value), query) {
+			reasons = append(reasons, field.name)
+		}
+	}
+	if len(reasons) == 0 {
+		reasons = append(reasons, "semantic or ranked text match")
+	}
+	return reasons
+}
+
+func freshnessScore(updated string) float64 {
+	parsed, err := time.Parse(time.RFC3339, updated)
+	if err != nil {
+		return 0
+	}
+	days := time.Since(parsed).Hours() / 24
+	switch {
+	case days <= 7:
+		return 15
+	case days <= 30:
+		return 10
+	case days <= 90:
+		return 5
+	default:
+		return 0
+	}
+}
+
+func feedbackSearchWeight(feedback string) float64 {
+	switch feedback {
+	case "useful":
+		return 15
+	case "not_useful":
+		return -20
+	case "snooze_longer":
+		return -30
+	case "never_resurface":
+		return -45
+	default:
+		return 0
+	}
 }
 
 func searchMapText(item map[string]any) string {

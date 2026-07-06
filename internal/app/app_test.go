@@ -213,6 +213,100 @@ func TestDailyNotesAreDateAddressedAndUserScoped(t *testing.T) {
 	}
 }
 
+func TestResultFeedbackDecoratesSearchAndRoundTrips(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "feedback@example.com")
+	otherAccess, otherCSRF := signupForCookies(t, handler, "feedback-other@example.com")
+	userID := userIDForEmail(t, a, "feedback@example.com")
+	now := time.Now().UTC()
+	insertBookmarkForTest(t, a, userID, "feedback-source", "Recall Feedback Source", now, now, 0, 1)
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET description=?,text_content=? WHERE id=? AND user_id=?`, "Recall feedback improves ranking", "Recall feedback source text", "feedback-source", userID)
+	rebuild := adminRequest(t, handler, http.MethodPost, "/api/search/rebuild", `{}`, accessCookie, csrfCookie)
+	if rebuild.StatusCode != http.StatusOK {
+		t.Fatalf("rebuild status = %d body=%s", rebuild.StatusCode, readBody(rebuild))
+	}
+	rebuild.Body.Close()
+
+	missingCSRFReq := httptest.NewRequest(http.MethodPost, "/api/feedback", strings.NewReader(`{"item_type":"bookmark","item_id":"feedback-source","surface":"search","feedback":"useful"}`))
+	missingCSRFReq.Header.Set("Content-Type", "application/json")
+	missingCSRFReq.AddCookie(accessCookie)
+	missingCSRFRec := httptest.NewRecorder()
+	handler.ServeHTTP(missingCSRFRec, missingCSRFReq)
+	missingCSRF := missingCSRFRec.Result()
+	if missingCSRF.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("feedback missing csrf status = %d body=%s", missingCSRF.StatusCode, readBody(missingCSRF))
+	}
+	missingCSRF.Body.Close()
+
+	crossUser := adminRequest(t, handler, http.MethodPost, "/api/feedback", `{"item_type":"bookmark","item_id":"feedback-source","surface":"search","feedback":"useful"}`, otherAccess, otherCSRF)
+	if crossUser.StatusCode != http.StatusBadRequest {
+		t.Fatalf("cross-user feedback status = %d body=%s", crossUser.StatusCode, readBody(crossUser))
+	}
+	crossUser.Body.Close()
+
+	save := adminRequest(t, handler, http.MethodPost, "/api/feedback", `{"item_type":"bookmark","item_id":"feedback-source","surface":"search","feedback":"useful"}`, accessCookie, csrfCookie)
+	if save.StatusCode != http.StatusOK {
+		t.Fatalf("save feedback status = %d body=%s", save.StatusCode, readBody(save))
+	}
+	save.Body.Close()
+
+	search := adminRequest(t, handler, http.MethodGet, "/api/search/items?q=feedback", "", accessCookie, csrfCookie)
+	if search.StatusCode != http.StatusOK {
+		t.Fatalf("search status = %d body=%s", search.StatusCode, readBody(search))
+	}
+	var searchBody struct {
+		Results []map[string]any `json:"results"`
+	}
+	_ = json.NewDecoder(search.Body).Decode(&searchBody)
+	search.Body.Close()
+	if len(searchBody.Results) == 0 {
+		t.Fatalf("search missing recall metadata: %#v", searchBody.Results)
+	}
+	freshness, _ := searchBody.Results[0]["freshness_score"].(float64)
+	if searchBody.Results[0]["feedback_state"] != "useful" || len(searchBody.Results[0]["why_shown"].([]any)) == 0 || freshness <= 0 {
+		t.Fatalf("search missing recall metadata: %#v", searchBody.Results)
+	}
+
+	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
+	exportRaw, err := io.ReadAll(exportResp.Body)
+	if err != nil {
+		t.Fatalf("read feedback export: %v", err)
+	}
+	exportResp.Body.Close()
+	var exported struct {
+		ResultFeedback []map[string]any `json:"result_feedback"`
+	}
+	_ = json.Unmarshal(exportRaw, &exported)
+	if len(exported.ResultFeedback) != 1 || exported.ResultFeedback[0]["feedback"] != "useful" {
+		t.Fatalf("export missing feedback: %#v", exported.ResultFeedback)
+	}
+	restoreAccess, restoreCSRF := signupForCookies(t, handler, "feedback-restore@example.com")
+	restoreUserID := userIDForEmail(t, a, "feedback-restore@example.com")
+	restore := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(exportRaw), restoreAccess, restoreCSRF)
+	if restore.StatusCode != http.StatusOK {
+		t.Fatalf("restore feedback status = %d body=%s", restore.StatusCode, readBody(restore))
+	}
+	restore.Body.Close()
+	var restoredCount int
+	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM result_feedback rf JOIN bookmarks b ON b.user_id=rf.user_id AND b.id=rf.item_id WHERE rf.user_id=? AND b.url='https://example.com/feedback-source' AND rf.feedback='useful'`, restoreUserID).Scan(&restoredCount)
+	if restoredCount != 1 {
+		t.Fatalf("restored feedback count = %d", restoredCount)
+	}
+}
+
 func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
@@ -2309,7 +2403,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}

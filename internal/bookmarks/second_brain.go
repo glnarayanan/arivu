@@ -491,6 +491,9 @@ func (s *Service) reviewItems(ctx context.Context, userID string, limit int) ([]
 		item["item_type"] = "bookmark"
 		item["item_state"] = s.itemState(ctx, userID, "bookmark", id)
 		s.decorateReviewItem(ctx, userID, item)
+		if stringValue(item["feedback_state"]) == "never_resurface" {
+			continue
+		}
 		items = append(items, item)
 	}
 	notes, err := s.reviewNotes(ctx, userID, limit)
@@ -499,6 +502,9 @@ func (s *Service) reviewItems(ctx context.Context, userID string, limit int) ([]
 	}
 	for _, note := range notes {
 		s.decorateReviewItem(ctx, userID, note)
+		if stringValue(note["feedback_state"]) == "never_resurface" {
+			continue
+		}
 		items = append(items, note)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -571,11 +577,29 @@ func (s *Service) decorateReviewItem(ctx context.Context, userID string, item ma
 	if reason := strings.TrimSpace(stringValue(item["resurfacing_reason"])); reason != "" {
 		reasons = append(reasons, reason)
 	}
+	feedback := s.anyFeedbackState(ctx, userID, itemType, itemID)
+	item["feedback_state"] = feedback
+	switch feedback {
+	case "useful":
+		reasons = append(reasons, "marked useful")
+		score += 10
+	case "not_useful":
+		reasons = append(reasons, "marked not useful")
+		score -= 20
+	case "snooze_longer":
+		reasons = append(reasons, "asked to snooze longer")
+		score -= 30
+	case "never_resurface":
+		reasons = append(reasons, "never resurface")
+		score -= 100
+	}
 	if len(reasons) == 0 {
 		reasons = append(reasons, "ready for review")
 	}
 	item["review_reasons"] = reasons
 	item["review_priority"] = roundFloat(score, 2)
+	item["freshness_score"] = freshnessScore(stringValue(item["updated_at"]))
+	item["why_shown"] = reasons
 }
 
 func (s *Service) Inbox(w http.ResponseWriter, r *http.Request, user auth.User) {

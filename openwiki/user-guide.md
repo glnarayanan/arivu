@@ -65,6 +65,8 @@ Resend is configured.
 
 Dashboard search finds saved pages and supports filters for tags, domain,
 source, read status, and saved date. Cited answers use only saved Arivu content.
+Search and cited-answer citations explain why an item appeared and accept
+feedback such as Useful, Not useful, Snooze longer, or Never resurface.
 
 The Assistant page creates reviewable drafts for allowlisted actions: item state
 updates, links, reminders, and action items. Drafts do not execute until a user

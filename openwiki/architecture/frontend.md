@@ -50,7 +50,8 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
   `/notes?note=<id>` redirects to `/notes/:id` for compatibility.
 - `/review`: daily review queue with complete and snooze actions, "why this
   came back" reason labels, priority metadata, and inline task/reminder
-  controls.
+  controls. Review and cited-answer cards expose recall feedback controls that
+  persist through `/api/feedback`.
 - `/duplicates`: duplicate groups and merge workflow.
 - `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.
 - `/analytics`: summary counts, topics, and actionable insight signals.

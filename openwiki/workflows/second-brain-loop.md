@@ -56,3 +56,6 @@ Review prioritizes processed or processing items, high importance, explicit next
 actions, due reminders, stale action items, older unreviewed notes, and the
 resurfacing score. Each item returns `review_reasons` and `review_priority` so
 the UI can explain why it came back.
+Review cards and cited-answer citations can store recall feedback. Useful items
+rank higher, not-useful and snooze-longer items rank lower, and never-resurface
+items are omitted from future Review queues without deleting their source data.

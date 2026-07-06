@@ -186,6 +186,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreItemLinks(ctx, userID, backup["item_links"], oldBookmarks, oldNotes, now)
 	s.restoreReminders(ctx, userID, backup["reminders"], oldBookmarks, oldNotes, now)
 	s.restoreActionItems(ctx, userID, backup["action_items"], oldBookmarks, oldNotes, now)
+	s.restoreResultFeedback(ctx, userID, backup["result_feedback"], oldBookmarks, oldNotes, now)
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	s.refreshSearchIndex(ctx, userID)
@@ -531,20 +532,21 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		bookmark["notes"] = s.bookmarkNotes(ctx, userID, id)
 	}
 	return map[string]any{
-		"version":        1,
-		"exported_at":    time.Now().UTC().Format(time.RFC3339),
-		"bookmarks":      bookmarks,
-		"notes":          s.exportStandaloneNotes(ctx, userID),
-		"daily_notes":    s.exportDailyNotes(ctx, userID),
-		"tags":           s.exportTags(ctx, userID),
-		"saved_searches": s.exportSavedSearches(ctx, userID),
-		"import_jobs":    s.exportImportJobs(ctx, userID),
-		"import_sources": s.exportImportSources(ctx, userID),
-		"review_events":  s.exportReviewEvents(ctx, userID),
-		"item_states":    s.exportItemStates(ctx, userID),
-		"item_links":     s.exportItemLinks(ctx, userID),
-		"reminders":      s.exportReminders(ctx, userID),
-		"action_items":   s.exportActionItems(ctx, userID),
+		"version":         1,
+		"exported_at":     time.Now().UTC().Format(time.RFC3339),
+		"bookmarks":       bookmarks,
+		"notes":           s.exportStandaloneNotes(ctx, userID),
+		"daily_notes":     s.exportDailyNotes(ctx, userID),
+		"tags":            s.exportTags(ctx, userID),
+		"saved_searches":  s.exportSavedSearches(ctx, userID),
+		"import_jobs":     s.exportImportJobs(ctx, userID),
+		"import_sources":  s.exportImportSources(ctx, userID),
+		"review_events":   s.exportReviewEvents(ctx, userID),
+		"item_states":     s.exportItemStates(ctx, userID),
+		"item_links":      s.exportItemLinks(ctx, userID),
+		"reminders":       s.exportReminders(ctx, userID),
+		"action_items":    s.exportActionItems(ctx, userID),
+		"result_feedback": s.exportResultFeedback(ctx, userID),
 	}, nil
 }
 
@@ -733,6 +735,21 @@ func (s *Service) exportActionItems(ctx context.Context, userID string) []map[st
 	return items
 }
 
+func (s *Service) exportResultFeedback(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT item_type,item_id,surface,feedback,created_at,updated_at FROM result_feedback WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var itemType, itemID, surface, feedback, created, updated string
+		_ = rows.Scan(&itemType, &itemID, &surface, &feedback, &created, &updated)
+		items = append(items, map[string]any{"item_type": itemType, "item_id": itemID, "surface": surface, "feedback": feedback, "created_at": created, "updated_at": updated})
+	}
+	return items
+}
+
 func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
 	for _, rawState := range listValue(raw) {
 		state, ok := rawState.(map[string]any)
@@ -759,6 +776,25 @@ func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any,
 			nextAction = nextAction[:500]
 		}
 		_ = s.upsertItemState(ctx, userID, itemType, itemID, stage, importance, nextAction, fallback(stringValue(state["updated_at"]), now))
+	}
+}
+
+func (s *Service) restoreResultFeedback(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawItem := range listValue(raw) {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(item["item_type"])
+		itemID := remapItemID(itemType, stringValue(item["item_id"]), oldBookmarks, oldNotes)
+		feedback := stringValue(item["feedback"])
+		if itemID == "" || !validFeedback(feedback) || !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			continue
+		}
+		surface := feedbackSurface(stringValue(item["surface"]))
+		created := fallback(stringValue(item["created_at"]), now)
+		updated := fallback(stringValue(item["updated_at"]), now)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO result_feedback(user_id,item_type,item_id,surface,feedback,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,item_type,item_id,surface) DO UPDATE SET feedback=excluded.feedback,updated_at=excluded.updated_at`, userID, itemType, itemID, surface, feedback, created, updated)
 	}
 }
 
@@ -1419,6 +1455,9 @@ func listValue(value any) []any {
 }
 
 func stringSlice(value any) []string {
+	if typed, ok := value.([]string); ok {
+		return typed
+	}
 	values := []string{}
 	for _, item := range listValue(value) {
 		if text := strings.TrimSpace(stringValue(item)); text != "" {

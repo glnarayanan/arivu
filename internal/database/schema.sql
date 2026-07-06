@@ -99,6 +99,19 @@ CREATE TABLE IF NOT EXISTS search_index (
 CREATE INDEX IF NOT EXISTS idx_search_index_user_updated ON search_index(user_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_search_index_user_type ON search_index(user_id, item_type, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS result_feedback (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  item_type TEXT NOT NULL CHECK(item_type IN ('bookmark','note')),
+  item_id TEXT NOT NULL,
+  surface TEXT NOT NULL DEFAULT 'search',
+  feedback TEXT NOT NULL CHECK(feedback IN ('useful','not_useful','snooze_longer','never_resurface')),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, item_type, item_id, surface)
+);
+
+CREATE INDEX IF NOT EXISTS idx_result_feedback_item ON result_feedback(user_id, item_type, item_id);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
   user_id UNINDEXED,
   item_type UNINDEXED,
