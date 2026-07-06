@@ -2469,6 +2469,9 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 		t.Fatalf("decode manifest: %v", err)
 	}
 	manifest.Body.Close()
+	if manifestBody["start_url"] != "/today" {
+		t.Fatalf("manifest should launch Today, got %#v", manifestBody["start_url"])
+	}
 	shareTarget, ok := manifestBody["share_target"].(map[string]any)
 	if !ok || shareTarget["action"] != "/dashboard" || shareTarget["method"] != "GET" {
 		t.Fatalf("manifest share target missing dashboard GET capture: %#v", manifestBody)
