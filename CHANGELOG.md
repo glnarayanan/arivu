@@ -66,6 +66,8 @@ All notable changes to this project will be documented in this file.
 
 - Removed the duplicate OpenWiki legacy migration overview and kept the fuller
   migration guide as the canonical migration documentation.
+- Reframed the README and generated GitHub Wiki home around Arivu's
+  second-brain workflow instead of leading with implementation history.
 - Removed stale Mongo-named migration CLI options; migration now requires a
   dependency-free legacy JSON export via `--json-export`.
 - Migration apply reports now include source document counts, skipped legacy
