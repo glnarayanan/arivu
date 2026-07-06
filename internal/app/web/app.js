@@ -4,11 +4,13 @@ const state = {
   pendingRoutes: 0,
   focusMainAfterRender: false,
 };
+const offlineQueueKey = "arivu.offline.bookmarks";
 
 const routes = [
   { prefix: "/auth", page: authPage, access: "public" },
   { prefix: "/reset-password", page: resetPasswordPage, access: "public" },
   { prefix: "/accept-invite", page: acceptInvitePage, access: "public" },
+  { prefix: "/today", page: todayPage, access: "protected" },
   { prefix: "/dashboard", page: dashboardPage, access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
   { prefix: "/inbox", page: inboxPage, access: "protected" },
@@ -141,6 +143,80 @@ function setButtonBusy(button, busyLabel) {
     button.removeAttribute("aria-busy");
     button.textContent = previousLabel;
   };
+}
+
+function offlineBookmarkQueue() {
+  try {
+    return JSON.parse(localStorage.getItem(offlineQueueKey) || "[]").filter((item) => item?.url);
+  } catch {
+    return [];
+  }
+}
+
+function setOfflineBookmarkQueue(items) {
+  localStorage.setItem(offlineQueueKey, JSON.stringify(items.slice(0, 50)));
+}
+
+function queueOfflineBookmark(payload) {
+  setOfflineBookmarkQueue([...offlineBookmarkQueue(), { ...payload, queued_at: new Date().toISOString() }]);
+}
+
+async function flushOfflineBookmarks({ quiet = false } = {}) {
+  if (!navigator.onLine || !state.user) return;
+  const queue = offlineBookmarkQueue();
+  if (!queue.length) return;
+  const remaining = [];
+  for (const item of queue) {
+    try {
+      await api("/bookmarks", { method: "POST", body: JSON.stringify({ url: item.url, note: item.note || "", tags: item.tags || [] }) });
+    } catch (err) {
+      if (err.status && err.status !== 401) continue;
+      remaining.push(item);
+    }
+  }
+  setOfflineBookmarkQueue(remaining);
+  if (!quiet && queue.length !== remaining.length) ui.toast(`${queue.length - remaining.length} offline captures synced`, "success");
+}
+
+function offlineQueueMessage() {
+  const count = offlineBookmarkQueue().length;
+  return count ? `<p class="meta offline-status">${count} offline capture${count === 1 ? "" : "s"} waiting to sync.</p>` : "";
+}
+
+function voiceButton(targetID, label = "note") {
+  return `<button type="button" class="secondary voice-button" data-voice-target="${escapeHTML(targetID)}" aria-label="Dictate into ${escapeHTML(label)}">Dictate</button>`;
+}
+
+function bindVoiceCapture() {
+  document.querySelectorAll("[data-voice-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const target = document.getElementById(button.dataset.voiceTarget);
+      if (!SpeechRecognition || !target) {
+        ui.toast("Voice capture is not available in this browser", "error");
+        return;
+      }
+      const done = setButtonBusy(button, "Listening");
+      const recognition = new SpeechRecognition();
+      recognition.lang = navigator.language || "en-US";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results).map((result) => result[0]?.transcript || "").join(" ").trim();
+        if (!transcript) return;
+        target.value = [target.value.trim(), transcript].filter(Boolean).join("\n");
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      recognition.onerror = () => ui.toast("Voice capture stopped", "error");
+      recognition.onend = done;
+      try {
+        recognition.start();
+      } catch {
+        done();
+        ui.toast("Voice capture is not available right now", "error");
+      }
+    });
+  });
 }
 
 const ui = {
@@ -342,6 +418,7 @@ function navigate(path, replace = false) {
 
 function shell(title, content) {
   const nav = [
+    ["/today", "Today"],
     ["/dashboard", "Bookmarks"],
     ["/inbox", "Inbox"],
     ["/focus", "Focus"],
@@ -408,7 +485,7 @@ async function authPage() {
     try {
       await api("/auth/login", { method: "POST", body });
       ui.toast("Signed in", "success");
-      navigate("/dashboard", true);
+      navigate("/today", true);
     } catch (err) {
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
@@ -423,7 +500,7 @@ async function authPage() {
     try {
       await api("/auth/signup", { method: "POST", body: JSON.stringify({ email: emailInput.value, password: passwordInput.value }) });
       ui.toast("Account created", "success");
-      navigate("/dashboard", true);
+      navigate("/today", true);
     } catch (err) {
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
@@ -523,7 +600,7 @@ async function acceptInvitePage() {
         }),
       });
       ui.toast("Invite accepted", "success");
-      navigate("/dashboard", true);
+      navigate("/today", true);
     } catch (err) {
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
@@ -531,6 +608,282 @@ async function acceptInvitePage() {
       done();
     }
   });
+}
+
+async function todayPage() {
+  await requireUser();
+  const date = localDateKey();
+  const [daily, inbox, actions, reminders, review, memory, notes] = await Promise.all([
+    api(`/daily-notes/${date}`),
+    api("/inbox?stage=inbox&limit=6").catch(() => ({ items: [], counts: {} })),
+    api("/action-items?status=all").catch(() => ({ action_items: [] })),
+    api("/reminders?status=all").catch(() => ({ reminders: [] })),
+    api("/review?limit=6").catch(() => ({ items: [] })),
+    api("/memory-jogger").catch(() => ({ has_memory: false })),
+    api("/notes").catch(() => ({ notes: [] })),
+  ]);
+  const openActions = (actions.action_items || []).filter((item) => item.status !== "completed").slice(0, 6);
+  const dueReminders = (reminders.reminders || []).filter((item) => item.status !== "completed" && ["overdue", "today"].includes(item.due_state)).slice(0, 6);
+  const note = daily.daily_note || { body: "" };
+  setRoot(shell("Today", `
+    <section class="split">
+      <form class="panel form" id="daily-note-form">
+        <span class="meta">${escapeHTML(date)}</span>
+        <h2>Daily note</h2>
+        <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea>${voiceButton("daily-note-body", "daily note")}</div>
+        <p class="form-message" id="daily-note-message" data-form-message hidden></p>
+        <button type="submit">Save daily note</button>
+      </form>
+      <section class="panel">
+        <span class="meta">Operating loop</span>
+        <h2>${Number((inbox.counts || {}).inbox || 0)} inbox · ${openActions.length + dueReminders.length} open now · ${(review.items || []).length} review</h2>
+        <p>Capture what arrived, decide what deserves attention, work the dated loops, then review one older signal.</p>
+        <div class="chips">
+          <a href="/dashboard">Capture</a>
+          <a href="/inbox">Triage</a>
+          <a href="/focus">Work</a>
+          <a href="/review">Review</a>
+        </div>
+      </section>
+    </section>
+    <section class="split">
+      ${todayList("Triage", inbox.items || [], "/inbox", todayInboxItem)}
+      ${todayList("Work", [...openActions, ...dueReminders].slice(0, 8), "/focus", todayWorkItem)}
+    </section>
+    <section class="split">
+      ${todayList("Review", review.items || [], "/review", todayReviewItem)}
+      <section class="panel">
+        <h2>Recent notes</h2>
+        ${todayListBody((notes.notes || []).slice(0, 5), todayNoteItem)}
+        <p><a class="text-link" href="/notes">Open notes</a></p>
+      </section>
+    </section>
+    <section class="split">
+      ${memoryCard(memory)}
+      <section class="panel">
+        <h2>Fast capture</h2>
+        <p>Use the bookmark cockpit when a URL needs to enter the system, or create a standalone note when the thought stands alone.</p>
+        <div class="chips">
+          <a href="/dashboard">Save URL</a>
+          <a href="/notes">New note</a>
+          <a href="/assistant">Assistant</a>
+        </div>
+      </section>
+    </section>
+  `));
+  const form = document.querySelector("#daily-note-form");
+  bindVoiceCapture();
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving");
+    setFormMessage(form);
+    try {
+      await api(`/daily-notes/${date}`, { method: "PUT", body: JSON.stringify({ body: document.querySelector("#daily-note-body").value }) });
+      setFormMessage(form, "Daily note saved.", "success");
+      ui.toast("Daily note saved", "success");
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+function localDateKey(value = new Date()) {
+  const tzOffset = value.getTimezoneOffset() * 60000;
+  return new Date(value.getTime() - tzOffset).toISOString().slice(0, 10);
+}
+
+function todayList(title, items, href, renderItem) {
+  return `<section class="panel">
+    <h2>${escapeHTML(title)}</h2>
+    ${todayListBody(items, renderItem)}
+    <p><a class="text-link" href="${href}">Open ${escapeHTML(title.toLowerCase())}</a></p>
+  </section>`;
+}
+
+function todayListBody(items, renderItem) {
+  if (!items.length) return `<p class="meta">Nothing waiting here.</p>`;
+  return `<div class="stack">${items.map(renderItem).join("")}</div>`;
+}
+
+function todayInboxItem(item) {
+  const isNote = item.item_type === "note";
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || item.url || "Untitled")}</strong></p>
+    <p class="meta">${escapeHTML(stageLabel(item.stage || "inbox"))} · ${escapeHTML(item.next_action || item.domain || item.source || "")}</p>
+    <a class="text-link" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${encodeURIComponent(item.id)}`}">Open</a>
+  </article>`;
+}
+
+function todayWorkItem(item) {
+  const isReminder = Boolean(item.due_at);
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(isReminder ? formatDate(item.due_at) : item.title || "Action item")}</strong></p>
+    <p class="meta">${escapeHTML(item.item_title || "")}${isReminder ? ` · ${escapeHTML(item.due_state || "")}` : ""}</p>
+    <a class="text-link" href="${itemHref(item)}">Open source</a>
+  </article>`;
+}
+
+function todayReviewItem(item) {
+  const isNote = item.item_type === "note";
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || item.url || "Untitled")}</strong></p>
+    <p class="meta">${(item.review_reasons || []).slice(0, 2).map(escapeHTML).join(" · ") || escapeHTML(item.resurfacing_reason || "review")}</p>
+    <a class="text-link" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${encodeURIComponent(item.id)}`}">Open</a>
+  </article>`;
+}
+
+function todayNoteItem(note) {
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(note.title || "Untitled note")}</strong></p>
+    <p class="meta">${escapeHTML(formatDate(note.updated_at))}</p>
+    <a class="text-link" href="/notes/${encodeURIComponent(note.id)}">Open note</a>
+  </article>`;
+}
+
+function currentItemRef() {
+  const bookmark = location.pathname.match(/^\/bookmark\/([^/]+)/);
+  if (bookmark) return { type: "bookmark", id: decodeURIComponent(bookmark[1]) };
+  const note = location.pathname.match(/^\/notes\/([^/]+)/);
+  if (note) return { type: "note", id: decodeURIComponent(note[1]) };
+  return null;
+}
+
+async function openCommandPalette() {
+  const current = currentItemRef();
+  const body = document.createElement("div");
+  body.className = "command-palette";
+  body.innerHTML = `
+    <section>
+      <h3>Open</h3>
+      <div class="chips">
+        ${[
+          ["/today", "Today"],
+          ["/dashboard", "Capture"],
+          ["/inbox", "Inbox"],
+          ["/focus", "Focus"],
+          ["/review", "Review"],
+          ["/notes", "Notes"],
+          ["/assistant", "Assistant"],
+        ].map(([href, label]) => `<button type="button" class="secondary" data-command-nav="${href}">${label}</button>`).join("")}
+      </div>
+    </section>
+    <form class="form" data-command-save>
+      <h3>Save URL</h3>
+      <div class="field"><label for="command-url">URL</label><input id="command-url" type="url" placeholder="https://example.com/article"></div>
+      <div class="field"><label for="command-save-note">Quick note</label><textarea id="command-save-note" rows="2"></textarea></div>
+      <button type="submit">Save</button>
+    </form>
+    <form class="form" data-command-note>
+      <h3>Create Note</h3>
+      <div class="field"><label for="command-note-title">Title</label><input id="command-note-title" type="text"></div>
+      <div class="field"><label for="command-note-body">Body</label><textarea id="command-note-body" rows="3"></textarea></div>
+      <button type="submit">Create note</button>
+    </form>
+    <form class="form" data-command-search>
+      <h3>Search</h3>
+      <div class="field"><label for="command-query">Query</label><input id="command-query" type="search"></div>
+      <div class="button-row">
+        <button type="submit" data-command-search-type="search">Search</button>
+        <button type="submit" class="secondary" data-command-search-type="answer">Cited answer</button>
+      </div>
+    </form>
+    <form class="form" data-command-current ${current ? "" : "hidden"}>
+      <h3>Current Item</h3>
+      <p class="meta">${current ? `${escapeHTML(current.type)}:${escapeHTML(current.id)}` : "Open a bookmark or note first."}</p>
+      <div class="field"><label for="command-task">Task</label><input id="command-task" type="text" placeholder="Next concrete action"></div>
+      <div class="field"><label for="command-reminder">Reminder</label><input id="command-reminder" type="datetime-local"></div>
+      <div class="field"><label for="command-link-query">Link target search</label><input id="command-link-query" type="search" placeholder="Search bookmark or note title"></div>
+      <div class="field"><label for="command-link-target">Link target</label><select id="command-link-target"><option value="">Search to choose target</option></select></div>
+      <div class="field"><label for="command-link-label">Link label</label><input id="command-link-label" type="text" placeholder="related"></div>
+      <div class="button-row">
+        <button type="submit" data-command-current-type="task">Add task</button>
+        <button type="submit" class="secondary" data-command-current-type="reminder">Add reminder</button>
+        <button type="submit" class="secondary" data-command-current-type="link">Link item</button>
+      </div>
+    </form>
+  `;
+  body.querySelectorAll("[data-command-nav]").forEach((button) => {
+    button.addEventListener("click", () => {
+      document.querySelector("[data-dialog-close]")?.click();
+      navigate(button.dataset.commandNav);
+    });
+  });
+  body.querySelector("[data-command-save]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const url = body.querySelector("#command-url").value.trim();
+    if (!url) return;
+    await commandRun(event.submitter, "Saving", async () => {
+      const result = await api("/bookmarks", { method: "POST", body: JSON.stringify({ url, note: body.querySelector("#command-save-note").value }) });
+      document.querySelector("[data-dialog-close]")?.click();
+      navigate(`/bookmark/${result.bookmark.id}`, true);
+      return "Bookmark saved";
+    });
+  });
+  body.querySelector("[data-command-note]").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await commandRun(event.submitter, "Creating", async () => {
+      const result = await api("/notes", { method: "POST", body: JSON.stringify({ title: body.querySelector("#command-note-title").value, body: body.querySelector("#command-note-body").value }) });
+      document.querySelector("[data-dialog-close]")?.click();
+      navigate(`/notes/${result.note.id}`, true);
+      return "Note created";
+    });
+  });
+  body.querySelector("[data-command-search]").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const query = body.querySelector("#command-query").value.trim();
+    if (!query) return;
+    document.querySelector("[data-dialog-close]")?.click();
+    if (event.submitter.dataset.commandSearchType === "answer") navigate(`/dashboard?search=${encodeURIComponent(query)}&answer=1`);
+    else navigate(`/dashboard?search=${encodeURIComponent(query)}`);
+  });
+  const linkQuery = body.querySelector("#command-link-query");
+  linkQuery?.addEventListener("change", async () => {
+    const query = linkQuery.value.trim();
+    const target = body.querySelector("#command-link-target");
+    target.innerHTML = `<option value="">Searching...</option>`;
+    const result = await api(`/link-targets?q=${encodeURIComponent(query)}&limit=20`).catch(() => ({ targets: [] }));
+    target.innerHTML = `<option value="">Choose target</option>${(result.targets || []).map((item) => `<option value="${escapeHTML(`${item.type}:${item.id}`)}">${escapeHTML(item.type)} · ${escapeHTML(item.title || item.url || item.id)}</option>`).join("")}`;
+  });
+  body.querySelector("[data-command-current]")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (!current) return;
+    const type = event.submitter.dataset.commandCurrentType;
+    await commandRun(event.submitter, "Saving", async () => {
+      if (type === "task") {
+        const title = body.querySelector("#command-task").value.trim();
+        if (!title) throw new Error("Task is required.");
+        await api("/action-items", { method: "POST", body: JSON.stringify({ item_type: current.type, item_id: current.id, title }) });
+        return "Task added";
+      }
+      if (type === "reminder") {
+        const due = body.querySelector("#command-reminder").value;
+        if (!due) throw new Error("Reminder time is required.");
+        await api("/reminders", { method: "POST", body: JSON.stringify({ item_type: current.type, item_id: current.id, due_at: new Date(due).toISOString(), notification_channel: "in_app" }) });
+        return "Reminder added";
+      }
+      const rawTarget = body.querySelector("#command-link-target").value;
+      const [toType, toID] = rawTarget.split(":");
+      if (!toType || !toID) throw new Error("Link target is required.");
+      await api("/links", { method: "POST", body: JSON.stringify({ from_type: current.type, from_id: current.id, to_type: toType, to_id: toID, label: body.querySelector("#command-link-label").value || "related" }) });
+      return "Link created";
+    });
+  });
+  await ui.dialog({ title: "Command Palette", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
+}
+
+async function commandRun(button, busyLabel, action) {
+  const done = setButtonBusy(button, busyLabel);
+  try {
+    const message = await action();
+    ui.toast(message, "success");
+  } catch (err) {
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
 }
 
 async function dashboardPage() {
@@ -548,9 +901,10 @@ async function dashboardPage() {
         <span class="meta">Capture</span>
         <h2>Save a page into Inbox</h2>
         <div class="field"><label for="url">URL</label><input id="url" type="url" placeholder="https://example.com/article" value="${escapeHTML(shared.url)}" required></div>
-        <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea></div>
+        <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea>${voiceButton("save-note", "quick note")}</div>
         <div class="field"><label for="save-tags">Tags</label><input id="save-tags" type="text" placeholder="research, idea, later"></div>
         <button type="submit">Save bookmark</button>
+        ${offlineQueueMessage()}
         <p class="meta" id="job-status" hidden></p>
       </form>
       <section class="panel">
@@ -608,24 +962,30 @@ async function dashboardPage() {
     </section>
   `));
   const saveForm = document.querySelector("#save-form");
+  bindVoiceCapture();
   saveForm.insertAdjacentHTML("beforeend", `<p class="form-message" id="save-message" data-form-message hidden></p>`);
   saveForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Saving bookmark");
+    const payload = {
+      url: document.querySelector("#url").value,
+      note: document.querySelector("#save-note").value,
+      tags: splitTags(document.querySelector("#save-tags").value),
+    };
     setFormMessage(saveForm);
     try {
-      const result = await api("/bookmarks", {
-        method: "POST",
-        body: JSON.stringify({
-          url: document.querySelector("#url").value,
-          note: document.querySelector("#save-note").value,
-          tags: splitTags(document.querySelector("#save-tags").value),
-        }),
-      });
+      const result = await api("/bookmarks", { method: "POST", body: JSON.stringify(payload) });
       ui.toast("Bookmark saved", "success");
       await showJobStatus(result.job_id);
       navigate(`/bookmark/${result.bookmark.id}`, true);
     } catch (err) {
+      if (!navigator.onLine || err.message.includes("couldn't reach Arivu")) {
+        queueOfflineBookmark(payload);
+        setFormMessage(saveForm, "Saved offline. Arivu will sync it when this browser is online.", "success");
+        ui.toast("Bookmark queued offline", "success");
+        saveForm.reset();
+        return;
+      }
       setFormMessage(saveForm, err.message);
       ui.toast(err.message, "error");
     } finally {
@@ -648,12 +1008,16 @@ async function dashboardPage() {
       const answer = await api(`/search/answer${dashboardQueryString("q")}`);
       panel.hidden = false;
       panel.innerHTML = answerPanel(answer);
+      bindFeedbackControls();
     } catch (err) {
       ui.toast(err.message, "error");
     } finally {
       done();
     }
   });
+  if (params.get("answer") === "1" && document.querySelector("#search").value.trim()) {
+    document.querySelector("#answer-button").click();
+  }
   const savedSearchForm = document.querySelector("#saved-search-form");
   savedSearchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -739,6 +1103,8 @@ function answerPanel(answer) {
       return `<article class="annotation">
       <p><strong>[${index + 1}] ${escapeHTML(item.title || item.url)}</strong> <span class="meta">${escapeHTML(item.type || "bookmark")} · ${escapeHTML(item.domain || "")}</span></p>
       <p>${escapeHTML(item.snippet || "")}</p>
+      ${feedbackControls(item.type || "bookmark", item.id || "", "answer", item.feedback_state)}
+      ${item.why_shown?.length ? `<p class="meta">Why shown: ${item.why_shown.map(escapeHTML).join(" · ")} · freshness ${Number(item.freshness_score || 0)}</p>` : ""}
       <a class="text-link" href="${item.type === "note" ? `/notes/${itemID}` : `/bookmark/${itemID}`}">Open citation</a>
     </article>`;
     }).join("") || `<p class="meta">No citations found.</p>`}</div>`;
@@ -1410,7 +1776,7 @@ async function notesPage() {
       <form class="panel form" id="standalone-note-form">
         <h2>New note</h2>
         <div class="field"><label for="standalone-note-title">Title</label><input id="standalone-note-title" type="text" placeholder="Idea, decision, or snippet"></div>
-        <div class="field"><label for="standalone-note-body">Body</label><textarea id="standalone-note-body" rows="6" placeholder="Write the thought before it disappears"></textarea></div>
+        <div class="field"><label for="standalone-note-body">Body</label><textarea id="standalone-note-body" rows="6" placeholder="Write the thought before it disappears"></textarea>${voiceButton("standalone-note-body", "new note")}</div>
         <p class="form-message" id="standalone-note-message" data-form-message hidden></p>
         <button type="submit">Save note</button>
       </form>
@@ -1425,6 +1791,7 @@ async function notesPage() {
     </section>
   `));
   const form = document.querySelector("#standalone-note-form");
+  bindVoiceCapture();
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Saving note");
@@ -1477,12 +1844,13 @@ async function noteDetailPage(id) {
   bindLinkDeleteControls();
   bindActionItemControls();
   bindReminderControls();
+  bindVoiceCapture();
 }
 
 function standaloneNoteCard(note, notes, bookmarks = []) {
   return `<article class="panel form" data-note="${escapeHTML(note.id)}">
     <div class="field"><label for="note-title-${escapeHTML(note.id)}">Title</label><input id="note-title-${escapeHTML(note.id)}" data-note-title value="${escapeHTML(note.title || "")}"></div>
-    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="12">${escapeHTML(note.body || "")}</textarea></div>
+    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="12">${escapeHTML(note.body || "")}</textarea>${voiceButton(`note-body-${note.id}`, "note body")}</div>
     <p class="meta">${note.bookmark_id ? `Linked to bookmark ${escapeHTML(note.bookmark_id)}` : "Standalone"} · ${escapeHTML(note.updated_at || "")}</p>
     <p class="button-row">
       ${note.bookmark_id ? `<a class="button secondary" href="/bookmark/${escapeHTML(note.bookmark_id)}">Open bookmark</a>` : ""}
@@ -1601,7 +1969,7 @@ async function bookmarkPage() {
         <form class="form" id="note-form">
           <h2>Linked note</h2>
           <div class="field"><label for="note-title">Title</label><input id="note-title" type="text" placeholder="Working note"></div>
-          <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea></div>
+          <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea>${voiceButton("note-body", "linked note")}</div>
           <p class="form-message" id="note-message" data-form-message hidden></p>
           <button type="submit">Save note</button>
         </form>
@@ -1771,6 +2139,7 @@ async function bookmarkPage() {
   bindLinkDeleteControls();
   bindActionItemControls();
   bindReminderControls();
+  bindVoiceCapture();
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;
@@ -2718,7 +3087,8 @@ function importPanel() {
   return `<section class="split">
     <form class="panel form" id="import-form">
       <h3>Import or restore</h3>
-      <div class="field"><label for="import-content">Import or restore content</label><textarea id="import-content" rows="9" placeholder="Paste a browser, Pocket, Raindrop, Linkwarden, or Arivu JSON export, or one URL per line"></textarea></div>
+      <p class="meta">Paste supported exports or one URL per line. Imports are queued safely; full JSON restores rebuild your second-brain data under this account.</p>
+      <div class="field"><label for="import-content">Import or restore content</label><textarea id="import-content" rows="9" placeholder="Paste browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom, URL-bearing Readwise/Kindle CSV, Arivu JSON, or one URL per line"></textarea></div>
       <p class="form-message" id="import-message" data-form-message hidden></p>
       <button type="submit">Queue import or restore</button>
     </form>
@@ -2775,11 +3145,25 @@ function renderImportJobs(jobs) {
   const target = document.querySelector("#import-jobs");
   if (!target) return;
   target.innerHTML = (jobs || []).map((job) => `<article class="annotation">
-    <p><strong>${escapeHTML(job.status || "import")}</strong> <span class="meta">${Number(job.total_bookmarks || 0)} items</span></p>
+    <p><strong>${escapeHTML(importJobLabel(job))}</strong> <span class="meta">${Number(job.total_bookmarks || 0)} items</span></p>
+    ${importJobProgress(job)}
     ${importSourceReport(job.source_report || [])}
     ${importSourceItems(job.items || [])}
     <p class="meta">Fetched ${Number(job.content_fetched || 0)} · AI ${Number(job.ai_processed || 0)} · Failed ${Number(job.failed || 0)}</p>
   </article>`).join("") || `<p class="meta">No imports yet.</p>`;
+}
+
+function importJobLabel(job) {
+  const failed = Number(job.failed || 0);
+  if (failed) return `${job.status || "import"} · ${failed} failed`;
+  return job.status || "import";
+}
+
+function importJobProgress(job) {
+  const total = Number(job.total_bookmarks || 0);
+  if (!total) return "";
+  const handled = Math.min(total, Number(job.content_fetched || 0) + Number(job.failed || 0));
+  return `<progress value="${handled}" max="${total}" aria-label="Import progress"></progress><p class="meta">${handled}/${total} handled${job.updated_at ? ` · updated ${escapeHTML(formatDate(job.updated_at))}` : ""}</p>`;
 }
 
 function importSourceReport(report) {
@@ -2820,6 +3204,7 @@ async function reviewPage() {
   document.querySelectorAll("[data-review-archive]").forEach((button) => {
     button.addEventListener("click", () => reviewAction(button, "archive"));
   });
+  bindFeedbackControls();
   bindActionItemControls();
   bindReminderControls();
 }
@@ -2857,6 +3242,7 @@ function reviewCard(item) {
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
     <p>${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
     ${reasons.length ? `<div class="chips">${reasons.slice(0, 4).map((reason) => `<span>${escapeHTML(reason)}</span>`).join("")}</div>` : ""}
+    ${feedbackControls(item.item_type || "bookmark", item.id || "", "review", item.feedback_state)}
     ${nextAction || importance ? `<p class="meta">${nextAction ? `Next: ${escapeHTML(nextAction)}` : ""}${nextAction && importance ? " · " : ""}${importance ? `Priority ${importance}` : ""}</p>` : ""}
     <p class="button-row">
       <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
@@ -2874,6 +3260,46 @@ function reviewCard(item) {
       ${reminderList(item.reminders || [])}
     </section>
   </article>`;
+}
+
+function feedbackControls(itemType, itemID, surface, stateValue = "") {
+  if (!itemID) return "";
+  const options = [
+    ["useful", "Useful"],
+    ["not_useful", "Not useful"],
+    ["snooze_longer", "Snooze longer"],
+    ["never_resurface", "Never resurface"],
+  ];
+  return `<div class="chips feedback-controls" aria-label="Feedback">${options.map(([value, label]) => `<button type="button" class="secondary ${stateValue === value ? "active" : ""}" data-feedback="${value}" data-feedback-type="${escapeHTML(itemType)}" data-feedback-id="${escapeHTML(itemID)}" data-feedback-surface="${escapeHTML(surface)}" aria-pressed="${stateValue === value}">${label}</button>`).join("")}</div>`;
+}
+
+function bindFeedbackControls() {
+  document.querySelectorAll("[data-feedback]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const done = setButtonBusy(button, "Saving");
+      try {
+        await api("/feedback", {
+          method: "POST",
+          body: JSON.stringify({
+            item_type: button.dataset.feedbackType,
+            item_id: button.dataset.feedbackId,
+            surface: button.dataset.feedbackSurface,
+            feedback: button.dataset.feedback,
+          }),
+        });
+        button.closest(".feedback-controls")?.querySelectorAll("[data-feedback]").forEach((item) => {
+          const active = item === button;
+          item.classList.toggle("active", active);
+          item.setAttribute("aria-pressed", String(active));
+        });
+        ui.toast("Feedback saved", "success");
+      } catch (err) {
+        ui.toast(err.message, "error");
+      } finally {
+        done();
+      }
+    });
+  });
 }
 
 async function reviewAction(button, action) {
@@ -3285,6 +3711,7 @@ async function requireUser() {
   if (state.user) return state.user;
   try {
     state.user = await api("/auth/me");
+    flushOfflineBookmarks({ quiet: true });
     return state.user;
   } catch {
     navigate("/auth", true);
@@ -3296,19 +3723,18 @@ async function render() {
   state.pendingRoutes += 1;
   document.body.classList.add("is-routing");
   const route = routes.find(routeMatches);
-  const page = route ? route.page : location.pathname === "/" ? () => navigate(state.user ? "/dashboard" : "/auth", true) : dashboardPage;
+  const page = route ? route.page : location.pathname === "/" ? () => navigate(state.user ? "/today" : "/auth", true) : dashboardPage;
   try {
     if (route?.access === "protected") await requireUser();
     await page();
     syncRouteAccessibility();
-    const actions = document.querySelector("#global-actions");
-    if (actions) {
-      ui.menu(actions, [
-        { label: "Dashboard", action: () => navigate("/dashboard") },
-        { label: "Settings", action: () => navigate("/settings") },
-        { label: "Admin", action: () => navigate("/admin") },
-      ]);
-    }
+    document.querySelector("#global-actions")?.addEventListener("click", openCommandPalette);
+    ui.on(document, "keydown", (event) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openCommandPalette();
+      }
+    });
     document.querySelector("#logout")?.addEventListener("click", async (event) => {
       const done = setButtonBusy(event.currentTarget, "Signing out");
       await api("/auth/logout", { method: "POST" }).catch(() => {});
@@ -3342,4 +3768,5 @@ addEventListener("popstate", () => {
   state.focusMainAfterRender = true;
   render();
 });
+addEventListener("online", () => flushOfflineBookmarks());
 render();

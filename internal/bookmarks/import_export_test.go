@@ -44,6 +44,35 @@ func TestExtractImportURLsFromWrappedExports(t *testing.T) {
 	}
 }
 
+func TestExtractImportURLsFromOPML(t *testing.T) {
+	got := extractImportURLs(`<opml version="2.0"><body><outline text="Go Blog" xmlUrl="https://go.dev/blog/feed.atom"/><outline title="Bad" xmlUrl="file:///etc/passwd"/></body></opml>`)
+	if len(got) != 1 || got[0].URL != "https://go.dev/blog/feed.atom" || got[0].Title != "Go Blog" || got[0].Source != "opml" {
+		t.Fatalf("unexpected OPML URLs: %#v", got)
+	}
+}
+
+func TestExtractImportURLsFromRSSAndAtom(t *testing.T) {
+	rss := extractImportURLs(`<rss><channel><item><title>One</title><link>https://example.com/one</link></item><item><title>Bad</title><link>javascript:alert(1)</link></item></channel></rss>`)
+	if len(rss) != 1 || rss[0].Title != "One" || rss[0].URL != "https://example.com/one" || rss[0].Source != "rss" {
+		t.Fatalf("unexpected RSS URLs: %#v", rss)
+	}
+	atom := extractImportURLs(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Two</title><link href="https://example.com/two"/></entry></feed>`)
+	if len(atom) != 1 || atom[0].Title != "Two" || atom[0].URL != "https://example.com/two" || atom[0].Source != "atom" {
+		t.Fatalf("unexpected Atom URLs: %#v", atom)
+	}
+}
+
+func TestExtractImportURLsFromCSVAndTSV(t *testing.T) {
+	csv := extractImportURLs("Title,URL,Highlight\nReadwise Item,https://example.com/readwise,quote\nBad,file:///etc/passwd,nope")
+	if len(csv) != 1 || csv[0].Title != "Readwise Item" || csv[0].URL != "https://example.com/readwise" {
+		t.Fatalf("unexpected CSV URLs: %#v", csv)
+	}
+	tsv := extractImportURLs("Book Title\tSource URL\tHighlight\nKindle Item\thttps://example.com/kindle\tquote")
+	if len(tsv) != 1 || tsv[0].Title != "Kindle Item" || tsv[0].URL != "https://example.com/kindle" {
+		t.Fatalf("unexpected TSV URLs: %#v", tsv)
+	}
+}
+
 func TestImportURLsUseSafeFetchValidation(t *testing.T) {
 	got := extractImportURLs("https://127.0.0.1/admin\nhttps://example.com/ok\nftp://example.com/file")
 	if len(got) != 1 || got[0].URL != "https://example.com/ok" {

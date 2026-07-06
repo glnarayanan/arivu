@@ -45,9 +45,27 @@ All notable changes to this project will be documented in this file.
 - Added a slim `/api/link-targets` route for bookmark/note link pickers so
   detail pages can populate relationship selectors without fetching note bodies
   or bookmark archive text.
+- Added a `/today` signed-in cockpit with per-day daily notes and existing
+  Inbox, Focus, Review, recent-note, and memory-jogger signals.
+- Added a dependency-free command palette on the global Actions button and
+  `Cmd/Ctrl+K` for navigation, capture, notes, search, cited answers, and
+  current-item task/reminder/link actions.
+- Added URL-bearing OPML, RSS/Atom, and CSV/TSV import parsing for feed lists
+  and Readwise/Kindle-style exports that include source URLs.
+- Added user-scoped recall feedback for search, cited answers, and Review,
+  including why-shown metadata, freshness scores, backup/restore support, and
+  never-resurface handling.
+- Added an app-shell service worker and offline dashboard capture queue that
+  replays saved URLs when the signed-in browser comes back online.
+- Added browser-native dictation controls for daily notes, dashboard quick
+  notes, standalone notes, and bookmark-linked notes.
+- Improved import trust signals with clearer supported-format copy and native
+  progress bars over existing import job counters.
 
 ### Changed
 
+- Removed the duplicate OpenWiki legacy migration overview and kept the fuller
+  migration guide as the canonical migration documentation.
 - Reframed the README and generated GitHub Wiki home around Arivu's
   second-brain workflow instead of leading with implementation history.
 - Removed stale Mongo-named migration CLI options; migration now requires a

@@ -85,10 +85,14 @@ Second-brain v1 adds user-authored context around bookmarks:
 
 - `/api/bookmarks/import` accepts safe URLs from common bookmark export shapes:
   JSON arrays, object-wrapped lists (`items`, `bookmarks`, `results`, or
-  `links`), browser/Netscape HTML, and newline URL lists.
+  `links`), browser/Netscape HTML, OPML, RSS/Atom feeds, URL-bearing CSV/TSV
+  exports such as Readwise or Kindle-derived tables, and newline URL lists.
 - Imported bookmarks keep source hints such as browser, Pocket, Raindrop,
   Linkwarden, Linkding, and Karakeep/Hoarder when the export content identifies
   them.
+- Import job reads expose total, fetched, AI-processed, failed, status, updated
+  time, source report, and a bounded item sample so the UI can show progress
+  without exposing server logs.
 - `/api/bookmarks/export` supports JSON, CSV, browser HTML, Markdown bookmark
   links, and an Obsidian ZIP vault with bookmark/note files plus explicit graph
   links as wikilinks.

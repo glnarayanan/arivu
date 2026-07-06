@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"html"
@@ -177,6 +178,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 		s.restoreBookmarkChildren(ctx, userID, newID, bookmark, oldNotes, now)
 	}
 	s.restoreStandaloneNotes(ctx, userID, backup["notes"], oldNotes, now)
+	s.restoreDailyNotes(ctx, userID, backup["daily_notes"], now)
 	s.restoreTags(ctx, userID, backup["tags"], now)
 	s.restoreSavedSearches(ctx, userID, backup["saved_searches"], now)
 	s.restoreReviewEvents(ctx, userID, backup["review_events"], oldBookmarks, oldNotes, now)
@@ -184,6 +186,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreItemLinks(ctx, userID, backup["item_links"], oldBookmarks, oldNotes, now)
 	s.restoreReminders(ctx, userID, backup["reminders"], oldBookmarks, oldNotes, now)
 	s.restoreActionItems(ctx, userID, backup["action_items"], oldBookmarks, oldNotes, now)
+	s.restoreResultFeedback(ctx, userID, backup["result_feedback"], oldBookmarks, oldNotes, now)
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	s.refreshSearchIndex(ctx, userID)
@@ -263,6 +266,26 @@ func (s *Service) restoreStandaloneNotes(ctx context.Context, userID string, raw
 				oldNotes[oldID] = noteID
 			}
 		}
+	}
+}
+
+func (s *Service) restoreDailyNotes(ctx context.Context, userID string, raw any, now string) {
+	for _, rawNote := range listValue(raw) {
+		note, ok := rawNote.(map[string]any)
+		if !ok {
+			continue
+		}
+		date, valid := dailyNoteDate(stringValue(note["date"]))
+		if !valid {
+			continue
+		}
+		body := strings.TrimSpace(stringValue(note["body"]))
+		if len(body) > maxNoteBody {
+			body = body[:maxNoteBody]
+		}
+		created := fallback(stringValue(note["created_at"]), now)
+		updated := fallback(stringValue(note["updated_at"]), now)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO daily_notes(user_id,note_date,body,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id,note_date) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at`, userID, date, body, created, updated)
 	}
 }
 
@@ -509,19 +532,21 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		bookmark["notes"] = s.bookmarkNotes(ctx, userID, id)
 	}
 	return map[string]any{
-		"version":        1,
-		"exported_at":    time.Now().UTC().Format(time.RFC3339),
-		"bookmarks":      bookmarks,
-		"notes":          s.exportStandaloneNotes(ctx, userID),
-		"tags":           s.exportTags(ctx, userID),
-		"saved_searches": s.exportSavedSearches(ctx, userID),
-		"import_jobs":    s.exportImportJobs(ctx, userID),
-		"import_sources": s.exportImportSources(ctx, userID),
-		"review_events":  s.exportReviewEvents(ctx, userID),
-		"item_states":    s.exportItemStates(ctx, userID),
-		"item_links":     s.exportItemLinks(ctx, userID),
-		"reminders":      s.exportReminders(ctx, userID),
-		"action_items":   s.exportActionItems(ctx, userID),
+		"version":         1,
+		"exported_at":     time.Now().UTC().Format(time.RFC3339),
+		"bookmarks":       bookmarks,
+		"notes":           s.exportStandaloneNotes(ctx, userID),
+		"daily_notes":     s.exportDailyNotes(ctx, userID),
+		"tags":            s.exportTags(ctx, userID),
+		"saved_searches":  s.exportSavedSearches(ctx, userID),
+		"import_jobs":     s.exportImportJobs(ctx, userID),
+		"import_sources":  s.exportImportSources(ctx, userID),
+		"review_events":   s.exportReviewEvents(ctx, userID),
+		"item_states":     s.exportItemStates(ctx, userID),
+		"item_links":      s.exportItemLinks(ctx, userID),
+		"reminders":       s.exportReminders(ctx, userID),
+		"action_items":    s.exportActionItems(ctx, userID),
+		"result_feedback": s.exportResultFeedback(ctx, userID),
 	}, nil
 }
 
@@ -534,6 +559,21 @@ func (s *Service) exportStandaloneNotes(ctx context.Context, userID string) []ma
 	notes := []map[string]any{}
 	for rows.Next() {
 		notes = append(notes, scanNote(rows))
+	}
+	return notes
+}
+
+func (s *Service) exportDailyNotes(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT note_date,body,created_at,updated_at FROM daily_notes WHERE user_id=? ORDER BY note_date DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	notes := []map[string]any{}
+	for rows.Next() {
+		var date, body, created, updated string
+		_ = rows.Scan(&date, &body, &created, &updated)
+		notes = append(notes, map[string]any{"date": date, "body": body, "created_at": created, "updated_at": updated})
 	}
 	return notes
 }
@@ -695,6 +735,21 @@ func (s *Service) exportActionItems(ctx context.Context, userID string) []map[st
 	return items
 }
 
+func (s *Service) exportResultFeedback(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT item_type,item_id,surface,feedback,created_at,updated_at FROM result_feedback WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var itemType, itemID, surface, feedback, created, updated string
+		_ = rows.Scan(&itemType, &itemID, &surface, &feedback, &created, &updated)
+		items = append(items, map[string]any{"item_type": itemType, "item_id": itemID, "surface": surface, "feedback": feedback, "created_at": created, "updated_at": updated})
+	}
+	return items
+}
+
 func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
 	for _, rawState := range listValue(raw) {
 		state, ok := rawState.(map[string]any)
@@ -721,6 +776,25 @@ func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any,
 			nextAction = nextAction[:500]
 		}
 		_ = s.upsertItemState(ctx, userID, itemType, itemID, stage, importance, nextAction, fallback(stringValue(state["updated_at"]), now))
+	}
+}
+
+func (s *Service) restoreResultFeedback(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawItem := range listValue(raw) {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(item["item_type"])
+		itemID := remapItemID(itemType, stringValue(item["item_id"]), oldBookmarks, oldNotes)
+		feedback := stringValue(item["feedback"])
+		if itemID == "" || !validFeedback(feedback) || !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			continue
+		}
+		surface := feedbackSurface(stringValue(item["surface"]))
+		created := fallback(stringValue(item["created_at"]), now)
+		updated := fallback(stringValue(item["updated_at"]), now)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO result_feedback(user_id,item_type,item_id,surface,feedback,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,item_type,item_id,surface) DO UPDATE SET feedback=excluded.feedback,updated_at=excluded.updated_at`, userID, itemType, itemID, surface, feedback, created, updated)
 	}
 }
 
@@ -1076,6 +1150,12 @@ type importURL struct {
 
 func extractImportURLs(raw string) []importURL {
 	source := detectImportSource(raw)
+	if xmlItems := extractXMLImportURLs(raw, source); len(xmlItems) > 0 {
+		return xmlItems
+	}
+	if csvItems := extractCSVImportURLs(raw, source); len(csvItems) > 0 {
+		return csvItems
+	}
 	var jsonItems []map[string]any
 	if err := json.Unmarshal([]byte(raw), &jsonItems); err == nil {
 		var result []importURL
@@ -1124,9 +1204,180 @@ func extractImportURLs(raw string) []importURL {
 	return result
 }
 
+func extractXMLImportURLs(raw, source string) []importURL {
+	decoder := xml.NewDecoder(strings.NewReader(raw))
+	decoder.Strict = false
+	var result []importURL
+	var inItem, inEntry bool
+	var title, link string
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			break
+		}
+		switch item := token.(type) {
+		case xml.StartElement:
+			name := strings.ToLower(item.Name.Local)
+			if name == "outline" {
+				var urlValue, titleValue string
+				for _, attr := range item.Attr {
+					switch strings.ToLower(attr.Name.Local) {
+					case "xmlurl", "htmlurl", "url":
+						if urlValue == "" {
+							urlValue = strings.TrimSpace(attr.Value)
+						}
+					case "title", "text":
+						if titleValue == "" {
+							titleValue = strings.TrimSpace(attr.Value)
+						}
+					}
+				}
+				if validImportURL(urlValue) {
+					result = append(result, importURL{URL: urlValue, Title: titleValue, Source: source})
+				}
+			}
+			if name == "item" || name == "entry" {
+				inItem = name == "item"
+				inEntry = name == "entry"
+				title, link = "", ""
+			}
+			if (inItem || inEntry) && name == "title" {
+				title = readElementText(decoder, item)
+			}
+			if inItem && name == "link" {
+				link = readElementText(decoder, item)
+			}
+			if inEntry && name == "link" {
+				for _, attr := range item.Attr {
+					if strings.ToLower(attr.Name.Local) == "href" && validImportURL(attr.Value) {
+						link = strings.TrimSpace(attr.Value)
+					}
+				}
+			}
+		case xml.EndElement:
+			name := strings.ToLower(item.Name.Local)
+			if (name == "item" && inItem) || (name == "entry" && inEntry) {
+				if validImportURL(link) {
+					result = append(result, importURL{URL: link, Title: title, Source: source})
+				}
+				inItem, inEntry = false, false
+			}
+		}
+	}
+	return dedupeImportURLs(result)
+}
+
+func readElementText(decoder *xml.Decoder, start xml.StartElement) string {
+	var text string
+	if err := decoder.DecodeElement(&text, &start); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(html.UnescapeString(text))
+}
+
+func extractCSVImportURLs(raw, source string) []importURL {
+	reader := csv.NewReader(strings.NewReader(raw))
+	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
+	records, err := reader.ReadAll()
+	if err != nil || len(records) < 2 {
+		reader = csv.NewReader(strings.NewReader(raw))
+		reader.Comma = '\t'
+		reader.FieldsPerRecord = -1
+		reader.LazyQuotes = true
+		records, err = reader.ReadAll()
+		if err != nil || len(records) < 2 {
+			return nil
+		}
+	}
+	headers := map[string]int{}
+	for i, header := range records[0] {
+		headers[normalizeImportHeader(header)] = i
+	}
+	if !hasImportHeader(headers, "url", "sourceurl", "articleurl", "href", "link") && strings.Contains(raw, "\t") {
+		reader = csv.NewReader(strings.NewReader(raw))
+		reader.Comma = '\t'
+		reader.FieldsPerRecord = -1
+		reader.LazyQuotes = true
+		if tabRecords, tabErr := reader.ReadAll(); tabErr == nil && len(tabRecords) >= 2 {
+			records = tabRecords
+			headers = map[string]int{}
+			for i, header := range records[0] {
+				headers[normalizeImportHeader(header)] = i
+			}
+		}
+	}
+	var result []importURL
+	for _, record := range records[1:] {
+		link := csvField(record, headers, "url", "sourceurl", "articleurl", "href", "link")
+		if !validImportURL(link) {
+			continue
+		}
+		title := csvField(record, headers, "title", "booktitle", "documenttitle", "article")
+		result = append(result, importURL{URL: link, Title: title, Source: source})
+	}
+	return dedupeImportURLs(result)
+}
+
+func hasImportHeader(headers map[string]int, keys ...string) bool {
+	for _, key := range keys {
+		if _, ok := headers[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeImportHeader(value string) string {
+	return strings.Map(func(r rune) rune {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			return r
+		}
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return -1
+	}, value)
+}
+
+func csvField(record []string, headers map[string]int, keys ...string) string {
+	for _, key := range keys {
+		if index, ok := headers[key]; ok && index >= 0 && index < len(record) {
+			if value := strings.TrimSpace(record[index]); value != "" {
+				return value
+			}
+		}
+	}
+	return ""
+}
+
+func dedupeImportURLs(items []importURL) []importURL {
+	seen := map[string]bool{}
+	var result []importURL
+	for _, item := range items {
+		key := strings.TrimSpace(item.URL)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		result = append(result, item)
+	}
+	return result
+}
+
 func detectImportSource(raw string) string {
 	lower := strings.ToLower(raw)
 	switch {
+	case strings.Contains(lower, "<opml"):
+		return "opml"
+	case strings.Contains(lower, "<rss"):
+		return "rss"
+	case strings.Contains(lower, "<feed") && strings.Contains(lower, "http://www.w3.org/2005/atom"):
+		return "atom"
+	case strings.Contains(lower, "readwise"):
+		return "readwise"
+	case strings.Contains(lower, "kindle"):
+		return "kindle"
 	case strings.Contains(lower, "pocket"):
 		return "pocket"
 	case strings.Contains(lower, "raindrop"):
@@ -1204,6 +1455,9 @@ func listValue(value any) []any {
 }
 
 func stringSlice(value any) []string {
+	if typed, ok := value.([]string); ok {
+		return typed
+	}
 	values := []string{}
 	for _, item := range listValue(value) {
 		if text := strings.TrimSpace(stringValue(item)); text != "" {

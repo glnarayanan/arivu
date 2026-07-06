@@ -2,10 +2,10 @@
 
 Keep this file lean. Load focused docs under `openwiki/` when needed.
 
-## Documentation
+## OpenWiki
 
-Start with [OpenWiki quickstart](openwiki/quickstart.md) for codebase
-orientation, runbooks, policy, design, migration, and reference docs.
+Start with [OpenWiki quickstart](openwiki/quickstart.md), then follow its
+focused links for architecture, workflows, domain, operations, and testing.
 
 ## Working Rules
 

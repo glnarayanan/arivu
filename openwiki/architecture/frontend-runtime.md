@@ -11,6 +11,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   legacy `/favicon.ico` requests.
 - `manifest.webmanifest`: installable PWA metadata and GET share-target
   definition for mobile/browser capture into `/dashboard`.
+- `sw.js`: service worker that caches the app shell and bypasses `/api/*`
+  requests so authenticated data is never cached by the browser worker.
 - `app.js` UI primitives: toasts, modal dialogs, destructive confirmations,
   focus trapping, menu roving focus, settings tabs, escape handling, and route
   cleanup for global listeners.
@@ -34,6 +36,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - Route changes update the document title, announce the active route, and move
   focus to the main content after internal navigation or browser history
   navigation.
+- The Actions button and `Cmd/Ctrl+K` open the command palette. Palette commands
+  reuse existing bookmark, note, search, action item, reminder, link, and
+  link-target APIs; current-item commands appear only on bookmark and note
+  detail routes.
 - Form actions disable the initiating button and swap to specific busy labels.
 - Form failures render inline messages linked to the affected fields with
   `aria-describedby`.
@@ -41,15 +47,29 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   assertive alert semantics.
 - The authenticated shell includes a skip link and marks the active nav item with
   `aria-current="page"`.
+- `/today` is the default signed-in route. It reads `/api/daily-notes/{date}`,
+  `/api/inbox`, `/api/action-items`, `/api/reminders`, `/api/review`,
+  `/api/memory-jogger`, and `/api/notes`, then saves the dated daily note with
+  `PUT /api/daily-notes/{date}`.
 - `/dashboard` pre-fills the save form from PWA share-target `title`, `text`,
   and `url` query parameters. The URL field prefers the explicit `url`
   parameter, then falls back to the first URL found in shared text.
+- If dashboard capture cannot reach the server, the browser stores only the URL,
+  quick note, tags, and queued timestamp in local storage, then replays those
+  saves through `/api/bookmarks` after the signed-in browser is online again.
+- Daily notes, dashboard quick notes, standalone notes, and bookmark-linked
+  notes expose browser-native dictation when Web Speech recognition is
+  available. Audio stays in the browser/platform recognizer; Arivu only receives
+  the resulting text after the normal save action.
 - Dashboard retrieval supports query, tag, domain, source, read-status, and
   saved-date range filters, saving the current search, replaying saved searches,
   and a cited answer panel sourced only from matching saved items. Cited answers
   synthesize from saved summaries, highlights, snippets, and standalone notes
   while keeping citations back to the source items. Bookmark-only filters such
   as tag, domain, source, and read status keep results bookmark-scoped.
+- Cited-answer citations and Review cards expose feedback controls that call
+  `POST /api/feedback`. Result metadata includes why-shown labels, freshness
+  score, and current feedback state.
 - `/notes` is the compact standalone-note list. `/notes/:id` is the full note
   workspace for editing, action items, reminders, explicit links, backlinks,
   note-to-note links, and note-to-bookmark links. Link selectors call
@@ -58,10 +78,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   `/notes/:id` for compatibility.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
-  AI-processed, failed, completed status counters, source report chips, and
-  bounded item provenance for the import just submitted, download or restore
-  full JSON backups with second-brain data, or download CSV, browser HTML, and
-  Markdown bookmark interchange exports. Obsidian ZIP export downloads
+  AI-processed, failed, completed status counters, native progress bars, source
+  report chips, and bounded item provenance for the import just submitted,
+  download or restore full JSON backups with second-brain data, or download
+  CSV, browser HTML, and Markdown bookmark interchange exports. Obsidian ZIP export downloads
   vault-ready bookmark and note folders with explicit graph links as wikilinks
   from the same export route.
 - Settings tags uses native forms to create primary tags and add aliases to

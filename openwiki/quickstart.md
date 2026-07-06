@@ -18,8 +18,7 @@ Use the following section pages to explore specific areas of the repository:
 - **[Frontend Runtime](architecture/frontend-runtime.md)**: browser runtime rules, route behavior, and smoke checks.
 - **[Domain & Processing Workflows](domain/bookmarks-sync.md)**: semantic graph generation, collections, duplicate grouping, and direct-HTTP providers.
 - **[Second-Brain Loop](workflows/second-brain-loop.md)**: Capture, Inbox, Focus, Review, Notes, and bulk triage workflow.
-- **[Legacy Migration](domain/migration.md)**: legacy JSON export parser, Fernet secret decryption, validation rules, and SQLite ingestion.
-- **[Migration Guide](domain/migration-guide.md)**: command reference and cutover guarantees.
+- **[Migration Guide](domain/migration-guide.md)**: legacy JSON export parser, Fernet secret decryption, validation rules, command reference, and cutover guarantees.
 - **[Deployment](operations/deployment.md)**: local, container, and systemd deployment.
 - **[Dependency Policy](operations/dependency-policy.md)**: accepted dependencies and supply-chain checks.
 - **[GitHub Wiki Publishing](operations/github-wiki.md)**: mapping OpenWiki pages into the public GitHub Wiki.

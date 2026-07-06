@@ -395,9 +395,21 @@ input, select, textarea {
   padding: var(--space-3);
   font: 600 1rem/1.25 var(--font-ui);
 }
+progress {
+  width: 100%;
+  height: var(--space-3);
+  border: 2px solid var(--ink);
+  background: var(--panel);
+}
+progress::-webkit-progress-bar { background: var(--panel); }
+progress::-webkit-progress-value { background: var(--accent-2); }
+progress::-moz-progress-bar { background: var(--accent-2); }
 input::placeholder, textarea::placeholder {
   color: var(--placeholder);
   opacity: 1;
+}
+.voice-button {
+  justify-self: start;
 }
 .form-message {
   margin: 0;
@@ -710,6 +722,25 @@ input::placeholder, textarea::placeholder {
 .dialog-body {
   margin: var(--space-4) 0;
   line-height: 1.55;
+}
+.command-palette {
+  display: grid;
+  gap: var(--space-4);
+}
+.command-palette section,
+.command-palette form {
+  border-top: 2px solid var(--line-soft);
+  padding-top: var(--space-4);
+}
+.command-palette section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+.command-palette h3 {
+  font: 800 1rem/1 var(--font-ui);
+  margin: 0 0 var(--space-3);
+  text-transform: uppercase;
+  letter-spacing: 0;
 }
 .menu {
   position: absolute;

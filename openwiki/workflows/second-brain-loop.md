@@ -2,10 +2,20 @@
 
 Arivu's working loop is:
 
-1. Capture a bookmark or standalone note.
-2. Triage it in Inbox by setting stage, importance, and next action.
-3. Work from Focus when an item has tasks or reminders.
-4. Let Review bring back high-signal, due, stale, or older material.
+1. Start from Today to plan the day and see the active loop.
+2. Capture a bookmark or standalone note.
+3. Triage it in Inbox by setting stage, importance, and next action.
+4. Work from Focus when an item has tasks or reminders.
+5. Let Review bring back high-signal, due, stale, or older material.
+
+## Today
+
+`/today` is the default signed-in landing page. It aggregates the existing
+Inbox, Focus, Review, recent notes, and memory-jogger surfaces without replacing
+their deeper workflows. Each day has one dated daily note at
+`/api/daily-notes/{YYYY-MM-DD}` for planning, decisions, and loose thoughts.
+Daily notes are scoped to the authenticated user and use the same web CSRF and
+write-quota protections as normal notes.
 
 ## Capture
 
@@ -46,3 +56,6 @@ Review prioritizes processed or processing items, high importance, explicit next
 actions, due reminders, stale action items, older unreviewed notes, and the
 resurfacing score. Each item returns `review_reasons` and `review_priority` so
 the UI can explain why it came back.
+Review cards and cited-answer citations can store recall feedback. Useful items
+rank higher, not-useful and snooze-longer items rank lower, and never-resurface
+items are omitted from future Review queues without deleting their source data.

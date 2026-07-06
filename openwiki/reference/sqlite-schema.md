@@ -14,6 +14,7 @@ with foreign keys.
 - `bookmark_accesses`: access history.
 - `bookmark_entities` and `bookmark_concepts`: normalized graph terms.
 - `notes` and `bookmark_notes`: standalone Markdown/plain-text notes plus optional bookmark links.
+- `daily_notes`: one dated planning note per user and calendar day for the Today cockpit.
 - `annotations`: quoted text, user notes, selector metadata, and optional tag labels attached to bookmarks.
 - `tags`, `tag_aliases`, and `bookmark_tags`: normalized per-user tags with aliases so provider suggestions and manual tags converge instead of creating synonym clutter.
 - `saved_searches`: named user searches with structured filter JSON.
@@ -26,6 +27,8 @@ with foreign keys.
   including normalized title, body, tags, link text, source, and update time.
 - `search_fts`: optional FTS5 mirror of `search_index` used for ranked
   full-text retrieval when the local SQLite build supports FTS5.
+- `result_feedback`: per-user recall feedback for bookmark/note results across
+  search, cited answers, and review.
 - `reminders`: due reminders for bookmarks and notes with stored timezone,
   recurrence, notification channel, last-notified, and last-completed state.
 - `action_items`: durable completable tasks attached to bookmarks or notes.
@@ -85,6 +88,10 @@ with foreign keys.
 - `/api/search/items` is read-only and reads the maintained index. `/api/search/rebuild`
   is the quota-protected repair path for imports or operator repair and is the
   only web route that rebuilds search rows directly.
+- Search and cited-answer results include `why_shown`, `freshness_score`, and
+  `feedback_state` metadata. `POST /api/feedback` stores user-scoped result
+  feedback; `never_resurface` suppresses future Review appearances without
+  deleting the source item.
 - Imports use the same `safefetch` URL validation policy as normal saves before
   inserting any bookmark or queuing a fetch job. Queued import bookmark jobs
   carry the owning import job ID so background processing can update progress

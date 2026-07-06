@@ -21,6 +21,59 @@ const (
 	maxActionPayload = 20_000
 )
 
+func (s *Service) GetDailyNote(w http.ResponseWriter, r *http.Request, user auth.User) {
+	date, ok := dailyNoteDate(r.PathValue("date"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Invalid date")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"daily_note": s.dailyNote(r.Context(), user.ID, date)})
+}
+
+func (s *Service) SaveDailyNote(w http.ResponseWriter, r *http.Request, user auth.User) {
+	date, ok := dailyNoteDate(r.PathValue("date"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "Invalid date")
+		return
+	}
+	var body struct {
+		Body string `json:"body"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	text := strings.TrimSpace(body.Body)
+	if len(text) > maxNoteBody {
+		writeError(w, http.StatusBadRequest, "Daily note is too large")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, err := s.db.ExecContext(r.Context(), `INSERT INTO daily_notes(user_id,note_date,body,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id,note_date) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at`, user.ID, date, text, now, now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not save daily note")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"daily_note": s.dailyNote(r.Context(), user.ID, date)})
+}
+
+func (s *Service) dailyNote(ctx context.Context, userID, date string) map[string]any {
+	var body, created, updated sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT body,created_at,updated_at FROM daily_notes WHERE user_id=? AND note_date=?`, userID, date).Scan(&body, &created, &updated)
+	if err != nil {
+		return map[string]any{"date": date, "body": "", "created_at": "", "updated_at": ""}
+	}
+	return map[string]any{"date": date, "body": body.String, "created_at": created.String, "updated_at": updated.String}
+}
+
+func dailyNoteDate(raw string) (string, bool) {
+	parsed, err := time.Parse("2006-01-02", raw)
+	if err != nil || parsed.Format("2006-01-02") != raw {
+		return "", false
+	}
+	return raw, true
+}
+
 func (s *Service) Notes(w http.ResponseWriter, r *http.Request, user auth.User) {
 	rows, err := s.db.QueryContext(r.Context(), `SELECT n.id,n.title,n.body,n.source,n.created_at,n.updated_at,COALESCE(bn.bookmark_id,'') FROM notes n LEFT JOIN bookmark_notes bn ON bn.note_id=n.id AND bn.user_id=n.user_id WHERE n.user_id=? ORDER BY n.updated_at DESC LIMIT 200`, user.ID)
 	if err != nil {
@@ -438,6 +491,9 @@ func (s *Service) reviewItems(ctx context.Context, userID string, limit int) ([]
 		item["item_type"] = "bookmark"
 		item["item_state"] = s.itemState(ctx, userID, "bookmark", id)
 		s.decorateReviewItem(ctx, userID, item)
+		if stringValue(item["feedback_state"]) == "never_resurface" {
+			continue
+		}
 		items = append(items, item)
 	}
 	notes, err := s.reviewNotes(ctx, userID, limit)
@@ -446,6 +502,9 @@ func (s *Service) reviewItems(ctx context.Context, userID string, limit int) ([]
 	}
 	for _, note := range notes {
 		s.decorateReviewItem(ctx, userID, note)
+		if stringValue(note["feedback_state"]) == "never_resurface" {
+			continue
+		}
 		items = append(items, note)
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -518,11 +577,29 @@ func (s *Service) decorateReviewItem(ctx context.Context, userID string, item ma
 	if reason := strings.TrimSpace(stringValue(item["resurfacing_reason"])); reason != "" {
 		reasons = append(reasons, reason)
 	}
+	feedback := s.anyFeedbackState(ctx, userID, itemType, itemID)
+	item["feedback_state"] = feedback
+	switch feedback {
+	case "useful":
+		reasons = append(reasons, "marked useful")
+		score += 10
+	case "not_useful":
+		reasons = append(reasons, "marked not useful")
+		score -= 20
+	case "snooze_longer":
+		reasons = append(reasons, "asked to snooze longer")
+		score -= 30
+	case "never_resurface":
+		reasons = append(reasons, "never resurface")
+		score -= 100
+	}
 	if len(reasons) == 0 {
 		reasons = append(reasons, "ready for review")
 	}
 	item["review_reasons"] = reasons
 	item["review_priority"] = roundFloat(score, 2)
+	item["freshness_score"] = freshnessScore(stringValue(item["updated_at"]))
+	item["why_shown"] = reasons
 }
 
 func (s *Service) Inbox(w http.ResponseWriter, r *http.Request, user auth.User) {

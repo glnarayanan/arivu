@@ -14,12 +14,17 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
 - `styles.css`: Hardened stylesheet implementing structural layouts with support for theme scaling.
 - `favicon.svg`: Icon asset.
 - `manifest.webmanifest`: PWA metadata plus a GET share target for mobile/browser capture into the dashboard.
+- `sw.js`: app-shell cache for offline startup; `/api/*` is network-only.
 
 ### Product Routes
 
+- `/today`: default signed-in cockpit with the dated daily note, Inbox count,
+  due/open work loops, Review items, recent notes, memory jogger, and links into
+  the deeper Capture, Inbox, Focus, Review, Notes, and Assistant routes.
 - `/dashboard`: capture-first cockpit for URL saves, quick notes, manual tags,
   PWA share-target prefill, visible processing status, saved-page search,
-  collapsible filters, and collapsible saved-search management.
+  voice dictation into the quick note, collapsible filters, and collapsible
+  saved-search management.
 - `/inbox`: capture triage for bookmarks and notes, with per-item stage,
   priority, next action controls, inline action items, bulk selection, and
   keyboard triage for stage changes.
@@ -37,6 +42,9 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
   timezone-aware due times, recurrence, in-app/email channel selection, inline
   edits, snooze, completion, and deletion. Link selectors use slim
   `/api/link-targets` reads rather than full archive rows.
+- Command palette: the global Actions button and `Cmd/Ctrl+K` expose route
+  jumps, capture, note creation, search/cited answer, and current-item task,
+  reminder, and link creation through existing APIs.
 - `/notes`: compact standalone-note list. `/notes/:id` is the full note
   workspace for editing, action items, reminders, explicit links, backlinks,
   note-to-note links, and note-to-bookmark links. Reminder controls match
@@ -44,7 +52,8 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
   `/notes?note=<id>` redirects to `/notes/:id` for compatibility.
 - `/review`: daily review queue with complete and snooze actions, "why this
   came back" reason labels, priority metadata, and inline task/reminder
-  controls.
+  controls. Review and cited-answer cards expose recall feedback controls that
+  persist through `/api/feedback`.
 - `/duplicates`: duplicate groups and merge workflow.
 - `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.
 - `/analytics`: summary counts, topics, and actionable insight signals.

@@ -274,12 +274,15 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		return
 	}
 	type citation struct {
-		ID      string `json:"id"`
-		Type    string `json:"type"`
-		Title   string `json:"title"`
-		URL     string `json:"url"`
-		Domain  string `json:"domain"`
-		Snippet string `json:"snippet"`
+		ID             string   `json:"id"`
+		Type           string   `json:"type"`
+		Title          string   `json:"title"`
+		URL            string   `json:"url"`
+		Domain         string   `json:"domain"`
+		Snippet        string   `json:"snippet"`
+		WhyShown       []string `json:"why_shown"`
+		FreshnessScore float64  `json:"freshness_score"`
+		FeedbackState  string   `json:"feedback_state"`
 	}
 	var citations []citation
 	for _, result := range results {
@@ -288,7 +291,7 @@ func (s *Service) SearchAnswer(w http.ResponseWriter, r *http.Request, user auth
 		title := stringValue(result["title"])
 		source := stringValue(result["source"])
 		snippet := stringValue(result["snippet"])
-		cite := citation{ID: id, Type: itemType, Title: title, Domain: source, Snippet: snippet}
+		cite := citation{ID: id, Type: itemType, Title: title, Domain: source, Snippet: snippet, WhyShown: stringSlice(result["why_shown"]), FreshnessScore: numberValue(result["freshness_score"]), FeedbackState: s.feedbackState(r.Context(), user.ID, itemType, id, "answer")}
 		if itemType == "bookmark" {
 			_ = s.db.QueryRowContext(r.Context(), `SELECT url,domain FROM bookmarks WHERE id=? AND user_id=?`, id, user.ID).Scan(&cite.URL, &cite.Domain)
 		}
@@ -819,7 +822,7 @@ func (s *Service) duplicateCandidates(ctx context.Context, userID string) ([]dup
 	var candidates []duplicateBookmark
 	for rows.Next() {
 		var embedding []byte
-		bm := scanBookmarkWithEmbedding(rows, &embedding)
+		bm := scanBookmarkRow(rows, &embedding)
 		if bm["id"] == "" {
 			continue
 		}
@@ -838,7 +841,7 @@ func (s *Service) graphBookmark(ctx context.Context, userID, bookmarkID string) 
 		return graphBookmark{}, errors.New("not found")
 	}
 	var embedding []byte
-	data := scanBookmarkWithEmbedding(rows, &embedding)
+	data := scanBookmarkRow(rows, &embedding)
 	scanErr := rows.Err()
 	if err := rows.Close(); err != nil {
 		return graphBookmark{}, err
@@ -874,7 +877,7 @@ func (s *Service) graphBookmarks(ctx context.Context, userID string, limit int, 
 	var ids []string
 	for rows.Next() {
 		var embedding []byte
-		data := scanBookmarkWithEmbedding(rows, &embedding)
+		data := scanBookmarkRow(rows, &embedding)
 		id, _ := data["id"].(string)
 		if id == "" {
 			continue
@@ -936,10 +939,6 @@ func (s *Service) graphTerms(ctx context.Context, userID, table, column string, 
 		}
 	}
 	return result, rows.Err()
-}
-
-func scanBookmarkWithEmbedding(row scanner, embedding *[]byte) map[string]any {
-	return scanBookmarkRow(row, embedding)
 }
 
 func duplicatePayloads(bookmarks []duplicateBookmark) []map[string]any {
