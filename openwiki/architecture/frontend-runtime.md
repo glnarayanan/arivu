@@ -82,14 +82,20 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   `/api/link-targets` for slim id/title target rows instead of loading full note
   bodies or bookmark archive content. `/notes?note=<id>` redirects to
   `/notes/:id` for compatibility.
+- `/objects` lists and creates typed knowledge objects with small JSON fields
+  and optional source item links. `/board` renders the fixed Today board from
+  `/api/today-board`, and `/evolution` queries `/api/evolution` to line up a
+  topic across daily notes, bookmarks, notes, decisions, meetings, and objects.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
   AI-processed, failed, completed status counters, native progress bars, source
   report chips, and bounded item provenance for the import just submitted,
-  download or restore full JSON backups with second-brain data, or download
-  CSV, browser HTML, and Markdown bookmark interchange exports. Obsidian ZIP export downloads
-  vault-ready bookmark and note folders with explicit graph links as wikilinks
-  from the same export route.
+  upload document/media imports through `/api/media/import`, paste ICS calendar
+  exports through `/api/calendar/import`, download or restore full JSON backups
+  with second-brain data, or download CSV, browser HTML, and Markdown bookmark
+  interchange exports. Obsidian ZIP export downloads vault-ready bookmark and
+  note folders with explicit graph links as wikilinks from the same export
+  route.
 - Settings tags uses native forms to create primary tags and add aliases to
   existing tags through the normalized tag APIs.
 - Settings profile uses the existing profile and password-change routes; Settings

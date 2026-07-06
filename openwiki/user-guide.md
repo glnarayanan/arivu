@@ -54,6 +54,14 @@ Use `/notes` for standalone thoughts that do not start from a URL. `/notes/:id`
 is the full note workspace for editing, tasks, reminders, note links, backlinks,
 and note-to-bookmark links.
 
+Use `/objects` when a note or bookmark needs to become a typed thing: project,
+person, book, meeting, decision, or research thread. Objects have a title,
+description, optional source item, and small JSON fields for local structure.
+Use `/board` for a fixed working board that groups Inbox, Working, Review,
+recent decisions, and recent meetings. Use `/evolution?q=topic` to see how a
+topic appears across daily notes, saved pages, notes, meetings, decisions, and
+objects over time.
+
 Use `/today` for the daily operating note. It is intentionally separate from the
 standalone note list: one dated note per user per day, optimized for planning
 and end-of-day wrap-up rather than long-term knowledge pages.
@@ -100,6 +108,14 @@ or paste a YouTube/video transcript or OCR text. Arivu stores the result as a
 normal note with a `media:*` source so it appears in Inbox, search, export, and
 review. Image uploads use pasted OCR text when provided; if Gemini is configured,
 Arivu can attempt image text extraction automatically.
+
+Calendar imports accept pasted ICS text and create meeting objects with UID,
+start, end, location, description, and source fields.
+
+CLI tokens can call the agent-oriented `/api/agent/*` routes for scoped search,
+reading saved bookmarks/notes, creating notes, adding tasks/reminders, and
+recording decisions. These routes are intended as the HTTP surface for a thin
+MCP wrapper rather than a separate automation platform.
 
 Legacy Arivu migrations use the JSON export path documented in
 `domain/migration-guide.md`.

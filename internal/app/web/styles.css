@@ -516,6 +516,19 @@ input::placeholder, textarea::placeholder {
 .compact-grid {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
 }
+.board-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: var(--space-4);
+  align-items: start;
+}
+.board-column {
+  min-height: 18rem;
+}
+.compact-object {
+  padding: var(--space-3);
+  box-shadow: none;
+}
 .table-wrap {
   border: 2px solid var(--ink);
   box-shadow: var(--shadow-sm);

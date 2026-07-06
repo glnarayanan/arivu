@@ -59,6 +59,16 @@ Second-brain v1 adds user-authored context around bookmarks:
 - The Notes list is compact. `/notes/:id` owns note editing, action items,
   reminders, explicit note links, backlinks, note-to-note links, and
   note-to-bookmark links.
+- Knowledge objects add a lightweight typed layer over saved information.
+  `/api/objects` stores per-user project, person, book, meeting, decision, and
+  research-thread objects with title, description, JSON fields, and optional
+  source bookmark/note/object references.
+- `/api/calendar/import` parses pasted ICS `VEVENT` entries into meeting
+  objects, preserving UID, start, end, location, description, and source fields.
+- `/api/evolution` builds a topic timeline from daily notes, saved pages, notes,
+  and knowledge objects so a thought can be traced across weeks or months.
+- `/api/today-board` returns a fixed local board with Inbox, Working, Review,
+  recent decisions, and recent meetings before any infinite canvas exists.
 - The Focus page reads action items and reminders through existing APIs and
   supports pending, overdue, today, upcoming, and completed views.
 - Assistant suggestions generate inert drafts from an item, search query, Inbox
@@ -93,6 +103,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - High-risk writes use lightweight SQLite mutation quotas before expensive work
   begins, including bookmark preview, import, saves, notes, inbox updates,
   links, reminders, and assistant proposal/approval.
+- CLI-audience `/api/agent/*` routes expose scoped search, bookmark/note reads,
+  note creation, action-item creation, reminder creation, and decision
+  recording so an MCP wrapper can operate Arivu without web-session access.
 
 ## User Imports And Exports
 

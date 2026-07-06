@@ -161,6 +161,22 @@ CREATE TABLE IF NOT EXISTS daily_notes (
 
 CREATE INDEX IF NOT EXISTS idx_daily_notes_user_updated ON daily_notes(user_id, updated_at DESC);
 
+CREATE TABLE IF NOT EXISTS knowledge_objects (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  object_type TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  fields_json TEXT NOT NULL DEFAULT '{}',
+  source_item_type TEXT NOT NULL DEFAULT '',
+  source_item_id TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_objects_user_type ON knowledge_objects(user_id, object_type, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_knowledge_objects_user_updated ON knowledge_objects(user_id, updated_at DESC);
+
 CREATE TABLE IF NOT EXISTS bookmark_notes (
   bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
   note_id TEXT NOT NULL REFERENCES notes(id) ON DELETE CASCADE,

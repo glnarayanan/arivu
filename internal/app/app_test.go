@@ -387,6 +387,157 @@ func TestMediaImportCreatesSearchableNotes(t *testing.T) {
 	}
 }
 
+func TestKnowledgeObjectsEvolutionCalendarAndAgentRoutes(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "objects@example.com")
+	otherAccess, otherCSRF := signupForCookies(t, handler, "objects-other@example.com")
+
+	noteResp := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Roadmap note","body":"Roadmap changed after the launch review."}`, accessCookie, csrfCookie)
+	if noteResp.StatusCode != http.StatusOK {
+		t.Fatalf("note status = %d body=%s", noteResp.StatusCode, readBody(noteResp))
+	}
+	var noteBody struct {
+		Note map[string]any `json:"note"`
+	}
+	_ = json.NewDecoder(noteResp.Body).Decode(&noteBody)
+	noteResp.Body.Close()
+	noteID, _ := noteBody.Note["id"].(string)
+	if noteID == "" {
+		t.Fatalf("note missing id: %#v", noteBody.Note)
+	}
+
+	objectResp := adminRequest(t, handler, http.MethodPost, "/api/objects", fmt.Sprintf(`{"object_type":"project","title":"Roadmap","description":"Roadmap object for launch","fields":{"status":"active"},"source_item_type":"note","source_item_id":%q}`, noteID), accessCookie, csrfCookie)
+	if objectResp.StatusCode != http.StatusOK {
+		t.Fatalf("object status = %d body=%s", objectResp.StatusCode, readBody(objectResp))
+	}
+	var objectBody struct {
+		Object map[string]any `json:"object"`
+	}
+	_ = json.NewDecoder(objectResp.Body).Decode(&objectBody)
+	objectResp.Body.Close()
+	if objectBody.Object["object_type"] != "project" || objectBody.Object["source_item_id"] != noteID {
+		t.Fatalf("unexpected object: %#v", objectBody.Object)
+	}
+	crossObject := adminRequest(t, handler, http.MethodPost, "/api/objects", fmt.Sprintf(`{"object_type":"project","title":"Bad source","source_item_type":"note","source_item_id":%q}`, noteID), otherAccess, otherCSRF)
+	if crossObject.StatusCode != http.StatusBadRequest {
+		t.Fatalf("cross-user object source status = %d body=%s", crossObject.StatusCode, readBody(crossObject))
+	}
+	crossObject.Body.Close()
+
+	listResp := adminRequest(t, handler, http.MethodGet, "/api/objects?type=project&q=Roadmap", "", accessCookie, csrfCookie)
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("object list status = %d body=%s", listResp.StatusCode, readBody(listResp))
+	}
+	var listBody struct {
+		Objects []map[string]any `json:"objects"`
+	}
+	_ = json.NewDecoder(listResp.Body).Decode(&listBody)
+	listResp.Body.Close()
+	if len(listBody.Objects) != 1 {
+		t.Fatalf("object list missing project: %#v", listBody.Objects)
+	}
+
+	daily := adminRequest(t, handler, http.MethodPut, "/api/daily-notes/2026-07-06", `{"body":"Roadmap decision moved to the next milestone."}`, accessCookie, csrfCookie)
+	if daily.StatusCode != http.StatusOK {
+		t.Fatalf("daily note status = %d body=%s", daily.StatusCode, readBody(daily))
+	}
+	daily.Body.Close()
+	ics := "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:meeting-1\nSUMMARY:Roadmap review\nDTSTART:20260706T090000Z\nDTEND:20260706T093000Z\nLOCATION:Studio\nDESCRIPTION:Roadmap meeting notes\nEND:VEVENT\nEND:VCALENDAR"
+	calendarResp := adminRequest(t, handler, http.MethodPost, "/api/calendar/import", fmt.Sprintf(`{"ics":%q,"source":"calendar.ics"}`, ics), accessCookie, csrfCookie)
+	if calendarResp.StatusCode != http.StatusOK {
+		t.Fatalf("calendar status = %d body=%s", calendarResp.StatusCode, readBody(calendarResp))
+	}
+	var calendarBody struct {
+		Count   int              `json:"count"`
+		Objects []map[string]any `json:"objects"`
+	}
+	_ = json.NewDecoder(calendarResp.Body).Decode(&calendarBody)
+	calendarResp.Body.Close()
+	if calendarBody.Count != 1 || calendarBody.Objects[0]["object_type"] != "meeting" {
+		t.Fatalf("calendar did not create meeting object: %#v", calendarBody)
+	}
+
+	evolutionResp := adminRequest(t, handler, http.MethodGet, "/api/evolution?q=Roadmap", "", accessCookie, csrfCookie)
+	if evolutionResp.StatusCode != http.StatusOK {
+		t.Fatalf("evolution status = %d body=%s", evolutionResp.StatusCode, readBody(evolutionResp))
+	}
+	var evolutionBody struct {
+		Timeline []map[string]any `json:"timeline"`
+	}
+	_ = json.NewDecoder(evolutionResp.Body).Decode(&evolutionBody)
+	evolutionResp.Body.Close()
+	if len(evolutionBody.Timeline) < 3 {
+		t.Fatalf("evolution missing timeline entries: %#v", evolutionBody.Timeline)
+	}
+
+	cliToken := bodyToken(t, handler, http.MethodPost, "/api/auth/cli/login", `{"email":"objects@example.com","password":"correct horse battery staple"}`, "")
+	agentNoteResp := bearerRequest(t, handler, http.MethodPost, "/api/agent/notes", `{"title":"Agent note","body":"Agent roadmap context"}`, cliToken)
+	if agentNoteResp.StatusCode != http.StatusOK {
+		t.Fatalf("agent note status = %d body=%s", agentNoteResp.StatusCode, readBody(agentNoteResp))
+	}
+	var agentNoteBody struct {
+		Note map[string]any `json:"note"`
+	}
+	_ = json.NewDecoder(agentNoteResp.Body).Decode(&agentNoteBody)
+	agentNoteResp.Body.Close()
+	agentNoteID, _ := agentNoteBody.Note["id"].(string)
+	if agentNoteID == "" {
+		t.Fatalf("agent note missing id: %#v", agentNoteBody.Note)
+	}
+	if resp := bearerRequest(t, handler, http.MethodGet, "/api/agent/notes/"+agentNoteID, "", cliToken); resp.StatusCode != http.StatusOK {
+		t.Fatalf("agent read note status = %d body=%s", resp.StatusCode, readBody(resp))
+	} else {
+		resp.Body.Close()
+	}
+	if resp := bearerRequest(t, handler, http.MethodGet, "/api/agent/search?q=roadmap&type=note", "", cliToken); resp.StatusCode != http.StatusOK {
+		t.Fatalf("agent search status = %d body=%s", resp.StatusCode, readBody(resp))
+	} else {
+		resp.Body.Close()
+	}
+	if resp := bearerRequest(t, handler, http.MethodPost, "/api/agent/action-items", fmt.Sprintf(`{"item_type":"note","item_id":%q,"title":"Agent task"}`, agentNoteID), cliToken); resp.StatusCode != http.StatusOK {
+		t.Fatalf("agent action item status = %d body=%s", resp.StatusCode, readBody(resp))
+	} else {
+		resp.Body.Close()
+	}
+	dueAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
+	if resp := bearerRequest(t, handler, http.MethodPost, "/api/agent/reminders", fmt.Sprintf(`{"item_type":"note","item_id":%q,"due_at":%q,"timezone":"UTC","note":"Agent reminder"}`, agentNoteID, dueAt), cliToken); resp.StatusCode != http.StatusOK {
+		t.Fatalf("agent reminder status = %d body=%s", resp.StatusCode, readBody(resp))
+	} else {
+		resp.Body.Close()
+	}
+	if resp := bearerRequest(t, handler, http.MethodPost, "/api/agent/decisions", `{"title":"Agent decision","decision":"Roadmap stays local-first","rationale":"Keeps ownership clear"}`, cliToken); resp.StatusCode != http.StatusOK {
+		t.Fatalf("agent decision status = %d body=%s", resp.StatusCode, readBody(resp))
+	} else {
+		resp.Body.Close()
+	}
+
+	boardResp := adminRequest(t, handler, http.MethodGet, "/api/today-board", "", accessCookie, csrfCookie)
+	if boardResp.StatusCode != http.StatusOK {
+		t.Fatalf("board status = %d body=%s", boardResp.StatusCode, readBody(boardResp))
+	}
+	var boardBody struct {
+		Columns []map[string]any `json:"columns"`
+	}
+	_ = json.NewDecoder(boardResp.Body).Decode(&boardBody)
+	boardResp.Body.Close()
+	if len(boardBody.Columns) != 5 {
+		t.Fatalf("unexpected board columns: %#v", boardBody.Columns)
+	}
+}
+
 func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
@@ -429,11 +580,13 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	}{
 		{"cli bookmark web route", cliToken, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com"}`},
 		{"cli notes web route", cliToken, http.MethodGet, "/api/notes", ``},
+		{"cli objects web route", cliToken, http.MethodGet, "/api/objects", ``},
 		{"cli search items web route", cliToken, http.MethodGet, "/api/search/items?q=test", ``},
 		{"cli search rebuild web route", cliToken, http.MethodPost, "/api/search/rebuild", `{}`},
 		{"cli admin web route", cliToken, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"x"}`},
 		{"extension bookmark web route", extensionToken, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com"}`},
 		{"extension notes web route", extensionToken, http.MethodGet, "/api/notes", ``},
+		{"extension agent search route", extensionToken, http.MethodGet, "/api/agent/search?q=test", ``},
 		{"extension search items web route", extensionToken, http.MethodGet, "/api/search/items?q=test", ``},
 		{"extension search rebuild web route", extensionToken, http.MethodPost, "/api/search/rebuild", `{}`},
 		{"extension admin web route", extensionToken, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"x"}`},
@@ -2489,7 +2642,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `id="calendar-import-form"`, `function bindCalendarImportPanel`, `/calendar/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `prefix: "/objects"`, `async function objectsPage()`, `id="object-form"`, `/objects`, `prefix: "/evolution"`, `async function evolutionPage()`, `/evolution?q=`, `prefix: "/board"`, `async function boardPage()`, `/today-board`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}

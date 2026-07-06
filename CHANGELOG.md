@@ -69,6 +69,9 @@ All notable changes to this project will be documented in this file.
   second-brain views remain readable when offline.
 - Added source-jump controls and text-quote selector metadata for reader
   annotations captured from archived page selections.
+- Added typed knowledge objects, topic evolution, a fixed Today board, ICS
+  meeting import, and CLI-audience agent routes for scoped search, reads, notes,
+  tasks, reminders, and decision recording.
 
 ### Changed
 
