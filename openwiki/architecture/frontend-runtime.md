@@ -31,6 +31,12 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - API calls use `fetch` with `credentials: "include"`.
 - CSRF headers are injected from the `csrf_token` cookie when present.
 - A single refresh retry is attempted after a protected API route returns 401.
+- Authenticated GET reads for saved pages, notes, Today data, Review, Inbox,
+  work queues, reminders, memory jogger, and typed search write bounded
+  `localStorage` snapshots after successful online responses. If a later fetch
+  fails, the API helper returns the latest local snapshot and announces that the
+  UI is showing a recent offline copy. Auth, writes, and admin reads are not
+  served from this cache.
 - Interactive controls are native elements unless custom behavior is required.
 - Route changes expose a top progress marker while async page work is pending.
 - Route changes update the document title, announce the active route, and move
@@ -76,14 +82,20 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   `/api/link-targets` for slim id/title target rows instead of loading full note
   bodies or bookmark archive content. `/notes?note=<id>` redirects to
   `/notes/:id` for compatibility.
+- `/objects` lists and creates typed knowledge objects with small JSON fields
+  and optional source item links. `/board` renders the fixed Today board from
+  `/api/today-board`, and `/evolution` queries `/api/evolution` to line up a
+  topic across daily notes, bookmarks, notes, decisions, meetings, and objects.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
   AI-processed, failed, completed status counters, native progress bars, source
   report chips, and bounded item provenance for the import just submitted,
-  download or restore full JSON backups with second-brain data, or download
-  CSV, browser HTML, and Markdown bookmark interchange exports. Obsidian ZIP export downloads
-  vault-ready bookmark and note folders with explicit graph links as wikilinks
-  from the same export route.
+  upload document/media imports through `/api/media/import`, paste ICS calendar
+  exports through `/api/calendar/import`, download or restore full JSON backups
+  with second-brain data, or download CSV, browser HTML, and Markdown bookmark
+  interchange exports. Obsidian ZIP export downloads vault-ready bookmark and
+  note folders with explicit graph links as wikilinks from the same export
+  route.
 - Settings tags uses native forms to create primary tags and add aliases to
   existing tags through the normalized tag APIs.
 - Settings profile uses the existing profile and password-change routes; Settings
@@ -102,7 +114,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   panel; annotations, notes, links, tasks, reminders, and related items live in
   disclosure groups. The annotation form can copy the current browser selection
   into the quote field when the selection is fully inside the sanitized reader
-  content, and existing annotations can be edited or deleted inline.
+  content, stores a text-quote selector for saved highlights, and existing
+  annotations can jump back to source text, be edited, or be deleted inline.
 - `/focus` keeps the pending default and adds overdue, today, upcoming, and
   completed views over action items and reminders.
 - `/review` includes the daily memory card from `/api/memory-jogger`, the

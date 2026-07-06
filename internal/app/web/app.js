@@ -5,6 +5,7 @@ const state = {
   focusMainAfterRender: false,
 };
 const offlineQueueKey = "arivu.offline.bookmarks";
+const offlineSnapshotKey = "arivu.offline.snapshots";
 
 const routes = [
   { prefix: "/auth", page: authPage, access: "public" },
@@ -18,6 +19,9 @@ const routes = [
   { prefix: "/assistant", page: assistantPage, access: "protected" },
   { prefix: "/notes/", page: notesPage, access: "protected" },
   { prefix: "/notes", page: notesPage, access: "protected" },
+  { prefix: "/objects", page: objectsPage, access: "protected" },
+  { prefix: "/evolution", page: evolutionPage, access: "protected" },
+  { prefix: "/board", page: boardPage, access: "protected" },
   { prefix: "/review", page: reviewPage, access: "protected" },
   { prefix: "/duplicates", page: duplicatesPage, access: "protected" },
   { prefix: "/settings", page: settingsPage, access: "protected" },
@@ -30,13 +34,19 @@ const routes = [
 async function api(path, options = {}) {
   const { retried = false, ...requestOptions } = options;
   const headers = new Headers(requestOptions.headers || {});
-  if (requestOptions.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const isFormData = typeof FormData !== "undefined" && requestOptions.body instanceof FormData;
+  if (requestOptions.body && !isFormData && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const csrf = getCookie("csrf_token");
   if (csrf) headers.set("X-CSRF-Token", csrf);
   let res;
   try {
     res = await fetch(`/api${path}`, { credentials: "include", ...requestOptions, headers });
   } catch {
+    const cached = readOfflineSnapshot(path, requestOptions);
+    if (cached) {
+      announceOfflineSnapshot();
+      return cached;
+    }
     throw new Error("We couldn't reach Arivu. Check your connection and try again.");
   }
   if (res.status === 401 && !path.startsWith("/auth/") && !retried) {
@@ -55,6 +65,7 @@ async function api(path, options = {}) {
   const data = type.includes("application/json") && text ? JSON.parse(text) : text;
   const detail = typeof data === "object" && data !== null ? data.detail : data;
   if (!res.ok) throw Object.assign(new Error(detail || "Request failed. Try again."), { status: res.status, data });
+  writeOfflineSnapshot(path, requestOptions, data);
   return data;
 }
 
@@ -159,6 +170,61 @@ function setOfflineBookmarkQueue(items) {
 
 function queueOfflineBookmark(payload) {
   setOfflineBookmarkQueue([...offlineBookmarkQueue(), { ...payload, queued_at: new Date().toISOString() }]);
+}
+
+function offlineSnapshotAllowed(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  if (method !== "GET") return false;
+  return [
+    /^\/bookmarks($|\?)/,
+    /^\/bookmarks\/[^/]+($|\/related|\?)/,
+    /^\/notes($|\/|\?)/,
+    /^\/daily-notes\//,
+    /^\/search\/items($|\?)/,
+    /^\/objects($|\/|\?)/,
+    /^\/evolution($|\?)/,
+    /^\/today-board($|\?)/,
+    /^\/review($|\?)/,
+    /^\/inbox($|\?)/,
+    /^\/action-items($|\?)/,
+    /^\/reminders($|\?)/,
+    /^\/memory-jogger($|\?)/,
+  ].some((pattern) => pattern.test(path));
+}
+
+function offlineSnapshots() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(offlineSnapshotKey) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readOfflineSnapshot(path, options = {}) {
+  if (!offlineSnapshotAllowed(path, options)) return null;
+  return offlineSnapshots()[path]?.data || null;
+}
+
+function writeOfflineSnapshot(path, options = {}, data = null) {
+  if (!offlineSnapshotAllowed(path, options) || data == null) return;
+  const snapshots = offlineSnapshots();
+  snapshots[path] = { saved_at: new Date().toISOString(), data };
+  const limited = Object.fromEntries(Object.entries(snapshots).sort((a, b) => String(b[1]?.saved_at || "").localeCompare(String(a[1]?.saved_at || ""))).slice(0, 40));
+  try {
+    localStorage.setItem(offlineSnapshotKey, JSON.stringify(limited));
+  } catch {
+    try {
+      const smallest = Object.fromEntries(Object.entries(limited).slice(0, 12));
+      localStorage.setItem(offlineSnapshotKey, JSON.stringify(smallest));
+    } catch {}
+  }
+}
+
+function announceOfflineSnapshot() {
+  if (state.offlineSnapshotNoticeShown) return;
+  state.offlineSnapshotNoticeShown = true;
+  setTimeout(() => ui.toast("Showing a recent offline copy.", "info"), 0);
 }
 
 async function flushOfflineBookmarks({ quiet = false } = {}) {
@@ -424,7 +490,10 @@ function shell(title, content) {
     ["/focus", "Focus"],
     ["/assistant", "Assistant"],
     ["/notes", "Notes"],
+    ["/objects", "Objects"],
+    ["/board", "Board"],
     ["/review", "Review"],
+    ["/evolution", "Evolution"],
     ["/knowledge-graph", "Graph"],
     ["/analytics", "Analytics"],
     ["/duplicates", "Duplicates"],
@@ -1677,6 +1746,60 @@ function selectedReaderText() {
   return selection.toString().replace(/\s+/g, " ").trim().slice(0, 4000);
 }
 
+function readerQuoteSelector(quote) {
+  const reader = document.querySelector(".reader-content");
+  const exact = String(quote || "").replace(/\s+/g, " ").trim().slice(0, 4000);
+  if (!reader || !exact) return {};
+  const readerText = (reader.textContent || "").replace(/\s+/g, " ").trim();
+  const offset = readerText.indexOf(exact);
+  return {
+    type: "TextQuoteSelector",
+    exact,
+    prefix: offset > 0 ? readerText.slice(Math.max(0, offset - 80), offset) : "",
+    suffix: offset >= 0 ? readerText.slice(offset + exact.length, offset + exact.length + 80) : "",
+    offset,
+  };
+}
+
+function findReaderTextRange(reader, quote) {
+  const exact = String(quote || "").replace(/\s+/g, " ").trim();
+  if (!reader || !exact || !document.createTreeWalker) return null;
+  const walker = document.createTreeWalker(reader, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const index = node.nodeValue.indexOf(exact);
+    if (index < 0) continue;
+    const range = document.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, index + exact.length);
+    return range;
+  }
+  return null;
+}
+
+function clearReaderJumpHighlights() {
+  document.querySelectorAll("mark.reader-jump-highlight").forEach((mark) => mark.replaceWith(document.createTextNode(mark.textContent || "")));
+}
+
+function jumpToReaderQuote(quote) {
+  const reader = document.querySelector(".reader-content");
+  clearReaderJumpHighlights();
+  const range = findReaderTextRange(reader, quote);
+  if (!range) {
+    reader?.scrollIntoView({ behavior: "smooth", block: "start" });
+    ui.toast("Quote not found in the archived reader text.", "info");
+    return;
+  }
+  const mark = document.createElement("mark");
+  mark.className = "reader-jump-highlight";
+  try {
+    range.surroundContents(mark);
+    mark.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch {
+    reader?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
 async function showJobStatus(jobID) {
   const status = document.querySelector("#job-status");
   if (!jobID || !status) return;
@@ -1734,6 +1857,7 @@ function annotationList(items) {
     <div class="field"><label for="annotation-note-${escapeHTML(item.id)}">Note</label><textarea id="annotation-note-${escapeHTML(item.id)}" data-annotation-note rows="3">${escapeHTML(item.note || "")}</textarea></div>
     <div class="field"><label for="annotation-tags-${escapeHTML(item.id)}">Tags</label><input id="annotation-tags-${escapeHTML(item.id)}" data-annotation-tags value="${escapeHTML((item.tags || []).join(", "))}"></div>
     <p class="button-row">
+      <button type="button" class="secondary" data-annotation-jump="${escapeHTML(item.id)}">Jump to source</button>
       <button type="button" data-annotation-save="${escapeHTML(item.id)}">Save changes</button>
       <button type="button" class="danger" data-annotation-delete="${escapeHTML(item.id)}">Delete</button>
     </p>
@@ -1911,6 +2035,172 @@ async function deleteStandaloneNote(button) {
   }
 }
 
+async function objectsPage() {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  const selectedType = params.get("type") || "";
+  const query = params.get("q") || "";
+  const result = await api(`/objects${location.search}`);
+  const objects = result.objects || [];
+  const types = result.object_types || ["project", "person", "book", "meeting", "decision", "research_thread"];
+  setRoot(shell("Objects", `
+    <section class="split">
+      <form class="panel form" id="object-form">
+        <h2>New object</h2>
+        <div class="field"><label for="object-type">Type</label><select id="object-type">${objectTypeOptions(types, selectedType)}</select></div>
+        <div class="field"><label for="object-title">Title</label><input id="object-title" type="text" placeholder="Project, person, book, meeting, decision"></div>
+        <div class="field"><label for="object-description">Description</label><textarea id="object-description" rows="4" placeholder="What this object means and why it matters"></textarea></div>
+        <div class="field"><label for="object-fields">Fields JSON</label><textarea id="object-fields" rows="5" spellcheck="false" placeholder='{"status":"active","owner":"me"}'></textarea></div>
+        <div class="field"><label for="object-source-type">Source item type</label><select id="object-source-type"><option value="">None</option><option value="bookmark">Bookmark</option><option value="note">Note</option><option value="object">Object</option></select></div>
+        <div class="field"><label for="object-source-id">Source item ID</label><input id="object-source-id" type="text" placeholder="Optional bookmark, note, or object id"></div>
+        <p class="form-message" data-form-message hidden></p>
+        <button type="submit">Create object</button>
+      </form>
+      <form class="panel form" id="object-filter-form">
+        <span class="meta">Structured memory</span>
+        <h2>${objects.length} objects</h2>
+        <div class="field"><label for="object-filter-type">Filter type</label><select id="object-filter-type"><option value="">All types</option>${objectTypeOptions(types, selectedType)}</select></div>
+        <div class="field"><label for="object-filter-query">Search objects</label><input id="object-filter-query" type="search" value="${escapeHTML(query)}" placeholder="Roadmap, Alice, meeting"></div>
+        <button type="submit" class="secondary">Apply filter</button>
+      </form>
+    </section>
+    <section class="grid compact-grid">
+      ${objects.map(objectCard).join("") || `<article class="panel empty-state"><span class="meta">No objects</span><h2>Create the first object</h2><p>Use objects when a note needs to become a project, person, book, meeting, decision, or research thread.</p></article>`}
+    </section>
+  `));
+  bindObjectForms();
+}
+
+function objectTypeOptions(types, selected) {
+  return types.map((type) => `<option value="${escapeHTML(type)}"${type === selected ? " selected" : ""}>${escapeHTML(type.replaceAll("_", " "))}</option>`).join("");
+}
+
+function objectCard(object) {
+  return `<article class="panel bookmark">
+    <span class="meta">${escapeHTML((object.object_type || "object").replaceAll("_", " "))} · ${escapeHTML(object.updated_at || "")}</span>
+    <h2>${escapeHTML(object.title || "Untitled object")}</h2>
+    <p>${escapeHTML(object.description || "")}</p>
+    ${objectFieldsPreview(object.fields || {})}
+    ${object.source_item_id ? `<p><a class="text-link" href="${objectSourceHref(object)}">Open source</a></p>` : ""}
+  </article>`;
+}
+
+function objectFieldsPreview(fields) {
+  const entries = Object.entries(fields || {}).filter(([, value]) => String(value || "").trim() !== "").slice(0, 6);
+  if (!entries.length) return "";
+  return `<div class="chips">${entries.map(([key, value]) => `<span>${escapeHTML(key)}: ${escapeHTML(String(value).slice(0, 80))}</span>`).join("")}</div>`;
+}
+
+function objectSourceHref(object) {
+  if (object.source_item_type === "note") return `/notes/${encodeURIComponent(object.source_item_id)}`;
+  if (object.source_item_type === "bookmark") return `/bookmark/${encodeURIComponent(object.source_item_id)}`;
+  return "/objects";
+}
+
+function bindObjectForms() {
+  const form = document.querySelector("#object-form");
+  form?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Creating");
+    setFormMessage(form);
+    try {
+      await api("/objects", {
+        method: "POST",
+        body: JSON.stringify({
+          object_type: document.querySelector("#object-type").value,
+          title: document.querySelector("#object-title").value,
+          description: document.querySelector("#object-description").value,
+          fields: parseObjectFields(document.querySelector("#object-fields").value),
+          source_item_type: document.querySelector("#object-source-type").value,
+          source_item_id: document.querySelector("#object-source-id").value,
+        }),
+      });
+      ui.toast("Object created", "success");
+      render();
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  document.querySelector("#object-filter-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const params = new URLSearchParams();
+    const type = document.querySelector("#object-filter-type").value;
+    const query = document.querySelector("#object-filter-query").value.trim();
+    if (type) params.set("type", type);
+    if (query) params.set("q", query);
+    navigate(`/objects${params.toString() ? `?${params}` : ""}`, true);
+  });
+}
+
+function parseObjectFields(raw) {
+  const text = raw.trim();
+  if (!text) return {};
+  const parsed = JSON.parse(text);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Fields JSON must be an object.");
+  return parsed;
+}
+
+async function evolutionPage() {
+  await requireUser();
+  const query = new URLSearchParams(location.search).get("q") || "";
+  const result = query ? await api(`/evolution?q=${encodeURIComponent(query)}`) : { timeline: [] };
+  setRoot(shell("Evolution", `
+    <form class="panel form" id="evolution-form">
+      <h2>Topic evolution</h2>
+      <div class="field"><label for="evolution-query">Topic or phrase</label><input id="evolution-query" type="search" value="${escapeHTML(query)}" placeholder="Roadmap, pricing, local-first"></div>
+      <button type="submit">Trace topic</button>
+    </form>
+    <section class="stack">
+      ${(result.timeline || []).map(evolutionItem).join("") || `<article class="panel empty-state"><span class="meta">No timeline yet</span><h2>Search a topic</h2><p>Arivu will line up matching daily notes, saved pages, notes, decisions, meetings, and projects.</p></article>`}
+    </section>
+  `));
+  document.querySelector("#evolution-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = document.querySelector("#evolution-query").value.trim();
+    navigate(value ? `/evolution?q=${encodeURIComponent(value)}` : "/evolution", true);
+  });
+}
+
+function evolutionItem(item) {
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || "Untitled")}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.updated_at || "")}</span></p>
+    <p>${escapeHTML(item.body || "")}</p>
+    ${item.href ? `<p><a class="text-link" href="${escapeHTML(item.href)}">Open source</a></p>` : ""}
+  </article>`;
+}
+
+async function boardPage() {
+  await requireUser();
+  const board = await api("/today-board");
+  setRoot(shell("Board", `
+    <section class="board-grid">
+      ${(board.columns || []).map(boardColumn).join("")}
+    </section>
+  `));
+}
+
+function boardColumn(column) {
+  const items = column.items || [];
+  return `<section class="panel board-column">
+    <span class="meta">${items.length} items</span>
+    <h2>${escapeHTML(column.title || "Column")}</h2>
+    <div class="stack">${items.map(boardItem).join("") || `<p class="meta">Nothing here.</p>`}</div>
+  </section>`;
+}
+
+function boardItem(item) {
+  const href = item.href || (item.item_type === "note" ? `/notes/${encodeURIComponent(item.id)}` : item.item_type === "bookmark" ? `/bookmark/${encodeURIComponent(item.id)}` : "/objects");
+  return `<article class="annotation compact-object">
+    <p><strong>${escapeHTML(item.title || "Untitled")}</strong></p>
+    <p class="meta">${escapeHTML(item.item_type || item.object_type || "object")} ${item.next_action ? `· ${escapeHTML(item.next_action)}` : ""}</p>
+    <p>${escapeHTML(item.description || item.body || "")}</p>
+    <a class="text-link" href="${escapeHTML(href)}">Open</a>
+  </article>`;
+}
+
 async function bookmarkPage() {
   await requireUser();
   const id = location.pathname.split("/").pop();
@@ -2071,7 +2361,7 @@ async function bookmarkPage() {
           quote: document.querySelector("#annotation-quote").value,
           note: document.querySelector("#annotation-note").value,
           tags: splitTags(document.querySelector("#annotation-tags").value),
-          selector: {},
+          selector: readerQuoteSelector(document.querySelector("#annotation-quote").value),
         }),
       });
       ui.toast("Annotation saved", "success");
@@ -2153,6 +2443,9 @@ async function bookmarkPage() {
   });
   document.querySelectorAll("[data-annotation-save]").forEach((button) => {
     button.addEventListener("click", () => updateAnnotation(button));
+  });
+  document.querySelectorAll("[data-annotation-jump]").forEach((button) => {
+    button.addEventListener("click", () => jumpToReaderQuote(button.closest("[data-annotation]")?.querySelector("[data-annotation-quote]")?.value || ""));
   });
   document.querySelectorAll("[data-annotation-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteAnnotation(button));
@@ -2684,7 +2977,7 @@ async function updateAnnotation(button) {
         quote: card.querySelector("[data-annotation-quote]").value,
         note: card.querySelector("[data-annotation-note]").value,
         tags: splitTags(card.querySelector("[data-annotation-tags]").value),
-        selector: {},
+        selector: readerQuoteSelector(card.querySelector("[data-annotation-quote]").value),
       }),
     });
     ui.toast("Annotation updated", "success");
@@ -3092,6 +3385,24 @@ function importPanel() {
       <p class="form-message" id="import-message" data-form-message hidden></p>
       <button type="submit">Queue import or restore</button>
     </form>
+    <form class="panel form" id="media-import-form">
+      <h3>Document and transcript import</h3>
+      <p class="meta">Create a searchable note from a PDF, EPUB, image OCR text, plain text file, or YouTube/video transcript.</p>
+      <div class="field"><label for="media-import-title">Title</label><input id="media-import-title" name="title" placeholder="Research packet, book, talk, screenshot"></div>
+      <div class="field"><label for="media-import-url">Source URL</label><input id="media-import-url" name="source_url" placeholder="https://youtube.com/watch?v=..."></div>
+      <div class="field"><label for="media-import-file">File</label><input id="media-import-file" name="file" type="file" accept=".epub,.pdf,.txt,.md,.html,.htm,image/*"></div>
+      <div class="field"><label for="media-import-transcript">Transcript or OCR text</label><textarea id="media-import-transcript" name="transcript" rows="7" placeholder="Paste video transcript, OCR text, or copied document text"></textarea></div>
+      <p class="form-message" id="media-import-message" data-form-message hidden></p>
+      <button type="submit">Import as note</button>
+    </form>
+    <form class="panel form" id="calendar-import-form">
+      <h3>Calendar import</h3>
+      <p class="meta">Paste an ICS export to create meeting objects with start, end, location, description, and UID fields.</p>
+      <div class="field"><label for="calendar-import-source">Source</label><input id="calendar-import-source" type="text" placeholder="calendar.ics"></div>
+      <div class="field"><label for="calendar-import-ics">ICS content</label><textarea id="calendar-import-ics" rows="8" spellcheck="false" placeholder="BEGIN:VCALENDAR&#10;BEGIN:VEVENT&#10;SUMMARY:Research review&#10;END:VEVENT&#10;END:VCALENDAR"></textarea></div>
+      <p class="form-message" id="calendar-import-message" data-form-message hidden></p>
+      <button type="submit">Import meetings</button>
+    </form>
     <section class="panel">
       <h3>Export</h3>
       <div class="button-row">
@@ -3132,6 +3443,58 @@ async function bindImportPanel() {
         }
       }
       renderImportJobs(latest);
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  bindMediaImportPanel();
+  bindCalendarImportPanel();
+}
+
+function bindMediaImportPanel() {
+  const form = document.querySelector("#media-import-form");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Importing");
+    setFormMessage(form);
+    try {
+      const formData = new FormData(form);
+      const result = await api("/media/import", { method: "POST", body: formData });
+      const title = result.note?.title || "Imported media";
+      setFormMessage(form, `Saved "${title}" as a searchable note.`, "success");
+      ui.toast("Media imported as a note", "success");
+      form.reset();
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
+function bindCalendarImportPanel() {
+  const form = document.querySelector("#calendar-import-form");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Importing");
+    setFormMessage(form);
+    try {
+      const result = await api("/calendar/import", {
+        method: "POST",
+        body: JSON.stringify({
+          source: document.querySelector("#calendar-import-source").value,
+          ics: document.querySelector("#calendar-import-ics").value,
+        }),
+      });
+      setFormMessage(form, `${Number(result.count || 0)} meeting objects imported.`, "success");
+      ui.toast(`${Number(result.count || 0)} meetings imported`, "success");
+      form.reset();
     } catch (err) {
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");

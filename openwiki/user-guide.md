@@ -11,8 +11,7 @@ Run the server:
 go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
 ```
 
-Open `http://127.0.0.1:8080/auth`, create an account, then start from
-`/dashboard`.
+Open `http://127.0.0.1:8080/auth`, create an account, then start from `/today`.
 
 For production, run behind TLS and set `COOKIE_SECURE=true`,
 `SECRET_KEY`, `APP_URL`, `ADMIN_EMAILS`, and `SIGNUPS_ENABLED=false`.
@@ -45,13 +44,23 @@ Bookmark pages are reader-first. The top surface is for reading, tags,
 summary/enrichment state, and source controls. The next-step panel captures the
 one thing the item should become. Annotations, linked notes, explicit links,
 tasks, reminders, and related items stay in collapsed workbench groups until
-needed.
+needed. When you select text inside the reader, the annotation form can copy it
+as a quote, store a text-quote selector, and later jump the saved annotation
+back to the matching source text.
 
 ## Notes, Links, Tasks, And Reminders
 
 Use `/notes` for standalone thoughts that do not start from a URL. `/notes/:id`
 is the full note workspace for editing, tasks, reminders, note links, backlinks,
 and note-to-bookmark links.
+
+Use `/objects` when a note or bookmark needs to become a typed thing: project,
+person, book, meeting, decision, or research thread. Objects have a title,
+description, optional source item, and small JSON fields for local structure.
+Use `/board` for a fixed working board that groups Inbox, Working, Review,
+recent decisions, and recent meetings. Use `/evolution?q=topic` to see how a
+topic appears across daily notes, saved pages, notes, meetings, decisions, and
+objects over time.
 
 Use `/today` for the daily operating note. It is intentionally separate from the
 standalone note list: one dated note per user per day, optimized for planning
@@ -72,6 +81,12 @@ source, read status, and saved date. Cited answers use only saved Arivu content.
 Search and cited-answer citations explain why an item appeared and accept
 feedback such as Useful, Not useful, Snooze longer, or Never resurface.
 
+After a successful online read, the browser keeps recent local snapshots for
+Today, saved pages, notes, Review, Inbox/work queues, reminders, and typed
+search. If the network drops later, those screens can show the latest local copy
+instead of failing immediately. Writes still require the server except for the
+dashboard URL capture queue.
+
 Settings import/export shows queued import progress, source counts, fetched,
 AI-processed, and failed totals. Failed totals mean the source row was accepted
 but the background fetch or processing step did not complete.
@@ -86,6 +101,23 @@ Settings can import browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom,
 URL-bearing Readwise/Kindle CSV or TSV, Arivu JSON, or one URL per line.
 Exports include JSON backup, CSV, browser HTML, Markdown, and Obsidian ZIP vault
 output.
+
+The same Settings import tab can also turn documents and media transcripts into
+searchable notes. Upload an EPUB, PDF, plain text, Markdown, HTML file, or image,
+or paste a YouTube/video transcript or OCR text. Arivu stores the result as a
+normal note with a `media:*` source so it appears in Inbox, search, export, and
+review. Image uploads use pasted OCR text when provided; if Gemini is configured,
+Arivu can attempt image text extraction automatically.
+
+Calendar imports accept pasted ICS text and create meeting objects with UID,
+start, end, location, description, and source fields. Full JSON backups include
+knowledge objects and restore their source bookmark/note/object references under
+the importing account.
+
+CLI tokens can call the agent-oriented `/api/agent/*` routes for scoped search,
+reading saved bookmarks/notes, creating notes, adding tasks/reminders, and
+recording decisions. These routes are intended as the HTTP surface for a thin
+MCP wrapper rather than a separate automation platform.
 
 Legacy Arivu migrations use the JSON export path documented in
 `domain/migration-guide.md`.

@@ -2,7 +2,7 @@
   "name": "Arivu",
   "short_name": "Arivu",
   "description": "A local-first second brain for saving, reading, annotating, and resurfacing knowledge.",
-  "start_url": "/dashboard",
+  "start_url": "/today",
   "scope": "/",
   "display": "standalone",
   "background_color": "#f7f0df",

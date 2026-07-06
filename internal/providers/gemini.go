@@ -3,6 +3,7 @@ package providers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -23,6 +24,71 @@ func (c GeminiClient) GenerateSummary(ctx context.Context, text string) (string,
 
 func (c GeminiClient) GenerateInsight(ctx context.Context, prompt string) (string, error) {
 	return c.generate(ctx, "insight", prompt)
+}
+
+func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, data []byte) (result string, err error) {
+	defer func() { c.record("ocr", err) }()
+	if c.APIKey == "" {
+		return "", ErrNotConfigured
+	}
+	mimeType = strings.TrimSpace(strings.Split(mimeType, ";")[0])
+	if !strings.HasPrefix(mimeType, "image/") {
+		return "", fmt.Errorf("image mime type is required")
+	}
+	if len(data) == 0 {
+		return "", fmt.Errorf("image data is required")
+	}
+	if len(data) > 4<<20 {
+		return "", fmt.Errorf("image is too large for OCR")
+	}
+	body := map[string]any{
+		"contents": []map[string]any{{
+			"parts": []map[string]any{
+				{"text": "Extract all readable text from this image. Return only the extracted text, preserving line breaks where useful."},
+				{"inline_data": map[string]string{
+					"mime_type": mimeType,
+					"data":      base64.StdEncoding.EncodeToString(data),
+				}},
+			},
+		}},
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return "", err
+	}
+	client := c.HTTP
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("gemini ocr status %d", resp.StatusCode)
+	}
+	var decoded struct {
+		Candidates []struct {
+			Content struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"content"`
+		} `json:"candidates"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return "", err
+	}
+	if len(decoded.Candidates) == 0 || len(decoded.Candidates[0].Content.Parts) == 0 {
+		return "", fmt.Errorf("gemini returned no content")
+	}
+	return decoded.Candidates[0].Content.Parts[0].Text, nil
 }
 
 func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskType string) (values []float64, err error) {

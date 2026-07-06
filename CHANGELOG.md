@@ -61,6 +61,19 @@ All notable changes to this project will be documented in this file.
   notes, standalone notes, and bookmark-linked notes.
 - Improved import trust signals with clearer supported-format copy and native
   progress bars over existing import job counters.
+- Added Settings and API media import for EPUB/PDF/text/HTML/Markdown files,
+  pasted transcripts, pasted OCR text, and optional Gemini-backed image OCR,
+  saving each import as a searchable `media:*` note.
+- Added browser-local read snapshots for saved pages, notes, Today, Review,
+  Inbox/work queues, reminders, memory jogger, and typed search so recent
+  second-brain views remain readable when offline.
+- Added source-jump controls and text-quote selector metadata for reader
+  annotations captured from archived page selections.
+- Added typed knowledge objects, topic evolution, a fixed Today board, ICS
+  meeting import, and CLI-audience agent routes for scoped search, reads, notes,
+  tasks, reminders, and decision recording.
+- Added JSON backup/restore coverage for knowledge objects with source-reference
+  remapping.
 
 ### Changed
 

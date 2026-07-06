@@ -40,6 +40,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Bookmark detail is reader-first, with one next-step workflow panel and
   disclosure groups for annotations, linked notes, explicit links, tasks,
   reminders, related items, and review completion.
+- Reader annotations store text-quote selector metadata when captured from the
+  sanitized page selection, so saved highlights can jump back to matching source
+  text when the archive still contains that passage.
 - Explicit links connect bookmarks and notes with user-authored labels. Link
   reads return outgoing and incoming relationships so a saved item can show both
   what it points to and what points back to it. Link picker target reads use
@@ -56,6 +59,16 @@ Second-brain v1 adds user-authored context around bookmarks:
 - The Notes list is compact. `/notes/:id` owns note editing, action items,
   reminders, explicit note links, backlinks, note-to-note links, and
   note-to-bookmark links.
+- Knowledge objects add a lightweight typed layer over saved information.
+  `/api/objects` stores per-user project, person, book, meeting, decision, and
+  research-thread objects with title, description, JSON fields, and optional
+  source bookmark/note/object references.
+- `/api/calendar/import` parses pasted ICS `VEVENT` entries into meeting
+  objects, preserving UID, start, end, location, description, and source fields.
+- `/api/evolution` builds a topic timeline from daily notes, saved pages, notes,
+  and knowledge objects so a thought can be traced across weeks or months.
+- `/api/today-board` returns a fixed local board with Inbox, Working, Review,
+  recent decisions, and recent meetings before any infinite canvas exists.
 - The Focus page reads action items and reminders through existing APIs and
   supports pending, overdue, today, upcoming, and completed views.
 - Assistant suggestions generate inert drafts from an item, search query, Inbox
@@ -74,12 +87,25 @@ Second-brain v1 adds user-authored context around bookmarks:
   typed `/api/search/items` route returns ranked bookmark/note results with
   snippets and source links, and `/api/search/rebuild` exists as a
   quota-protected repair path for imports or operator recovery.
+- The browser keeps bounded local read snapshots for high-use second-brain GET
+  surfaces: saved pages, notes, Today inputs, Review, Inbox/work queues,
+  reminders, memory jogger, and typed search. These snapshots make offline
+  reading and recall useful without letting the service worker cache
+  authenticated API responses.
+- `/api/media/import` converts documents and transcript-style media into normal
+  notes with `media:*` sources. EPUB, HTML, text, Markdown, pasted transcript,
+  pasted OCR, best-effort PDF text, and provider-backed image OCR flow through
+  the existing note inbox, export, review, and search index instead of creating a
+  separate media silo.
 - Cited answer mode uses the same unified retrieval layer and returns citations
   back to saved bookmarks or notes instead of producing uncited claims.
 - Job status is visible per user, which makes background import/enrichment progress inspectable without exposing server errors.
 - High-risk writes use lightweight SQLite mutation quotas before expensive work
   begins, including bookmark preview, import, saves, notes, inbox updates,
   links, reminders, and assistant proposal/approval.
+- CLI-audience `/api/agent/*` routes expose scoped search, bookmark/note reads,
+  note creation, action-item creation, reminder creation, and decision
+  recording so an MCP wrapper can operate Arivu without web-session access.
 
 ## User Imports And Exports
 
@@ -99,6 +125,8 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Full JSON export and restore include inbox processing state, action items,
   notes, annotations, tags, searches, and review events remapped under the
   importing user.
+- Full JSON export and restore also include knowledge objects, remapping
+  bookmark, note, and object source references under the importing user.
 - Explicit item links are also exported and restored with remapped bookmark and
   note IDs.
 - Reminder rows are exported and restored with remapped item IDs, UTC due
