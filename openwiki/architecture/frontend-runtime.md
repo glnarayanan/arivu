@@ -31,6 +31,12 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - API calls use `fetch` with `credentials: "include"`.
 - CSRF headers are injected from the `csrf_token` cookie when present.
 - A single refresh retry is attempted after a protected API route returns 401.
+- Authenticated GET reads for saved pages, notes, Today data, Review, Inbox,
+  work queues, reminders, memory jogger, and typed search write bounded
+  `localStorage` snapshots after successful online responses. If a later fetch
+  fails, the API helper returns the latest local snapshot and announces that the
+  UI is showing a recent offline copy. Auth, writes, and admin reads are not
+  served from this cache.
 - Interactive controls are native elements unless custom behavior is required.
 - Route changes expose a top progress marker while async page work is pending.
 - Route changes update the document title, announce the active route, and move
@@ -102,7 +108,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   panel; annotations, notes, links, tasks, reminders, and related items live in
   disclosure groups. The annotation form can copy the current browser selection
   into the quote field when the selection is fully inside the sanitized reader
-  content, and existing annotations can be edited or deleted inline.
+  content, stores a text-quote selector for saved highlights, and existing
+  annotations can jump back to source text, be edited, or be deleted inline.
 - `/focus` keeps the pending default and adds overdue, today, upcoming, and
   completed views over action items and reminders.
 - `/review` includes the daily memory card from `/api/memory-jogger`, the

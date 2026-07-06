@@ -1401,6 +1401,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if annotationID == "" {
 		t.Fatalf("annotation missing id: %#v", annotationBody)
 	}
+	if selector, _ := annotationBody.Annotation["selector"].(map[string]any); selector["type"] != "quote" {
+		t.Fatalf("annotation selector did not round-trip: %#v", annotationBody.Annotation["selector"])
+	}
 	editableAnnotationResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/capture/annotations", `{"quote":"Draft quote","note":"Draft note","selector":{},"tags":["draft"]}`, accessCookie, csrfCookie)
 	if editableAnnotationResp.StatusCode != http.StatusOK {
 		t.Fatalf("create editable annotation status = %d body=%s", editableAnnotationResp.StatusCode, readBody(editableAnnotationResp))
@@ -1414,7 +1417,7 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if editableAnnotationID == "" {
 		t.Fatalf("editable annotation missing id: %#v", editableAnnotationBody)
 	}
-	updateAnnotationResp := adminRequest(t, handler, http.MethodPatch, "/api/annotations/"+editableAnnotationID, `{"quote":"Updated quote","note":"Updated note","selector":{},"tags":["edited"]}`, accessCookie, csrfCookie)
+	updateAnnotationResp := adminRequest(t, handler, http.MethodPatch, "/api/annotations/"+editableAnnotationID, `{"quote":"Updated quote","note":"Updated note","selector":{"type":"TextQuoteSelector","exact":"Updated quote","offset":8},"tags":["edited"]}`, accessCookie, csrfCookie)
 	if updateAnnotationResp.StatusCode != http.StatusOK {
 		t.Fatalf("update annotation status = %d body=%s", updateAnnotationResp.StatusCode, readBody(updateAnnotationResp))
 	}
@@ -1425,6 +1428,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	updateAnnotationResp.Body.Close()
 	if updateAnnotationBody.Annotation["quote"] != "Updated quote" {
 		t.Fatalf("annotation did not update: %#v", updateAnnotationBody)
+	}
+	if selector, _ := updateAnnotationBody.Annotation["selector"].(map[string]any); selector["type"] != "TextQuoteSelector" || selector["exact"] != "Updated quote" {
+		t.Fatalf("annotation update selector missing: %#v", updateAnnotationBody.Annotation["selector"])
 	}
 	deleteAnnotationResp := adminRequest(t, handler, http.MethodDelete, "/api/annotations/"+editableAnnotationID, "", accessCookie, csrfCookie)
 	if deleteAnnotationResp.StatusCode != http.StatusOK {
@@ -2483,7 +2489,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `function flushOfflineBookmarks`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `requestOptions.body instanceof FormData`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}

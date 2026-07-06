@@ -40,6 +40,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Bookmark detail is reader-first, with one next-step workflow panel and
   disclosure groups for annotations, linked notes, explicit links, tasks,
   reminders, related items, and review completion.
+- Reader annotations store text-quote selector metadata when captured from the
+  sanitized page selection, so saved highlights can jump back to matching source
+  text when the archive still contains that passage.
 - Explicit links connect bookmarks and notes with user-authored labels. Link
   reads return outgoing and incoming relationships so a saved item can show both
   what it points to and what points back to it. Link picker target reads use
@@ -74,6 +77,11 @@ Second-brain v1 adds user-authored context around bookmarks:
   typed `/api/search/items` route returns ranked bookmark/note results with
   snippets and source links, and `/api/search/rebuild` exists as a
   quota-protected repair path for imports or operator recovery.
+- The browser keeps bounded local read snapshots for high-use second-brain GET
+  surfaces: saved pages, notes, Today inputs, Review, Inbox/work queues,
+  reminders, memory jogger, and typed search. These snapshots make offline
+  reading and recall useful without letting the service worker cache
+  authenticated API responses.
 - `/api/media/import` converts documents and transcript-style media into normal
   notes with `media:*` sources. EPUB, HTML, text, Markdown, pasted transcript,
   pasted OCR, best-effort PDF text, and provider-backed image OCR flow through

@@ -44,7 +44,9 @@ Bookmark pages are reader-first. The top surface is for reading, tags,
 summary/enrichment state, and source controls. The next-step panel captures the
 one thing the item should become. Annotations, linked notes, explicit links,
 tasks, reminders, and related items stay in collapsed workbench groups until
-needed.
+needed. When you select text inside the reader, the annotation form can copy it
+as a quote, store a text-quote selector, and later jump the saved annotation
+back to the matching source text.
 
 ## Notes, Links, Tasks, And Reminders
 
@@ -70,6 +72,12 @@ Dashboard search finds saved pages and supports filters for tags, domain,
 source, read status, and saved date. Cited answers use only saved Arivu content.
 Search and cited-answer citations explain why an item appeared and accept
 feedback such as Useful, Not useful, Snooze longer, or Never resurface.
+
+After a successful online read, the browser keeps recent local snapshots for
+Today, saved pages, notes, Review, Inbox/work queues, reminders, and typed
+search. If the network drops later, those screens can show the latest local copy
+instead of failing immediately. Writes still require the server except for the
+dashboard URL capture queue.
 
 Settings import/export shows queued import progress, source counts, fetched,
 AI-processed, and failed totals. Failed totals mean the source row was accepted

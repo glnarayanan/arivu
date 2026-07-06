@@ -5,6 +5,7 @@ const state = {
   focusMainAfterRender: false,
 };
 const offlineQueueKey = "arivu.offline.bookmarks";
+const offlineSnapshotKey = "arivu.offline.snapshots";
 
 const routes = [
   { prefix: "/auth", page: authPage, access: "public" },
@@ -38,6 +39,11 @@ async function api(path, options = {}) {
   try {
     res = await fetch(`/api${path}`, { credentials: "include", ...requestOptions, headers });
   } catch {
+    const cached = readOfflineSnapshot(path, requestOptions);
+    if (cached) {
+      announceOfflineSnapshot();
+      return cached;
+    }
     throw new Error("We couldn't reach Arivu. Check your connection and try again.");
   }
   if (res.status === 401 && !path.startsWith("/auth/") && !retried) {
@@ -56,6 +62,7 @@ async function api(path, options = {}) {
   const data = type.includes("application/json") && text ? JSON.parse(text) : text;
   const detail = typeof data === "object" && data !== null ? data.detail : data;
   if (!res.ok) throw Object.assign(new Error(detail || "Request failed. Try again."), { status: res.status, data });
+  writeOfflineSnapshot(path, requestOptions, data);
   return data;
 }
 
@@ -160,6 +167,58 @@ function setOfflineBookmarkQueue(items) {
 
 function queueOfflineBookmark(payload) {
   setOfflineBookmarkQueue([...offlineBookmarkQueue(), { ...payload, queued_at: new Date().toISOString() }]);
+}
+
+function offlineSnapshotAllowed(path, options = {}) {
+  const method = (options.method || "GET").toUpperCase();
+  if (method !== "GET") return false;
+  return [
+    /^\/bookmarks($|\?)/,
+    /^\/bookmarks\/[^/]+($|\/related|\?)/,
+    /^\/notes($|\/|\?)/,
+    /^\/daily-notes\//,
+    /^\/search\/items($|\?)/,
+    /^\/review($|\?)/,
+    /^\/inbox($|\?)/,
+    /^\/action-items($|\?)/,
+    /^\/reminders($|\?)/,
+    /^\/memory-jogger($|\?)/,
+  ].some((pattern) => pattern.test(path));
+}
+
+function offlineSnapshots() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(offlineSnapshotKey) || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function readOfflineSnapshot(path, options = {}) {
+  if (!offlineSnapshotAllowed(path, options)) return null;
+  return offlineSnapshots()[path]?.data || null;
+}
+
+function writeOfflineSnapshot(path, options = {}, data = null) {
+  if (!offlineSnapshotAllowed(path, options) || data == null) return;
+  const snapshots = offlineSnapshots();
+  snapshots[path] = { saved_at: new Date().toISOString(), data };
+  const limited = Object.fromEntries(Object.entries(snapshots).sort((a, b) => String(b[1]?.saved_at || "").localeCompare(String(a[1]?.saved_at || ""))).slice(0, 40));
+  try {
+    localStorage.setItem(offlineSnapshotKey, JSON.stringify(limited));
+  } catch {
+    try {
+      const smallest = Object.fromEntries(Object.entries(limited).slice(0, 12));
+      localStorage.setItem(offlineSnapshotKey, JSON.stringify(smallest));
+    } catch {}
+  }
+}
+
+function announceOfflineSnapshot() {
+  if (state.offlineSnapshotNoticeShown) return;
+  state.offlineSnapshotNoticeShown = true;
+  setTimeout(() => ui.toast("Showing a recent offline copy.", "info"), 0);
 }
 
 async function flushOfflineBookmarks({ quiet = false } = {}) {
@@ -1678,6 +1737,60 @@ function selectedReaderText() {
   return selection.toString().replace(/\s+/g, " ").trim().slice(0, 4000);
 }
 
+function readerQuoteSelector(quote) {
+  const reader = document.querySelector(".reader-content");
+  const exact = String(quote || "").replace(/\s+/g, " ").trim().slice(0, 4000);
+  if (!reader || !exact) return {};
+  const readerText = (reader.textContent || "").replace(/\s+/g, " ").trim();
+  const offset = readerText.indexOf(exact);
+  return {
+    type: "TextQuoteSelector",
+    exact,
+    prefix: offset > 0 ? readerText.slice(Math.max(0, offset - 80), offset) : "",
+    suffix: offset >= 0 ? readerText.slice(offset + exact.length, offset + exact.length + 80) : "",
+    offset,
+  };
+}
+
+function findReaderTextRange(reader, quote) {
+  const exact = String(quote || "").replace(/\s+/g, " ").trim();
+  if (!reader || !exact || !document.createTreeWalker) return null;
+  const walker = document.createTreeWalker(reader, NodeFilter.SHOW_TEXT);
+  let node;
+  while ((node = walker.nextNode())) {
+    const index = node.nodeValue.indexOf(exact);
+    if (index < 0) continue;
+    const range = document.createRange();
+    range.setStart(node, index);
+    range.setEnd(node, index + exact.length);
+    return range;
+  }
+  return null;
+}
+
+function clearReaderJumpHighlights() {
+  document.querySelectorAll("mark.reader-jump-highlight").forEach((mark) => mark.replaceWith(document.createTextNode(mark.textContent || "")));
+}
+
+function jumpToReaderQuote(quote) {
+  const reader = document.querySelector(".reader-content");
+  clearReaderJumpHighlights();
+  const range = findReaderTextRange(reader, quote);
+  if (!range) {
+    reader?.scrollIntoView({ behavior: "smooth", block: "start" });
+    ui.toast("Quote not found in the archived reader text.", "info");
+    return;
+  }
+  const mark = document.createElement("mark");
+  mark.className = "reader-jump-highlight";
+  try {
+    range.surroundContents(mark);
+    mark.scrollIntoView({ behavior: "smooth", block: "center" });
+  } catch {
+    reader?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
 async function showJobStatus(jobID) {
   const status = document.querySelector("#job-status");
   if (!jobID || !status) return;
@@ -1735,6 +1848,7 @@ function annotationList(items) {
     <div class="field"><label for="annotation-note-${escapeHTML(item.id)}">Note</label><textarea id="annotation-note-${escapeHTML(item.id)}" data-annotation-note rows="3">${escapeHTML(item.note || "")}</textarea></div>
     <div class="field"><label for="annotation-tags-${escapeHTML(item.id)}">Tags</label><input id="annotation-tags-${escapeHTML(item.id)}" data-annotation-tags value="${escapeHTML((item.tags || []).join(", "))}"></div>
     <p class="button-row">
+      <button type="button" class="secondary" data-annotation-jump="${escapeHTML(item.id)}">Jump to source</button>
       <button type="button" data-annotation-save="${escapeHTML(item.id)}">Save changes</button>
       <button type="button" class="danger" data-annotation-delete="${escapeHTML(item.id)}">Delete</button>
     </p>
@@ -2072,7 +2186,7 @@ async function bookmarkPage() {
           quote: document.querySelector("#annotation-quote").value,
           note: document.querySelector("#annotation-note").value,
           tags: splitTags(document.querySelector("#annotation-tags").value),
-          selector: {},
+          selector: readerQuoteSelector(document.querySelector("#annotation-quote").value),
         }),
       });
       ui.toast("Annotation saved", "success");
@@ -2154,6 +2268,9 @@ async function bookmarkPage() {
   });
   document.querySelectorAll("[data-annotation-save]").forEach((button) => {
     button.addEventListener("click", () => updateAnnotation(button));
+  });
+  document.querySelectorAll("[data-annotation-jump]").forEach((button) => {
+    button.addEventListener("click", () => jumpToReaderQuote(button.closest("[data-annotation]")?.querySelector("[data-annotation-quote]")?.value || ""));
   });
   document.querySelectorAll("[data-annotation-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteAnnotation(button));
@@ -2685,7 +2802,7 @@ async function updateAnnotation(button) {
         quote: card.querySelector("[data-annotation-quote]").value,
         note: card.querySelector("[data-annotation-note]").value,
         tags: splitTags(card.querySelector("[data-annotation-tags]").value),
-        selector: {},
+        selector: readerQuoteSelector(card.querySelector("[data-annotation-quote]").value),
       }),
     });
     ui.toast("Annotation updated", "success");

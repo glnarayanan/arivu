@@ -633,6 +633,13 @@ input::placeholder, textarea::placeholder {
   max-width: 100%;
   overflow: auto;
 }
+.reader-jump-highlight {
+  background: color-mix(in oklch, var(--gold) 48%, var(--panel));
+  color: var(--ink);
+  outline: 2px solid var(--ink);
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 
 .tabs {
   display: grid;
