@@ -23,7 +23,8 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
   the deeper Capture, Inbox, Focus, Review, Notes, and Assistant routes.
 - `/dashboard`: capture-first cockpit for URL saves, quick notes, manual tags,
   PWA share-target prefill, visible processing status, saved-page search,
-  collapsible filters, and collapsible saved-search management.
+  voice dictation into the quick note, collapsible filters, and collapsible
+  saved-search management.
 - `/inbox`: capture triage for bookmarks and notes, with per-item stage,
   priority, next action controls, inline action items, bulk selection, and
   keyboard triage for stage changes.

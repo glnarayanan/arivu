@@ -25,6 +25,8 @@ For production, run behind TLS and set `COOKIE_SECURE=true`,
    or `arivu save`.
    Dashboard captures made while offline are held in this browser and synced
    when the signed-in session is online again.
+   Where supported by the browser, Dictate can append speech-to-text into daily
+   notes, quick notes, standalone notes, and bookmark-linked notes.
 3. Triage new saves and notes in `/inbox` by setting stage, priority, and next
    action.
 4. Work from `/focus` when a save has a task or reminder.

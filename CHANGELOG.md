@@ -57,6 +57,8 @@ All notable changes to this project will be documented in this file.
   never-resurface handling.
 - Added an app-shell service worker and offline dashboard capture queue that
   replays saved URLs when the signed-in browser comes back online.
+- Added browser-native dictation controls for daily notes, dashboard quick
+  notes, standalone notes, and bookmark-linked notes.
 
 ### Changed
 

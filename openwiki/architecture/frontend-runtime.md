@@ -57,6 +57,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - If dashboard capture cannot reach the server, the browser stores only the URL,
   quick note, tags, and queued timestamp in local storage, then replays those
   saves through `/api/bookmarks` after the signed-in browser is online again.
+- Daily notes, dashboard quick notes, standalone notes, and bookmark-linked
+  notes expose browser-native dictation when Web Speech recognition is
+  available. Audio stays in the browser/platform recognizer; Arivu only receives
+  the resulting text after the normal save action.
 - Dashboard retrieval supports query, tag, domain, source, read-status, and
   saved-date range filters, saving the current search, replaying saved searches,
   and a cited answer panel sourced only from matching saved items. Cited answers

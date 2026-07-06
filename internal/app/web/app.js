@@ -183,6 +183,42 @@ function offlineQueueMessage() {
   return count ? `<p class="meta offline-status">${count} offline capture${count === 1 ? "" : "s"} waiting to sync.</p>` : "";
 }
 
+function voiceButton(targetID) {
+  return `<button type="button" class="secondary voice-button" data-voice-target="${escapeHTML(targetID)}">Dictate</button>`;
+}
+
+function bindVoiceCapture() {
+  document.querySelectorAll("[data-voice-target]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      const target = document.getElementById(button.dataset.voiceTarget);
+      if (!SpeechRecognition || !target) {
+        ui.toast("Voice capture is not available in this browser", "error");
+        return;
+      }
+      const done = setButtonBusy(button, "Listening");
+      const recognition = new SpeechRecognition();
+      recognition.lang = navigator.language || "en-US";
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+      recognition.onresult = (event) => {
+        const transcript = Array.from(event.results).map((result) => result[0]?.transcript || "").join(" ").trim();
+        if (!transcript) return;
+        target.value = [target.value.trim(), transcript].filter(Boolean).join("\n");
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+      };
+      recognition.onerror = () => ui.toast("Voice capture stopped", "error");
+      recognition.onend = done;
+      try {
+        recognition.start();
+      } catch {
+        done();
+        ui.toast("Voice capture is not available right now", "error");
+      }
+    });
+  });
+}
+
 const ui = {
   on(target, type, handler, options) {
     target.addEventListener(type, handler, options);
@@ -594,7 +630,7 @@ async function todayPage() {
       <form class="panel form" id="daily-note-form">
         <span class="meta">${escapeHTML(date)}</span>
         <h2>Daily note</h2>
-        <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea></div>
+        <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea>${voiceButton("daily-note-body")}</div>
         <p class="form-message" id="daily-note-message" data-form-message hidden></p>
         <button type="submit">Save daily note</button>
       </form>
@@ -636,6 +672,7 @@ async function todayPage() {
     </section>
   `));
   const form = document.querySelector("#daily-note-form");
+  bindVoiceCapture();
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Saving");
@@ -864,7 +901,7 @@ async function dashboardPage() {
         <span class="meta">Capture</span>
         <h2>Save a page into Inbox</h2>
         <div class="field"><label for="url">URL</label><input id="url" type="url" placeholder="https://example.com/article" value="${escapeHTML(shared.url)}" required></div>
-        <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea></div>
+        <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea>${voiceButton("save-note")}</div>
         <div class="field"><label for="save-tags">Tags</label><input id="save-tags" type="text" placeholder="research, idea, later"></div>
         <button type="submit">Save bookmark</button>
         ${offlineQueueMessage()}
@@ -925,6 +962,7 @@ async function dashboardPage() {
     </section>
   `));
   const saveForm = document.querySelector("#save-form");
+  bindVoiceCapture();
   saveForm.insertAdjacentHTML("beforeend", `<p class="form-message" id="save-message" data-form-message hidden></p>`);
   saveForm.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1738,7 +1776,7 @@ async function notesPage() {
       <form class="panel form" id="standalone-note-form">
         <h2>New note</h2>
         <div class="field"><label for="standalone-note-title">Title</label><input id="standalone-note-title" type="text" placeholder="Idea, decision, or snippet"></div>
-        <div class="field"><label for="standalone-note-body">Body</label><textarea id="standalone-note-body" rows="6" placeholder="Write the thought before it disappears"></textarea></div>
+        <div class="field"><label for="standalone-note-body">Body</label><textarea id="standalone-note-body" rows="6" placeholder="Write the thought before it disappears"></textarea>${voiceButton("standalone-note-body")}</div>
         <p class="form-message" id="standalone-note-message" data-form-message hidden></p>
         <button type="submit">Save note</button>
       </form>
@@ -1753,6 +1791,7 @@ async function notesPage() {
     </section>
   `));
   const form = document.querySelector("#standalone-note-form");
+  bindVoiceCapture();
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Saving note");
@@ -1805,12 +1844,13 @@ async function noteDetailPage(id) {
   bindLinkDeleteControls();
   bindActionItemControls();
   bindReminderControls();
+  bindVoiceCapture();
 }
 
 function standaloneNoteCard(note, notes, bookmarks = []) {
   return `<article class="panel form" data-note="${escapeHTML(note.id)}">
     <div class="field"><label for="note-title-${escapeHTML(note.id)}">Title</label><input id="note-title-${escapeHTML(note.id)}" data-note-title value="${escapeHTML(note.title || "")}"></div>
-    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="12">${escapeHTML(note.body || "")}</textarea></div>
+    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="12">${escapeHTML(note.body || "")}</textarea>${voiceButton(`note-body-${note.id}`)}</div>
     <p class="meta">${note.bookmark_id ? `Linked to bookmark ${escapeHTML(note.bookmark_id)}` : "Standalone"} · ${escapeHTML(note.updated_at || "")}</p>
     <p class="button-row">
       ${note.bookmark_id ? `<a class="button secondary" href="/bookmark/${escapeHTML(note.bookmark_id)}">Open bookmark</a>` : ""}
@@ -1929,7 +1969,7 @@ async function bookmarkPage() {
         <form class="form" id="note-form">
           <h2>Linked note</h2>
           <div class="field"><label for="note-title">Title</label><input id="note-title" type="text" placeholder="Working note"></div>
-          <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea></div>
+          <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea>${voiceButton("note-body")}</div>
           <p class="form-message" id="note-message" data-form-message hidden></p>
           <button type="submit">Save note</button>
         </form>
@@ -2099,6 +2139,7 @@ async function bookmarkPage() {
   bindLinkDeleteControls();
   bindActionItemControls();
   bindReminderControls();
+  bindVoiceCapture();
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;

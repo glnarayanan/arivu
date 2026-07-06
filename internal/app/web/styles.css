@@ -399,6 +399,9 @@ input::placeholder, textarea::placeholder {
   color: var(--placeholder);
   opacity: 1;
 }
+.voice-button {
+  justify-self: start;
+}
 .form-message {
   margin: 0;
   border: 2px solid var(--ink);
