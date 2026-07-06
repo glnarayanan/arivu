@@ -183,8 +183,8 @@ function offlineQueueMessage() {
   return count ? `<p class="meta offline-status">${count} offline capture${count === 1 ? "" : "s"} waiting to sync.</p>` : "";
 }
 
-function voiceButton(targetID) {
-  return `<button type="button" class="secondary voice-button" data-voice-target="${escapeHTML(targetID)}">Dictate</button>`;
+function voiceButton(targetID, label = "note") {
+  return `<button type="button" class="secondary voice-button" data-voice-target="${escapeHTML(targetID)}" aria-label="Dictate into ${escapeHTML(label)}">Dictate</button>`;
 }
 
 function bindVoiceCapture() {
@@ -630,7 +630,7 @@ async function todayPage() {
       <form class="panel form" id="daily-note-form">
         <span class="meta">${escapeHTML(date)}</span>
         <h2>Daily note</h2>
-        <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea>${voiceButton("daily-note-body")}</div>
+        <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea>${voiceButton("daily-note-body", "daily note")}</div>
         <p class="form-message" id="daily-note-message" data-form-message hidden></p>
         <button type="submit">Save daily note</button>
       </form>
@@ -901,7 +901,7 @@ async function dashboardPage() {
         <span class="meta">Capture</span>
         <h2>Save a page into Inbox</h2>
         <div class="field"><label for="url">URL</label><input id="url" type="url" placeholder="https://example.com/article" value="${escapeHTML(shared.url)}" required></div>
-        <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea>${voiceButton("save-note")}</div>
+        <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea>${voiceButton("save-note", "quick note")}</div>
         <div class="field"><label for="save-tags">Tags</label><input id="save-tags" type="text" placeholder="research, idea, later"></div>
         <button type="submit">Save bookmark</button>
         ${offlineQueueMessage()}
@@ -1776,7 +1776,7 @@ async function notesPage() {
       <form class="panel form" id="standalone-note-form">
         <h2>New note</h2>
         <div class="field"><label for="standalone-note-title">Title</label><input id="standalone-note-title" type="text" placeholder="Idea, decision, or snippet"></div>
-        <div class="field"><label for="standalone-note-body">Body</label><textarea id="standalone-note-body" rows="6" placeholder="Write the thought before it disappears"></textarea>${voiceButton("standalone-note-body")}</div>
+        <div class="field"><label for="standalone-note-body">Body</label><textarea id="standalone-note-body" rows="6" placeholder="Write the thought before it disappears"></textarea>${voiceButton("standalone-note-body", "new note")}</div>
         <p class="form-message" id="standalone-note-message" data-form-message hidden></p>
         <button type="submit">Save note</button>
       </form>
@@ -1850,7 +1850,7 @@ async function noteDetailPage(id) {
 function standaloneNoteCard(note, notes, bookmarks = []) {
   return `<article class="panel form" data-note="${escapeHTML(note.id)}">
     <div class="field"><label for="note-title-${escapeHTML(note.id)}">Title</label><input id="note-title-${escapeHTML(note.id)}" data-note-title value="${escapeHTML(note.title || "")}"></div>
-    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="12">${escapeHTML(note.body || "")}</textarea>${voiceButton(`note-body-${note.id}`)}</div>
+    <div class="field"><label for="note-body-${escapeHTML(note.id)}">Body</label><textarea id="note-body-${escapeHTML(note.id)}" data-note-body rows="12">${escapeHTML(note.body || "")}</textarea>${voiceButton(`note-body-${note.id}`, "note body")}</div>
     <p class="meta">${note.bookmark_id ? `Linked to bookmark ${escapeHTML(note.bookmark_id)}` : "Standalone"} · ${escapeHTML(note.updated_at || "")}</p>
     <p class="button-row">
       ${note.bookmark_id ? `<a class="button secondary" href="/bookmark/${escapeHTML(note.bookmark_id)}">Open bookmark</a>` : ""}
@@ -1969,7 +1969,7 @@ async function bookmarkPage() {
         <form class="form" id="note-form">
           <h2>Linked note</h2>
           <div class="field"><label for="note-title">Title</label><input id="note-title" type="text" placeholder="Working note"></div>
-          <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea>${voiceButton("note-body")}</div>
+          <div class="field"><label for="note-body">Body</label><textarea id="note-body" rows="5" placeholder="Turn this saved item into usable knowledge"></textarea>${voiceButton("note-body", "linked note")}</div>
           <p class="form-message" id="note-message" data-form-message hidden></p>
           <button type="submit">Save note</button>
         </form>

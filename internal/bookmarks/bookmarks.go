@@ -822,7 +822,7 @@ func (s *Service) duplicateCandidates(ctx context.Context, userID string) ([]dup
 	var candidates []duplicateBookmark
 	for rows.Next() {
 		var embedding []byte
-		bm := scanBookmarkWithEmbedding(rows, &embedding)
+		bm := scanBookmarkRow(rows, &embedding)
 		if bm["id"] == "" {
 			continue
 		}
@@ -841,7 +841,7 @@ func (s *Service) graphBookmark(ctx context.Context, userID, bookmarkID string) 
 		return graphBookmark{}, errors.New("not found")
 	}
 	var embedding []byte
-	data := scanBookmarkWithEmbedding(rows, &embedding)
+	data := scanBookmarkRow(rows, &embedding)
 	scanErr := rows.Err()
 	if err := rows.Close(); err != nil {
 		return graphBookmark{}, err
@@ -877,7 +877,7 @@ func (s *Service) graphBookmarks(ctx context.Context, userID string, limit int, 
 	var ids []string
 	for rows.Next() {
 		var embedding []byte
-		data := scanBookmarkWithEmbedding(rows, &embedding)
+		data := scanBookmarkRow(rows, &embedding)
 		id, _ := data["id"].(string)
 		if id == "" {
 			continue
@@ -939,10 +939,6 @@ func (s *Service) graphTerms(ctx context.Context, userID, table, column string, 
 		}
 	}
 	return result, rows.Err()
-}
-
-func scanBookmarkWithEmbedding(row scanner, embedding *[]byte) map[string]any {
-	return scanBookmarkRow(row, embedding)
 }
 
 func duplicatePayloads(bookmarks []duplicateBookmark) []map[string]any {
