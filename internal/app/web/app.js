@@ -3087,6 +3087,7 @@ function importPanel() {
   return `<section class="split">
     <form class="panel form" id="import-form">
       <h3>Import or restore</h3>
+      <p class="meta">Paste supported exports or one URL per line. Imports are queued safely; full JSON restores rebuild your second-brain data under this account.</p>
       <div class="field"><label for="import-content">Import or restore content</label><textarea id="import-content" rows="9" placeholder="Paste browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom, URL-bearing Readwise/Kindle CSV, Arivu JSON, or one URL per line"></textarea></div>
       <p class="form-message" id="import-message" data-form-message hidden></p>
       <button type="submit">Queue import or restore</button>
@@ -3144,11 +3145,25 @@ function renderImportJobs(jobs) {
   const target = document.querySelector("#import-jobs");
   if (!target) return;
   target.innerHTML = (jobs || []).map((job) => `<article class="annotation">
-    <p><strong>${escapeHTML(job.status || "import")}</strong> <span class="meta">${Number(job.total_bookmarks || 0)} items</span></p>
+    <p><strong>${escapeHTML(importJobLabel(job))}</strong> <span class="meta">${Number(job.total_bookmarks || 0)} items</span></p>
+    ${importJobProgress(job)}
     ${importSourceReport(job.source_report || [])}
     ${importSourceItems(job.items || [])}
     <p class="meta">Fetched ${Number(job.content_fetched || 0)} · AI ${Number(job.ai_processed || 0)} · Failed ${Number(job.failed || 0)}</p>
   </article>`).join("") || `<p class="meta">No imports yet.</p>`;
+}
+
+function importJobLabel(job) {
+  const failed = Number(job.failed || 0);
+  if (failed) return `${job.status || "import"} · ${failed} failed`;
+  return job.status || "import";
+}
+
+function importJobProgress(job) {
+  const total = Number(job.total_bookmarks || 0);
+  if (!total) return "";
+  const handled = Math.min(total, Number(job.content_fetched || 0) + Number(job.failed || 0));
+  return `<progress value="${handled}" max="${total}" aria-label="Import progress"></progress><p class="meta">${handled}/${total} handled${job.updated_at ? ` · updated ${escapeHTML(formatDate(job.updated_at))}` : ""}</p>`;
 }
 
 function importSourceReport(report) {

@@ -59,6 +59,8 @@ All notable changes to this project will be documented in this file.
   replays saved URLs when the signed-in browser comes back online.
 - Added browser-native dictation controls for daily notes, dashboard quick
   notes, standalone notes, and bookmark-linked notes.
+- Improved import trust signals with clearer supported-format copy and native
+  progress bars over existing import job counters.
 
 ### Changed
 

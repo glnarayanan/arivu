@@ -72,6 +72,10 @@ source, read status, and saved date. Cited answers use only saved Arivu content.
 Search and cited-answer citations explain why an item appeared and accept
 feedback such as Useful, Not useful, Snooze longer, or Never resurface.
 
+Settings import/export shows queued import progress, source counts, fetched,
+AI-processed, and failed totals. Failed totals mean the source row was accepted
+but the background fetch or processing step did not complete.
+
 The Assistant page creates reviewable drafts for allowlisted actions: item state
 updates, links, reminders, and action items. Drafts do not execute until a user
 queues and runs the proposal.

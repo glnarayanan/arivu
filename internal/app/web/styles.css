@@ -395,6 +395,15 @@ input, select, textarea {
   padding: var(--space-3);
   font: 600 1rem/1.25 var(--font-ui);
 }
+progress {
+  width: 100%;
+  height: var(--space-3);
+  border: 2px solid var(--ink);
+  background: var(--panel);
+}
+progress::-webkit-progress-bar { background: var(--panel); }
+progress::-webkit-progress-value { background: var(--accent-2); }
+progress::-moz-progress-bar { background: var(--accent-2); }
 input::placeholder, textarea::placeholder {
   color: var(--placeholder);
   opacity: 1;

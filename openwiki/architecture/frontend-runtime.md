@@ -78,10 +78,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   `/notes/:id` for compatibility.
 - Settings import/export uses native controls: paste supported export content,
   submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
-  AI-processed, failed, completed status counters, source report chips, and
-  bounded item provenance for the import just submitted, download or restore
-  full JSON backups with second-brain data, or download CSV, browser HTML, and
-  Markdown bookmark interchange exports. Obsidian ZIP export downloads
+  AI-processed, failed, completed status counters, native progress bars, source
+  report chips, and bounded item provenance for the import just submitted,
+  download or restore full JSON backups with second-brain data, or download
+  CSV, browser HTML, and Markdown bookmark interchange exports. Obsidian ZIP export downloads
   vault-ready bookmark and note folders with explicit graph links as wikilinks
   from the same export route.
 - Settings tags uses native forms to create primary tags and add aliases to
