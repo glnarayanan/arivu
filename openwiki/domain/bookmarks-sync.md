@@ -74,6 +74,11 @@ Second-brain v1 adds user-authored context around bookmarks:
   typed `/api/search/items` route returns ranked bookmark/note results with
   snippets and source links, and `/api/search/rebuild` exists as a
   quota-protected repair path for imports or operator recovery.
+- `/api/media/import` converts documents and transcript-style media into normal
+  notes with `media:*` sources. EPUB, HTML, text, Markdown, pasted transcript,
+  pasted OCR, best-effort PDF text, and provider-backed image OCR flow through
+  the existing note inbox, export, review, and search index instead of creating a
+  separate media silo.
 - Cited answer mode uses the same unified retrieval layer and returns citations
   back to saved bookmarks or notes instead of producing uncited claims.
 - Job status is visible per user, which makes background import/enrichment progress inspectable without exposing server errors.

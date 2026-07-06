@@ -61,6 +61,9 @@ All notable changes to this project will be documented in this file.
   notes, standalone notes, and bookmark-linked notes.
 - Improved import trust signals with clearer supported-format copy and native
   progress bars over existing import job counters.
+- Added Settings and API media import for EPUB/PDF/text/HTML/Markdown files,
+  pasted transcripts, pasted OCR text, and optional Gemini-backed image OCR,
+  saving each import as a searchable `media:*` note.
 
 ### Changed
 

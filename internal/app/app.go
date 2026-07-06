@@ -149,6 +149,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/daily-notes/{date}", a.withUserQuota(quotaNotesWrite, a.bookmarks.SaveDailyNote))
 	mux.HandleFunc("GET /api/notes", a.withUser(a.bookmarks.Notes))
 	mux.HandleFunc("POST /api/notes", a.withUserQuota(quotaNotesWrite, a.bookmarks.CreateNote))
+	mux.HandleFunc("POST /api/media/import", a.withUserQuota(quotaNotesWrite, a.bookmarks.ImportMedia))
 	mux.HandleFunc("GET /api/notes/{id}", a.withUser(a.bookmarks.GetNote))
 	mux.HandleFunc("PATCH /api/notes/{id}", a.withUserQuota(quotaNotesWrite, a.bookmarks.UpdateNote))
 	mux.HandleFunc("DELETE /api/notes/{id}", a.withUser(a.bookmarks.DeleteNote))

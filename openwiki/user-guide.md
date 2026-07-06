@@ -11,8 +11,7 @@ Run the server:
 go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
 ```
 
-Open `http://127.0.0.1:8080/auth`, create an account, then start from
-`/dashboard`.
+Open `http://127.0.0.1:8080/auth`, create an account, then start from `/today`.
 
 For production, run behind TLS and set `COOKIE_SECURE=true`,
 `SECRET_KEY`, `APP_URL`, `ADMIN_EMAILS`, and `SIGNUPS_ENABLED=false`.
@@ -86,6 +85,13 @@ Settings can import browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom,
 URL-bearing Readwise/Kindle CSV or TSV, Arivu JSON, or one URL per line.
 Exports include JSON backup, CSV, browser HTML, Markdown, and Obsidian ZIP vault
 output.
+
+The same Settings import tab can also turn documents and media transcripts into
+searchable notes. Upload an EPUB, PDF, plain text, Markdown, HTML file, or image,
+or paste a YouTube/video transcript or OCR text. Arivu stores the result as a
+normal note with a `media:*` source so it appears in Inbox, search, export, and
+review. Image uploads use pasted OCR text when provided; if Gemini is configured,
+Arivu can attempt image text extraction automatically.
 
 Legacy Arivu migrations use the JSON export path documented in
 `domain/migration-guide.md`.

@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -304,6 +305,85 @@ func TestResultFeedbackDecoratesSearchAndRoundTrips(t *testing.T) {
 	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM result_feedback rf JOIN bookmarks b ON b.user_id=rf.user_id AND b.id=rf.item_id WHERE rf.user_id=? AND b.url='https://example.com/feedback-source' AND rf.feedback='useful'`, restoreUserID).Scan(&restoredCount)
 	if restoredCount != 1 {
 		t.Fatalf("restored feedback count = %d", restoredCount)
+	}
+}
+
+func TestMediaImportCreatesSearchableNotes(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 4 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "media@example.com")
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("title", "Research Packet"); err != nil {
+		t.Fatalf("write title: %v", err)
+	}
+	part, err := writer.CreateFormFile("file", "packet.epub")
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	zipWriter := zip.NewWriter(part)
+	chapter, err := zipWriter.Create("OPS/chapter.xhtml")
+	if err != nil {
+		t.Fatalf("create epub chapter: %v", err)
+	}
+	_, _ = io.WriteString(chapter, `<html><head><title>Deep Work</title></head><body><h1>Deep Work</h1><p>Focus queue transcript.</p></body></html>`)
+	if err := zipWriter.Close(); err != nil {
+		t.Fatalf("close epub: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart: %v", err)
+	}
+
+	upload := mediaRequest(t, handler, http.MethodPost, "/api/media/import", &body, writer.FormDataContentType(), accessCookie, csrfCookie)
+	if upload.StatusCode != http.StatusOK {
+		t.Fatalf("media upload status = %d body=%s", upload.StatusCode, readBody(upload))
+	}
+	var uploaded struct {
+		Note map[string]any `json:"note"`
+	}
+	_ = json.NewDecoder(upload.Body).Decode(&uploaded)
+	upload.Body.Close()
+	if uploaded.Note["source"] != "media:epub" || !strings.Contains(uploaded.Note["body"].(string), "Focus queue transcript") {
+		t.Fatalf("unexpected imported note: %#v", uploaded.Note)
+	}
+
+	search := adminRequest(t, handler, http.MethodGet, "/api/search/items?q=transcript&type=note", "", accessCookie, csrfCookie)
+	if search.StatusCode != http.StatusOK {
+		t.Fatalf("media search status = %d body=%s", search.StatusCode, readBody(search))
+	}
+	var searchBody struct {
+		Results []map[string]any `json:"results"`
+	}
+	_ = json.NewDecoder(search.Body).Decode(&searchBody)
+	search.Body.Close()
+	if len(searchBody.Results) != 1 || searchBody.Results[0]["source"] != "media:epub" {
+		t.Fatalf("search missing imported media note: %#v", searchBody.Results)
+	}
+
+	transcript := adminRequest(t, handler, http.MethodPost, "/api/media/import", `{"source_url":"https://youtube.com/watch?v=abc","title":"Talk","transcript":"Decision history over time"}`, accessCookie, csrfCookie)
+	if transcript.StatusCode != http.StatusOK {
+		t.Fatalf("transcript import status = %d body=%s", transcript.StatusCode, readBody(transcript))
+	}
+	var transcriptBody struct {
+		Note map[string]any `json:"note"`
+	}
+	_ = json.NewDecoder(transcript.Body).Decode(&transcriptBody)
+	transcript.Body.Close()
+	if transcriptBody.Note["source"] != "media:youtube" || !strings.Contains(transcriptBody.Note["body"].(string), "Decision history over time") {
+		t.Fatalf("unexpected transcript note: %#v", transcriptBody.Note)
 	}
 }
 
@@ -2403,7 +2483,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `function flushOfflineBookmarks`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `function flushOfflineBookmarks`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `requestOptions.body instanceof FormData`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
@@ -3168,6 +3248,18 @@ func adminRequest(t *testing.T, handler http.Handler, method string, path string
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	return rec.Result()
+}
+
+func mediaRequest(t *testing.T, handler http.Handler, method string, path string, body io.Reader, contentType string, accessCookie, csrfCookie *http.Cookie) *http.Response {
+	t.Helper()
+	req := httptest.NewRequest(method, path, body)
+	req.AddCookie(accessCookie)
+	req.AddCookie(csrfCookie)
+	req.Header.Set("X-CSRF-Token", csrfCookie.Value)
+	req.Header.Set("Content-Type", contentType)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
 	return rec.Result()

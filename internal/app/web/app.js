@@ -30,7 +30,8 @@ const routes = [
 async function api(path, options = {}) {
   const { retried = false, ...requestOptions } = options;
   const headers = new Headers(requestOptions.headers || {});
-  if (requestOptions.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
+  const isFormData = typeof FormData !== "undefined" && requestOptions.body instanceof FormData;
+  if (requestOptions.body && !isFormData && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
   const csrf = getCookie("csrf_token");
   if (csrf) headers.set("X-CSRF-Token", csrf);
   let res;
@@ -3092,6 +3093,16 @@ function importPanel() {
       <p class="form-message" id="import-message" data-form-message hidden></p>
       <button type="submit">Queue import or restore</button>
     </form>
+    <form class="panel form" id="media-import-form">
+      <h3>Document and transcript import</h3>
+      <p class="meta">Create a searchable note from a PDF, EPUB, image OCR text, plain text file, or YouTube/video transcript.</p>
+      <div class="field"><label for="media-import-title">Title</label><input id="media-import-title" name="title" placeholder="Research packet, book, talk, screenshot"></div>
+      <div class="field"><label for="media-import-url">Source URL</label><input id="media-import-url" name="source_url" placeholder="https://youtube.com/watch?v=..."></div>
+      <div class="field"><label for="media-import-file">File</label><input id="media-import-file" name="file" type="file" accept=".epub,.pdf,.txt,.md,.html,.htm,image/*"></div>
+      <div class="field"><label for="media-import-transcript">Transcript or OCR text</label><textarea id="media-import-transcript" name="transcript" rows="7" placeholder="Paste video transcript, OCR text, or copied document text"></textarea></div>
+      <p class="form-message" id="media-import-message" data-form-message hidden></p>
+      <button type="submit">Import as note</button>
+    </form>
     <section class="panel">
       <h3>Export</h3>
       <div class="button-row">
@@ -3132,6 +3143,30 @@ async function bindImportPanel() {
         }
       }
       renderImportJobs(latest);
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  bindMediaImportPanel();
+}
+
+function bindMediaImportPanel() {
+  const form = document.querySelector("#media-import-form");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Importing");
+    setFormMessage(form);
+    try {
+      const formData = new FormData(form);
+      const result = await api("/media/import", { method: "POST", body: formData });
+      const title = result.note?.title || "Imported media";
+      setFormMessage(form, `Saved "${title}" as a searchable note.`, "success");
+      ui.toast("Media imported as a note", "success");
+      form.reset();
     } catch (err) {
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
