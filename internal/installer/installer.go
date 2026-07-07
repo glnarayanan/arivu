@@ -111,7 +111,7 @@ func BuildPlan(opts Options, facts HostFacts) (Plan, error) {
 		Warnings:    warnings,
 	}
 	plan.Actions = plannedActions(opts, facts, mode, port)
-	plan.Files = plannedFiles(opts, mode, port)
+	plan.Files = plannedFiles(opts, facts, mode, port)
 	return plan, nil
 }
 
@@ -236,7 +236,7 @@ func plannedActions(opts Options, facts HostFacts, mode ProxyMode, port int) []A
 	return actions
 }
 
-func plannedFiles(opts Options, mode ProxyMode, port int) []ManagedFile {
+func plannedFiles(opts Options, facts HostFacts, mode ProxyMode, port int) []ManagedFile {
 	files := []ManagedFile{
 		{Path: "/etc/arivu/arivu.env", Mode: "0640", Content: EnvFile(opts, port, "GENERATED-BY-INSTALLER")},
 		{Path: "/etc/systemd/system/arivu.service", Mode: "0644", Content: ServiceFile()},
@@ -247,11 +247,26 @@ func plannedFiles(opts Options, mode ProxyMode, port int) []ManagedFile {
 	case ProxyManagedCaddy:
 		files = append(files, ManagedFile{Path: "/etc/caddy/conf.d/arivu.caddy", Mode: "0644", Content: CaddyFile(opts.Domain, port)})
 	case ProxyExistingProxy:
-		files = append(files, ManagedFile{Path: "/etc/arivu/proxy/Caddyfile.arivu", Mode: "0644", Content: CaddyFile(opts.Domain, port)})
-		files = append(files, ManagedFile{Path: "/etc/nginx/snippets/arivu.conf", Mode: "0644", Content: NginxSnippet(opts.Domain, port)})
-		files = append(files, ManagedFile{Path: "/etc/apache2/conf-available/arivu.conf", Mode: "0644", Content: ApacheSnippet(opts.Domain, port)})
+		files = append(files, existingProxyFiles(opts, facts, port)...)
 	}
 	return files
+}
+
+func existingProxyFiles(opts Options, facts HostFacts, port int) []ManagedFile {
+	switch {
+	case facts.Commands["nginx"] != "":
+		return []ManagedFile{{Path: "/etc/nginx/snippets/arivu.conf", Mode: "0644", Content: NginxSnippet(opts.Domain, port)}}
+	case facts.Commands["caddy"] != "":
+		return []ManagedFile{{Path: "/etc/arivu/proxy/Caddyfile.arivu", Mode: "0644", Content: CaddyFile(opts.Domain, port)}}
+	case facts.Commands["apache2"] != "" || facts.Commands["httpd"] != "":
+		return []ManagedFile{{Path: "/etc/apache2/conf-available/arivu.conf", Mode: "0644", Content: ApacheSnippet(opts.Domain, port)}}
+	default:
+		return []ManagedFile{
+			{Path: "/etc/arivu/proxy/Caddyfile.arivu", Mode: "0644", Content: CaddyFile(opts.Domain, port)},
+			{Path: "/etc/arivu/proxy/nginx.conf", Mode: "0644", Content: NginxSnippet(opts.Domain, port)},
+			{Path: "/etc/arivu/proxy/apache.conf", Mode: "0644", Content: ApacheSnippet(opts.Domain, port)},
+		}
+	}
 }
 
 func EnvFile(opts Options, port int, secret string) string {

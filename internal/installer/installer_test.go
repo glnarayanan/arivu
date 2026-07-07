@@ -47,6 +47,9 @@ func TestBuildPlanSharedHostUsesExistingProxy(t *testing.T) {
 	if !hasFile(plan, "/etc/nginx/snippets/arivu.conf") {
 		t.Fatalf("existing proxy plan missing nginx snippet: %#v", plan.Files)
 	}
+	if hasFile(plan, "/etc/apache2/conf-available/arivu.conf") || hasFile(plan, "/etc/arivu/proxy/Caddyfile.arivu") {
+		t.Fatalf("nginx existing-proxy plan should not manage other proxy configs: %#v", plan.Files)
+	}
 }
 
 func TestBuildPlanAppOnlySkipsProxyFiles(t *testing.T) {
