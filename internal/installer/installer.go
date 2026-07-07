@@ -240,8 +240,12 @@ func plannedFiles(opts Options, facts HostFacts, mode ProxyMode, port int) []Man
 	files := []ManagedFile{
 		{Path: "/etc/arivu/arivu.env", Mode: "0640", Content: EnvFile(opts, port, "GENERATED-BY-INSTALLER")},
 		{Path: "/etc/systemd/system/arivu.service", Mode: "0644", Content: ServiceFile()},
-		{Path: "/etc/systemd/system/arivu-backup.service", Mode: "0644", Content: BackupServiceFile()},
-		{Path: "/etc/systemd/system/arivu-backup.timer", Mode: "0644", Content: BackupTimerFile()},
+	}
+	if opts.BackupEnabled {
+		files = append(files,
+			ManagedFile{Path: "/etc/systemd/system/arivu-backup.service", Mode: "0644", Content: BackupServiceFile()},
+			ManagedFile{Path: "/etc/systemd/system/arivu-backup.timer", Mode: "0644", Content: BackupTimerFile()},
+		)
 	}
 	switch mode {
 	case ProxyManagedCaddy:

@@ -64,6 +64,18 @@ func TestBuildPlanAppOnlySkipsProxyFiles(t *testing.T) {
 	}
 }
 
+func TestBuildPlanBackupsDisabledSkipsBackupUnits(t *testing.T) {
+	opts := baseOptions()
+	opts.BackupEnabled = false
+	plan, err := BuildPlan(opts, cleanFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasFile(plan, "/etc/systemd/system/arivu-backup.service") || hasFile(plan, "/etc/systemd/system/arivu-backup.timer") {
+		t.Fatalf("backups disabled should not manage backup units: %#v", plan.Files)
+	}
+}
+
 func TestBuildPlanRejectsExistingDomainVHost(t *testing.T) {
 	facts := cleanFacts()
 	facts.ExistingVHosts = []string{"arivu.example.com"}

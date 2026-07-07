@@ -60,7 +60,7 @@ commands:
 }
 
 func runInstall(ctx context.Context, args []string) {
-	opts, applyOpts, nonInteractive, yes, err := parseOptions(args)
+	opts, applyOpts, nonInteractive, yes, err := parseOptions(args, true)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -76,6 +76,10 @@ func runInstall(ctx context.Context, args []string) {
 		log.Fatal(err)
 	}
 	fmt.Println(installer.FormatPlan(plan))
+	if applyOpts.DryRun {
+		fmt.Println("Dry run complete; no changes applied.")
+		return
+	}
 	if !nonInteractive && !yes && !confirm("Apply this plan?") {
 		log.Fatal("install cancelled")
 	}
@@ -86,7 +90,7 @@ func runInstall(ctx context.Context, args []string) {
 }
 
 func runPlan(ctx context.Context, args []string) {
-	opts, _, nonInteractive, _, err := parseOptions(args)
+	opts, _, nonInteractive, _, err := parseOptions(args, false)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -104,7 +108,7 @@ func runPlan(ctx context.Context, args []string) {
 	fmt.Println(installer.FormatPlan(plan))
 }
 
-func parseOptions(args []string) (installer.Options, installer.ApplyOptions, bool, bool, error) {
+func parseOptions(args []string, requireInstallPassword bool) (installer.Options, installer.ApplyOptions, bool, bool, error) {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	var opts installer.Options
 	var apply installer.ApplyOptions
@@ -134,7 +138,7 @@ func parseOptions(args []string) (installer.Options, installer.ApplyOptions, boo
 		if strings.TrimSpace(opts.Domain) == "" || strings.TrimSpace(opts.AdminEmail) == "" {
 			return opts, apply, false, false, fmt.Errorf("--domain and --admin-email are required with --non-interactive")
 		}
-		if apply.AdminPasswordFile == "" && !apply.DryRun {
+		if requireInstallPassword && apply.AdminPasswordFile == "" && !apply.DryRun {
 			return opts, apply, false, false, fmt.Errorf("--admin-password-file is required with --non-interactive install")
 		}
 	}
@@ -150,7 +154,7 @@ func interactiveWizard(opts installer.Options, apply installer.ApplyOptions) (in
 	opts.ProxyMode = installer.ProxyMode(mode)
 	opts.SignupsEnabled = promptBool(reader, "Allow public signups", opts.SignupsEnabled)
 	opts.BackupEnabled = promptBool(reader, "Install daily SQLite backups", true)
-	if apply.AdminPasswordFile == "" && apply.AdminPassword == "" {
+	if !apply.DryRun && apply.AdminPasswordFile == "" && apply.AdminPassword == "" {
 		password, err := readSecret("First admin password")
 		if err != nil {
 			return opts, apply, err
