@@ -190,15 +190,23 @@ func (a *App) adminDeleteUser(w http.ResponseWriter, r *http.Request, user auth.
 }
 
 func (a *App) adminAPIKeys(w http.ResponseWriter, r *http.Request, user auth.User) {
+	a.adminSettings(w, r, user)
+}
+
+func (a *App) adminSettings(w http.ResponseWriter, r *http.Request, user auth.User) {
 	status, err := a.runtime.Status(r.Context())
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not load API key settings")
+		writeError(w, http.StatusInternalServerError, "Could not load settings")
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
 }
 
 func (a *App) adminUpdateAPIKeys(w http.ResponseWriter, r *http.Request, user auth.User) {
+	a.adminUpdateSettings(w, r, user)
+}
+
+func (a *App) adminUpdateSettings(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body map[string]any
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request")
@@ -207,14 +215,14 @@ func (a *App) adminUpdateAPIKeys(w http.ResponseWriter, r *http.Request, user au
 	changed := []string{}
 	for key, value := range body {
 		if !runtimeconfig.Allowed(key) {
-			writeError(w, http.StatusBadRequest, "Unknown API key setting")
+			writeError(w, http.StatusBadRequest, "Unknown setting")
 			return
 		}
 		if runtimeconfig.IsSecret(key) && strings.TrimSpace(requestSettingString(value)) == "" {
 			continue
 		}
 		if err := a.runtime.Set(r.Context(), key, value, user.Email, "primary"); err != nil {
-			writeError(w, http.StatusInternalServerError, "Could not update API key settings")
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		changed = append(changed, key)
@@ -231,13 +239,17 @@ func (a *App) adminUpdateAPIKeys(w http.ResponseWriter, r *http.Request, user au
 }
 
 func (a *App) adminDeleteAPIKey(w http.ResponseWriter, r *http.Request, user auth.User) {
+	a.adminDeleteSetting(w, r, user)
+}
+
+func (a *App) adminDeleteSetting(w http.ResponseWriter, r *http.Request, user auth.User) {
 	key := r.PathValue("key")
 	if !runtimeconfig.Allowed(key) {
-		writeError(w, http.StatusBadRequest, "Unknown API key setting")
+		writeError(w, http.StatusBadRequest, "Unknown setting")
 		return
 	}
 	if err := a.runtime.Delete(r.Context(), key); err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not remove API key setting")
+		writeError(w, http.StatusInternalServerError, "Could not remove setting")
 		return
 	}
 	a.auditEvent(r.Context(), user.ID, "admin.settings.delete", "settings", "", map[string]any{"keys": []string{key}})

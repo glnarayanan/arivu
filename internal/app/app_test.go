@@ -2958,6 +2958,70 @@ func TestAdminUserMutations(t *testing.T) {
 	}
 }
 
+func TestAdminSettingsAffectRuntimeAuth(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		AppURL:         "http://localhost:8080",
+		SecretKey:      "test-secret",
+		AdminEmails:    map[string]bool{"admin@example.com": true},
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "admin@example.com")
+
+	update := adminRequest(t, handler, http.MethodPut, "/api/admin/settings", `{"app_url":"https://runtime.example.test/","signups_enabled":false,"cookie_secure":true}`, accessCookie, csrfCookie)
+	if update.StatusCode != http.StatusOK {
+		t.Fatalf("settings update = %d body=%s", update.StatusCode, readBody(update))
+	}
+	update.Body.Close()
+	status := adminRequest(t, handler, http.MethodGet, "/api/admin/settings", "", accessCookie, csrfCookie)
+	var statusBody map[string]map[string]any
+	_ = json.NewDecoder(status.Body).Decode(&statusBody)
+	status.Body.Close()
+	if statusBody["app_url"]["value"] != "https://runtime.example.test" || statusBody["signups_enabled"]["value"] != false || statusBody["cookie_secure"]["value"] != true {
+		t.Fatalf("unexpected settings status: %#v", statusBody)
+	}
+
+	signupReq := httptest.NewRequest(http.MethodPost, "/api/auth/signup", strings.NewReader(`{"email":"blocked@example.com","password":"correct horse battery staple"}`))
+	signupReq.Header.Set("Content-Type", "application/json")
+	signupRec := httptest.NewRecorder()
+	handler.ServeHTTP(signupRec, signupReq)
+	signupResp := signupRec.Result()
+	if signupResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("signup after disable status = %d body=%s", signupResp.StatusCode, readBody(signupResp))
+	}
+	signupResp.Body.Close()
+
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(`{"email":"admin@example.com","password":"correct horse battery staple"}`))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginRec := httptest.NewRecorder()
+	handler.ServeHTTP(loginRec, loginReq)
+	loginResp := loginRec.Result()
+	defer loginResp.Body.Close()
+	if loginResp.StatusCode != http.StatusOK {
+		t.Fatalf("login status = %d body=%s", loginResp.StatusCode, readBody(loginResp))
+	}
+	for _, cookie := range loginResp.Cookies() {
+		if (cookie.Name == "access_token" || cookie.Name == "refresh_token" || cookie.Name == "csrf_token") && !cookie.Secure {
+			t.Fatalf("%s cookie was not secure after runtime setting", cookie.Name)
+		}
+	}
+
+	badURL := adminRequest(t, handler, http.MethodPut, "/api/admin/settings", `{"app_url":"file:///tmp/arivu"}`, accessCookie, csrfCookie)
+	if badURL.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad app_url status = %d body=%s", badURL.StatusCode, readBody(badURL))
+	}
+	badURL.Body.Close()
+}
+
 func TestXOAuthStatusSyncAndDisconnect(t *testing.T) {
 	var tokenCalls, profileCalls, bookmarksCalls int
 	xHTTP := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
