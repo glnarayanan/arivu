@@ -3376,6 +3376,118 @@ function apiKeyStatus(keys) {
     .join("");
 }
 
+function adminSettingsPanel(settings) {
+  return `<section class="split">
+    <section class="panel">
+      <h3>Runtime status</h3>
+      <div id="admin-settings-status" class="stack">${settingsStatus(settings)}</div>
+    </section>
+    <form class="panel form" id="admin-settings-form">
+      <h3>Runtime settings</h3>
+      <div class="field"><label for="admin-app-url">Public app URL</label><input id="admin-app-url" type="url" autocomplete="url" value="${escapeHTML(settings.app_url?.value || "")}"></div>
+      <label class="checkbox-row"><input id="admin-signups-enabled" type="checkbox" ${settings.signups_enabled?.value ? "checked" : ""}> Public signups enabled</label>
+      <label class="checkbox-row"><input id="admin-cookie-secure" type="checkbox" ${settings.cookie_secure?.value ? "checked" : ""}> Secure browser cookies</label>
+      <hr>
+      <div class="field"><label for="admin-gemini-api-key">Gemini API key</label><input id="admin-gemini-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="admin-resend-api-key">Resend API key</label><input id="admin-resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="admin-resend-from-email">Resend from email</label><input id="admin-resend-from-email" type="email" autocomplete="off" value="${escapeHTML(settings.resend_from_email?.value || "")}"></div>
+      <div class="field"><label for="admin-x-client-id">X client ID</label><input id="admin-x-client-id" type="text" autocomplete="off"></div>
+      <div class="field"><label for="admin-x-client-secret">X client secret</label><input id="admin-x-client-secret" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="admin-x-redirect-uri">X redirect URI</label><input id="admin-x-redirect-uri" type="url" autocomplete="off" value="${escapeHTML(settings.x_redirect_uri?.value || "")}"></div>
+      <label class="checkbox-row"><input id="admin-x-integration-enabled" type="checkbox" ${settings.x_integration_enabled?.value ? "checked" : ""}> X integration enabled</label>
+      <p class="form-message" id="admin-settings-message" data-form-message hidden></p>
+      <button type="submit">Save settings</button>
+    </form>
+  </section>`;
+}
+
+function settingsStatus(settings) {
+  const labels = {
+    app_url: "Public app URL",
+    signups_enabled: "Public signups",
+    cookie_secure: "Secure cookies",
+    gemini_api_key: "Gemini API key",
+    resend_api_key: "Resend API key",
+    resend_from_email: "Resend from email",
+    x_client_id: "X client ID",
+    x_client_secret: "X client secret",
+    x_redirect_uri: "X redirect URI",
+    x_integration_enabled: "X enabled",
+  };
+  return Object.keys(labels).map((key) => {
+    const item = settings[key] || {};
+    const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
+    const configured = item.configured || value;
+    return `<article class="annotation">
+      <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
+      ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-admin-setting-revert="${escapeHTML(key)}">Remove override</button></p>` : ""}
+    </article>`;
+  }).join("");
+}
+
+function bindAdminSettingsPanel() {
+  const form = document.querySelector("#admin-settings-form");
+  const status = document.querySelector("#admin-settings-status");
+  if (!form || !status) return;
+  const refresh = async () => {
+    const settings = await api("/admin/settings");
+    status.innerHTML = settingsStatus(settings);
+    document.querySelector("#admin-app-url").value = settings.app_url?.value || "";
+    document.querySelector("#admin-signups-enabled").checked = Boolean(settings.signups_enabled?.value);
+    document.querySelector("#admin-cookie-secure").checked = Boolean(settings.cookie_secure?.value);
+    document.querySelector("#admin-resend-from-email").value = settings.resend_from_email?.value || "";
+    document.querySelector("#admin-x-redirect-uri").value = settings.x_redirect_uri?.value || "";
+    document.querySelector("#admin-x-integration-enabled").checked = Boolean(settings.x_integration_enabled?.value);
+    status.querySelectorAll("[data-admin-setting-revert]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        const done = setButtonBusy(button, "Reverting");
+        try {
+          await api(`/admin/settings/${button.dataset.adminSettingRevert}`, { method: "DELETE" });
+          await refresh();
+          ui.toast("Override removed", "success");
+        } catch (err) {
+          ui.toast(err.message, "error");
+        } finally {
+          done();
+        }
+      });
+    });
+  };
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving");
+    setFormMessage(form);
+    const body = {
+      app_url: document.querySelector("#admin-app-url").value.trim(),
+      signups_enabled: document.querySelector("#admin-signups-enabled").checked,
+      cookie_secure: document.querySelector("#admin-cookie-secure").checked,
+      x_integration_enabled: document.querySelector("#admin-x-integration-enabled").checked,
+    };
+    for (const [key, selector] of Object.entries({
+      gemini_api_key: "#admin-gemini-api-key",
+      resend_api_key: "#admin-resend-api-key",
+      x_client_id: "#admin-x-client-id",
+      x_client_secret: "#admin-x-client-secret",
+      resend_from_email: "#admin-resend-from-email",
+      x_redirect_uri: "#admin-x-redirect-uri",
+    })) {
+      const value = document.querySelector(selector).value.trim();
+      if (value) body[key] = value;
+    }
+    try {
+      await api("/admin/settings", { method: "PUT", body: JSON.stringify(body) });
+      form.querySelectorAll("input[type=password]").forEach((input) => { input.value = ""; });
+      await refresh();
+      ui.toast("Settings saved", "success");
+    } catch (err) {
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+}
+
 function importPanel() {
   return `<section class="split">
     <form class="panel form" id="import-form">
@@ -3800,13 +3912,14 @@ async function adminPage() {
   const active = params.get("section") || "overview";
   const sort = params.get("sort") || "created_at";
   const order = params.get("order") || "desc";
-  const [overview, usage, users, system, activity, collections, audit] = await Promise.all([
+  const [overview, usage, users, system, activity, collections, settings, audit] = await Promise.all([
     api("/admin/overview"),
     api("/admin/api-usage"),
     api(`/admin/users?sort=${encodeURIComponent(sort)}&order=${encodeURIComponent(order)}`),
     api("/admin/system"),
     api("/admin/activity"),
     api("/admin/collections-stats"),
+    api("/admin/settings"),
     api("/admin/audit-events?limit=12").catch(() => ({ events: [] })),
   ]);
   const tabs = [
@@ -3816,6 +3929,7 @@ async function adminPage() {
     ["system", "System"],
     ["activity", "Activity"],
     ["collections", "Collections"],
+    ["settings", "Settings"],
     ["audit", "Audit"],
   ];
   const selected = tabs.some(([id]) => id === active) ? active : "overview";
@@ -3829,10 +3943,12 @@ async function adminPage() {
     <div role="tabpanel" id="panel-system" aria-labelledby="tab-system">${adminSystemPanel(system)}</div>
     <div role="tabpanel" id="panel-activity" aria-labelledby="tab-activity">${adminActivityPanel(activity)}</div>
     <div role="tabpanel" id="panel-collections" aria-labelledby="tab-collections">${adminCollectionsPanel(collections)}</div>
+    <div role="tabpanel" id="panel-settings" aria-labelledby="tab-settings">${adminSettingsPanel(settings)}</div>
     <div role="tabpanel" id="panel-audit" aria-labelledby="tab-audit"><section class="stack">${auditEvents(audit.events || [])}</section></div>
   </section>`));
   ui.tabs(document.querySelector("#admin-tabs"));
   bindAdminUsersPanel();
+  bindAdminSettingsPanel();
 }
 
 function adminOverviewPanel(data) {
