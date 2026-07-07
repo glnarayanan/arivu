@@ -1,0 +1,75 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - run: go mod verify
+      - run: go test ./...
+      - name: Build native Linux artifacts
+        run: |
+          mkdir -p dist
+          go build -trimpath -ldflags="-s -w" -o "dist/arivu-linux-${{ matrix.arch }}" ./cmd/arivu
+          go build -trimpath -ldflags="-s -w" -o "dist/arivu-installer-linux-${{ matrix.arch }}" ./cmd/arivu-installer
+          go version -m "dist/arivu-linux-${{ matrix.arch }}" > "dist/buildinfo-arivu-linux-${{ matrix.arch }}.txt"
+          go version -m "dist/arivu-installer-linux-${{ matrix.arch }}" > "dist/buildinfo-installer-linux-${{ matrix.arch }}.txt"
+      - uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@v7
+        with:
+          name: arivu-linux-${{ matrix.arch }}
+          path: dist/*
+          retention-days: 14
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Prepare release bundle
+        run: |
+          cp deploy/install.sh dist/install.sh
+          go list -m -json all > dist/go-modules.inventory.jsonl
+          (cd dist && sha256sum arivu-linux-* arivu-installer-linux-* install.sh buildinfo-*.txt go-modules.inventory.jsonl > SHA256SUMS)
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --verify-tag \
+            --title "$GITHUB_REF_NAME" \
+            --notes "Arivu self-hosting release with verified Linux app and installer artifacts."

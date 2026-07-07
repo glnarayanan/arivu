@@ -24,6 +24,12 @@ called through narrow direct HTTP clients.
   `go version -m` build info, `go list -m -json all` module inventory, and
   SHA-256 checksums. This keeps artifact provenance inspectable without adding
   a production dependency or a separate SBOM generator.
+- Release tags publish Linux AMD64 and ARM64 `arivu` and `arivu-installer`
+  binaries, the bootstrap `install.sh`, build info, module inventory,
+  `SHA256SUMS`, and GitHub artifact provenance attestations.
+- The bootstrap installer verifies `SHA256SUMS` before executing
+  `arivu-installer`; the installer verifies the Arivu binary before replacing
+  `/usr/local/bin/arivu`.
 - CI runs first-party browser JavaScript syntax checks and the extension
   URL/origin self-test with the GitHub runner's bundled Node runtime; Arivu
   still ships no npm dependency tree.

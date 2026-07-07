@@ -74,6 +74,16 @@ All notable changes to this project will be documented in this file.
   tasks, reminders, and decision recording.
 - Added JSON backup/restore coverage for knowledge objects with source-reference
   remapping.
+- Added a first-party `arivu-installer` CLI for end-to-end Linux VPS installs,
+  including shared-host preflight, proxy-mode planning, systemd/env rendering,
+  backup/restore helpers, checksum verification, and operational commands.
+- Added a checksum-verifying `deploy/install.sh` bootstrap script for the
+  one-command installer flow.
+- Added `arivu admin bootstrap --password-stdin` for installer-safe first-admin
+  creation without passing passwords through shell arguments.
+- Added a tag-based release workflow that publishes Linux app and installer
+  artifacts, checksums, build info, module inventory, and provenance
+  attestations.
 
 ### Changed
 
@@ -88,6 +98,10 @@ All notable changes to this project will be documented in this file.
 - Admin API key settings now take effect at runtime through SQLite overrides,
   with encrypted provider secrets, plain operational settings, source-aware UI
   status, and per-setting override removal.
+- Runtime app settings now cover public URL, signup policy, and secure-cookie
+  behavior through the same SQLite override path used by provider settings.
+- The Admin page now includes a Settings tab for public URL, signup policy,
+  secure-cookie state, Gemini, Resend, and X configuration.
 - The Admin page now exposes overview, API usage, users, system, activity,
   collections, and audit sections backed by SQLite-native admin endpoints.
 - Admin password reset now uses the same Argon2id password storage as user

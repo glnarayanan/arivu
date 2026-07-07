@@ -1,8 +1,100 @@
 # Deployment
 
-Arivu can run as one process with a local SQLite database.
+Arivu’s primary self-hosting path is the first-party installer CLI. It prepares
+a Linux VPS end to end, while preserving unrelated apps on shared hosts.
 
-## Local
+## One-Command Install
+
+```bash
+curl -fsSL https://install.arivu.app | sudo bash
+```
+
+The bootstrap script only downloads `arivu-installer`, verifies it against the
+release `SHA256SUMS`, installs it under `/usr/local/bin`, and starts the
+interactive installer.
+
+The installer asks for:
+
+- Domain or subdomain.
+- First admin email and password.
+- TLS notification email.
+- Proxy mode.
+- Signup policy.
+- Backup policy.
+- Optional provider settings later through Admin > Settings.
+
+## Shared VPS Behavior
+
+The installer runs preflight before changing anything. It detects existing
+listeners on ports 80 and 443, Caddy, Nginx, Apache, Docker, UFW/firewalld,
+existing Arivu files, and domain vhost conflicts.
+
+Proxy modes:
+
+- `auto`: choose the safest mode from detected host state.
+- `managed-caddy`: install an Arivu-owned Caddy site block on clean hosts.
+- `existing-proxy`: bind Arivu to `127.0.0.1:<free-port>` and write proxy
+  snippets for the existing proxy.
+- `app-only`: start Arivu on loopback and print proxy snippets without changing
+  web server config.
+
+Safety rules:
+
+- The installer never replaces global Caddy, Nginx, or Apache config.
+- The installer never stops unrelated services.
+- Firewall changes are additive only.
+- If the requested domain already appears in an existing vhost, the installer
+  stops and asks for a different domain or subdomain.
+
+## Automation
+
+```bash
+sudo arivu-installer install \
+  --non-interactive \
+  --domain arivu.example.com \
+  --admin-email admin@example.com \
+  --admin-password-file /root/arivu-admin-password \
+  --tls-email ops@example.com \
+  --proxy-mode auto
+```
+
+Preview changes without applying them:
+
+```bash
+arivu-installer plan --domain arivu.example.com --admin-email admin@example.com
+```
+
+Operational commands:
+
+```bash
+arivu-installer status --domain arivu.example.com
+sudo arivu-installer backup
+sudo arivu-installer restore --backup /var/backups/arivu/20260708T010203Z
+sudo arivu-installer upgrade
+sudo arivu-installer reconfigure
+sudo arivu-installer uninstall
+```
+
+## Installed Files
+
+- `/usr/local/bin/arivu`
+- `/usr/local/bin/arivu-installer`
+- `/etc/arivu/arivu.env`
+- `/var/lib/arivu/arivu.sqlite3`
+- `/var/backups/arivu/`
+- `/etc/systemd/system/arivu.service`
+- `/etc/systemd/system/arivu-backup.service`
+- `/etc/systemd/system/arivu-backup.timer`
+
+`/etc/arivu/arivu.env` is generated machine config. It should stay small:
+listen address, SQLite path, public URL, secure-cookie default, signup default,
+admin emails, and `SECRET_KEY`.
+
+Routine settings should be changed in Admin > Settings. Runtime-editable values
+include public URL, signup policy, secure-cookie status, Gemini, Resend, and X
+settings. Secret provider values are encrypted in SQLite.
+
+## Manual Development Run
 
 ```bash
 go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
@@ -10,28 +102,9 @@ go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
 
 Open `http://127.0.0.1:8080/auth`.
 
-## Environment
-
-- `ARIVU_ADDR`: listen address, default `:8080`.
-- `ARIVU_DB`: SQLite path, default `arivu.sqlite3`.
-- `SECRET_KEY`: required outside development.
-- `APP_URL`: public app URL used for emails and provider callbacks.
-- `ADMIN_EMAILS`: comma-separated admin emails.
-- `SIGNUPS_ENABLED`: defaults to `true`.
-- `COOKIE_SECURE`: set `true` behind HTTPS.
-- `ARIVU_FETCH_USER_AGENT`: outbound bookmark fetch user agent, default `Arivu/2.0`; forks may set a project-specific value.
-- `GEMINI_API_KEY`, `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, `X_*`: optional provider integrations.
-- `X_API_BASE_URL` and `X_AUTHORIZE_URL`: optional X endpoint overrides for tests or controlled environments; production should use defaults.
-
-## Production Notes
-
-- Run behind TLS and set `COOKIE_SECURE=true`.
-- Back up the SQLite database and WAL files together.
-- Keep `ARIVU_ADDR` bound to loopback unless your firewall and proxy topology require otherwise.
-- FTS5 is preferred but optional; the app supports the built-in `LIKE` search fallback.
-- Keep the legacy deployment available until migration validation passes.
-
 ## Container
+
+Docker remains an advanced/manual path.
 
 ```bash
 docker build -t arivu:local .
@@ -55,7 +128,10 @@ cd deploy
 docker compose up -d --build
 ```
 
-## systemd
+## Manual systemd
+
+Manual systemd remains available for debugging or unusual hosts. Prefer
+`arivu-installer` for normal production installs.
 
 ```bash
 go build -trimpath -ldflags="-s -w" -o arivu ./cmd/arivu
@@ -64,12 +140,6 @@ sudo useradd --system --home-dir /var/lib/arivu --create-home arivu
 sudo install -d -o arivu -g arivu /var/lib/arivu /etc/arivu
 sudo install -m 0640 -o root -g arivu deploy/arivu.env-sample /etc/arivu/arivu.env
 sudo install -m 0644 deploy/arivu.service /etc/systemd/system/arivu.service
-```
-
-Edit `/etc/arivu/arivu.env`, then start:
-
-```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now arivu
-sudo systemctl status arivu
 ```
