@@ -355,7 +355,8 @@ func (s *Service) AuthenticateSession(r *http.Request) (Session, error) {
 	var user User
 	var audience string
 	var expires string
-	err := s.db.QueryRowContext(r.Context(), `SELECT u.id,u.email,u.name,s.audience,s.access_expires_at FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.access_hash=? AND s.revoked_at IS NULL AND u.banned=0`, hash).Scan(&user.ID, &user.Email, &user.Name, &audience, &expires)
+	var csrfHash sql.NullString
+	err := s.db.QueryRowContext(r.Context(), `SELECT u.id,u.email,u.name,s.audience,s.access_expires_at,s.csrf_hash FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.access_hash=? AND s.revoked_at IS NULL AND u.banned=0`, hash).Scan(&user.ID, &user.Email, &user.Name, &audience, &expires, &csrfHash)
 	if err != nil {
 		return Session{}, err
 	}
@@ -366,6 +367,10 @@ func (s *Service) AuthenticateSession(r *http.Request) (Session, error) {
 	if audience == "web" && mutates(r.Method) {
 		cookie, err := r.Cookie("csrf_token")
 		if err != nil || cookie.Value == "" || r.Header.Get("X-CSRF-Token") != cookie.Value {
+			return Session{}, errors.New("csrf token mismatch")
+		}
+		submittedHash := tokenHash(cookie.Value)
+		if !csrfHash.Valid || subtle.ConstantTimeCompare([]byte(submittedHash), []byte(csrfHash.String)) != 1 {
 			return Session{}, errors.New("csrf token mismatch")
 		}
 	}

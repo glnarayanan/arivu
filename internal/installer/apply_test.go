@@ -2,8 +2,10 @@ package installer
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/glnarayanan/arivu/internal/database"
@@ -64,4 +66,162 @@ func TestRestoreRequiresPrimaryBackupDatabase(t *testing.T) {
 	if err := Restore(t.TempDir(), t.TempDir()); err == nil {
 		t.Fatal("expected missing primary backup database to fail")
 	}
+}
+
+func TestRootRestoreChecksHealthBeforeBackupTimer(t *testing.T) {
+	root := restoreFixture(t, "ARIVU_ADDR=127.0.0.1:8123\nARIVU_BACKUPS_ENABLED=true\n")
+	backupDir := filepath.Join(t.TempDir(), "backup")
+	if err := os.MkdirAll(backupDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "arivu.sqlite3"), []byte("backup"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	var commands []string
+	oldRun := runCommand
+	oldHealth := healthCheckFunc
+	defer func() {
+		runCommand = oldRun
+		healthCheckFunc = oldHealth
+	}()
+	healthIndex := -1
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	healthCheckFunc = func(_ context.Context, port int) error {
+		if port != 8123 {
+			t.Fatalf("health check port = %d, want 8123", port)
+		}
+		healthIndex = len(commands)
+		return nil
+	}
+
+	if err := restore(root, backupDir, true); err != nil {
+		t.Fatal(err)
+	}
+	timerIndex := indexCommand(commands, "systemctl start arivu-backup.timer")
+	if healthIndex < 0 || timerIndex < 0 || timerIndex < healthIndex {
+		t.Fatalf("backup timer did not start after health check: healthIndex=%d commands=%#v", healthIndex, commands)
+	}
+}
+
+func TestRootRestoreHealthFailureSkipsBackupTimer(t *testing.T) {
+	root := restoreFixture(t, "ARIVU_ADDR=127.0.0.1:8123\nARIVU_BACKUPS_ENABLED=true\n")
+	backupDir := filepath.Join(t.TempDir(), "backup")
+	if err := os.MkdirAll(backupDir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(backupDir, "arivu.sqlite3"), []byte("backup"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+
+	var commands []string
+	oldRun := runCommand
+	oldHealth := healthCheckFunc
+	defer func() {
+		runCommand = oldRun
+		healthCheckFunc = oldHealth
+	}()
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	healthCheckFunc = func(context.Context, int) error {
+		return errors.New("service unhealthy")
+	}
+
+	err := restore(root, backupDir, true)
+	if err == nil || !strings.Contains(err.Error(), "restore health check failed") {
+		t.Fatalf("restore error = %v, want health failure", err)
+	}
+	if indexCommand(commands, "systemctl start arivu-backup.timer") >= 0 {
+		t.Fatalf("backup timer started despite health failure: %#v", commands)
+	}
+}
+
+func TestRootReconfigureDisablesBackupTimerWhenBackupsDisabled(t *testing.T) {
+	var commands []string
+	oldRun := runCommand
+	oldHealth := healthCheckFunc
+	defer func() {
+		runCommand = oldRun
+		healthCheckFunc = oldHealth
+	}()
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	healthCheckFunc = func(context.Context, int) error { return nil }
+
+	err := activateRootServices(context.Background(), Plan{
+		Options:     Options{Reconfigure: true, BackupEnabled: false},
+		BindPort:    8080,
+		ProxyMode:   ProxyAppOnly,
+		BindAddress: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexCommand(commands, "systemctl disable --now arivu-backup.timer") < 0 {
+		t.Fatalf("disabled reconfigure did not stop backup timer: %#v", commands)
+	}
+	if indexCommand(commands, "systemctl enable --now arivu-backup.timer") >= 0 {
+		t.Fatalf("disabled reconfigure enabled backup timer: %#v", commands)
+	}
+}
+
+func TestRootFreshInstallWithBackupsDisabledDoesNotManageBackupTimer(t *testing.T) {
+	var commands []string
+	oldRun := runCommand
+	oldHealth := healthCheckFunc
+	defer func() {
+		runCommand = oldRun
+		healthCheckFunc = oldHealth
+	}()
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	healthCheckFunc = func(context.Context, int) error { return nil }
+
+	err := activateRootServices(context.Background(), Plan{
+		Options:     Options{Reconfigure: false, BackupEnabled: false},
+		BindPort:    8080,
+		ProxyMode:   ProxyAppOnly,
+		BindAddress: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexCommand(commands, "systemctl disable --now arivu-backup.timer") >= 0 || indexCommand(commands, "systemctl enable --now arivu-backup.timer") >= 0 {
+		t.Fatalf("fresh install with disabled backups managed backup timer: %#v", commands)
+	}
+}
+
+func restoreFixture(t *testing.T, env string) string {
+	t.Helper()
+	root := t.TempDir()
+	for _, dir := range []string{"etc/arivu", "var/lib/arivu"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o750); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/arivu/arivu.env"), []byte(env), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "var/lib/arivu/arivu.sqlite3"), []byte("old"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func indexCommand(commands []string, needle string) int {
+	for i, command := range commands {
+		if command == needle {
+			return i
+		}
+	}
+	return -1
 }

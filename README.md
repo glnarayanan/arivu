@@ -65,7 +65,7 @@ To pin a release, run
 pass `--version` to `arivu-installer install`/`upgrade`. `reconfigure` keeps
 the installed binary unless a version or artifact override is explicit.
 
-For local development, requires Go 1.24 or newer:
+For local development, use the Go version declared in `go.mod` (currently Go 1.25.11):
 
 ```bash
 go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3

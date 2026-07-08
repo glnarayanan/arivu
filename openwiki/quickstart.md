@@ -39,6 +39,12 @@ Validate changes locally using Go's built-in testing tools:
 # Run unit and golden-fixture tests
 go test ./...
 
+# Check embedded frontend and extension scripts
+node --check internal/app/web/app.js
+node --check internal/app/web/sw.js
+node extension/url-utils.test.mjs
+node extension/content.test.mjs
+
 # Build the release binary
 go build -trimpath -ldflags="-s -w" -o ./arivu ./cmd/arivu
 ```

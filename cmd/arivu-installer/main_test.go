@@ -1,6 +1,12 @@
 package main
 
-import "testing"
+import (
+	"bufio"
+	"strings"
+	"testing"
+
+	"github.com/glnarayanan/arivu/internal/installer"
+)
 
 func TestParseOptionsAllowsNonInteractivePlanWithoutPassword(t *testing.T) {
 	_, _, nonInteractive, _, _, err := parseOptions([]string{
@@ -82,5 +88,62 @@ func TestValidateAllowsNonInteractiveReconfigureWithoutPassword(t *testing.T) {
 	}
 	if err := validateInstallOptions(opts, apply, nonInteractive, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInteractiveReconfigureKeepsDisabledBackupsOnDefault(t *testing.T) {
+	opts := installer.Options{
+		Domain:        "arivu.example.com",
+		AdminEmail:    "admin@example.com",
+		TLSEmail:      "ops@example.com",
+		ProxyMode:     installer.ProxyExistingProxy,
+		Reconfigure:   true,
+		BackupEnabled: false,
+	}
+	input := strings.Join([]string{
+		"", // domain
+		"", // admin email
+		"", // TLS email
+		"", // proxy mode
+		"", // signups
+		"", // backups
+		"",
+	}, "\n")
+	got, _, err := interactiveWizardWithReader(bufio.NewReader(strings.NewReader(input)), opts, installer.ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.BackupEnabled {
+		t.Fatalf("default backup prompt re-enabled disabled backups: %#v", got)
+	}
+}
+
+func TestCompletionMessageAvoidsPublicSuccessWhenFirewallIsManual(t *testing.T) {
+	plan := installer.Plan{
+		Options:     installer.Options{Domain: "arivu.example.com"},
+		ProxyMode:   installer.ProxyManagedCaddy,
+		BindAddress: "127.0.0.1",
+		BindPort:    8090,
+		Facts:       installer.HostFacts{Firewall: "ufw"},
+	}
+	message := completionMessage(plan)
+	if strings.Contains(message, "install complete: https://") {
+		t.Fatalf("message claimed public completion despite firewall blocker: %s", message)
+	}
+	if !strings.Contains(message, "public HTTPS still needs firewall access") || !strings.Contains(message, "sudo ufw allow 80/tcp") {
+		t.Fatalf("message missing manual firewall guidance: %s", message)
+	}
+}
+
+func TestCompletionMessageForAppOnlyReferencesPrintedSnippets(t *testing.T) {
+	plan := installer.Plan{
+		Options:     installer.Options{Domain: "arivu.example.com"},
+		ProxyMode:   installer.ProxyAppOnly,
+		BindAddress: "127.0.0.1",
+		BindPort:    8090,
+	}
+	message := completionMessage(plan)
+	if !strings.Contains(message, "configure your reverse proxy manually using the snippets printed above") {
+		t.Fatalf("app-only completion message = %s", message)
 	}
 }

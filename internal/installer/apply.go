@@ -31,7 +31,10 @@ type ApplyOptions struct {
 	InstallBinary     bool
 }
 
-var runCommand = run
+var (
+	runCommand      = run
+	healthCheckFunc = healthCheck
+)
 
 func Apply(ctx context.Context, plan Plan, opts ApplyOptions) error {
 	root := opts.Root
@@ -92,17 +95,26 @@ func Apply(ctx context.Context, plan Plan, opts ApplyOptions) error {
 		if err := activateProxy(ctx, plan); err != nil {
 			return err
 		}
-		if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu.service"); err != nil {
+		if err := activateRootServices(ctx, plan); err != nil {
 			return err
 		}
-		if plan.Options.BackupEnabled {
-			if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu-backup.timer"); err != nil {
-				return err
-			}
-		}
-		if err := healthCheck(ctx, plan.BindPort); err != nil {
+	}
+	return nil
+}
+
+func activateRootServices(ctx context.Context, plan Plan) error {
+	if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu.service"); err != nil {
+		return err
+	}
+	if plan.Options.BackupEnabled {
+		if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu-backup.timer"); err != nil {
 			return err
 		}
+	} else if plan.Options.Reconfigure {
+		_ = runCommand(ctx, "systemctl", "disable", "--now", "arivu-backup.timer")
+	}
+	if err := healthCheckFunc(ctx, plan.BindPort); err != nil {
+		return err
 	}
 	return nil
 }
@@ -336,6 +348,10 @@ func Backup(root string) (string, error) {
 }
 
 func Restore(root string, backupDir string) error {
+	return restore(root, backupDir, root == "/" || root == "")
+}
+
+func restore(root string, backupDir string, rootInstall bool) error {
 	if root == "" {
 		root = "/"
 	}
@@ -350,7 +366,6 @@ func Restore(root string, backupDir string) error {
 		return err
 	}
 	ctx := context.Background()
-	rootInstall := root == "/"
 	if rootInstall {
 		_ = runCommand(ctx, "systemctl", "stop", "arivu-backup.timer")
 		_ = runCommand(ctx, "systemctl", "stop", "arivu.service")
@@ -372,7 +387,17 @@ func Restore(root string, backupDir string) error {
 		if err := runCommand(ctx, "systemctl", "start", "arivu.service"); err != nil {
 			return err
 		}
-		_ = runCommand(ctx, "systemctl", "start", "arivu-backup.timer")
+		opts, _ := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env"))
+		port := opts.BindPort
+		if port == 0 {
+			port = 8080
+		}
+		if err := healthCheckFunc(ctx, port); err != nil {
+			return fmt.Errorf("restore health check failed after restarting arivu.service: %w", err)
+		}
+		if opts.BackupEnabled {
+			_ = runCommand(ctx, "systemctl", "start", "arivu-backup.timer")
+		}
 	}
 	return nil
 }
@@ -398,7 +423,7 @@ func Upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version st
 	if opts, err := OptionsFromEnvFile("/etc/arivu/arivu.env"); err == nil && opts.BindPort != 0 {
 		port = opts.BindPort
 	}
-	if err := healthCheck(ctx, port); err != nil {
+	if err := healthCheckFunc(ctx, port); err != nil {
 		_ = rollbackBinary(ctx, previous)
 		return err
 	}

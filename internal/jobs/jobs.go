@@ -13,11 +13,14 @@ type Queue struct {
 }
 
 type Job struct {
-	ID      string
-	UserID  string
-	Type    string
-	Payload string
+	ID          string
+	UserID      string
+	Type        string
+	Payload     string
+	LeasedUntil string
 }
+
+const leaseEligiblePredicate = `((status='queued' AND run_after<=?) OR (status='leased' AND leased_until<=?))`
 
 func New(db *sql.DB) *Queue {
 	return &Queue{db: db}
@@ -48,14 +51,16 @@ func (q *Queue) Lease(ctx context.Context, leaseFor time.Duration) (Job, bool, e
 	defer tx.Rollback()
 
 	var job Job
-	err = tx.QueryRowContext(ctx, `SELECT id,COALESCE(user_id,''),type,payload_json FROM jobs WHERE status='queued' AND run_after<=? ORDER BY priority ASC, created_at ASC LIMIT 1`, now.Format(time.RFC3339)).Scan(&job.ID, &job.UserID, &job.Type, &job.Payload)
+	nowText := now.Format(time.RFC3339)
+	leasedUntil := now.Add(leaseFor).Format(time.RFC3339)
+	err = tx.QueryRowContext(ctx, `SELECT id,COALESCE(user_id,''),type,payload_json FROM jobs WHERE `+leaseEligiblePredicate+` ORDER BY priority ASC, created_at ASC LIMIT 1`, nowText, nowText).Scan(&job.ID, &job.UserID, &job.Type, &job.Payload)
 	if err == sql.ErrNoRows {
 		return Job{}, false, nil
 	}
 	if err != nil {
 		return Job{}, false, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE jobs SET status='leased', leased_until=?, attempts=attempts+1, updated_at=? WHERE id=? AND status='queued'`, now.Add(leaseFor).Format(time.RFC3339), now.Format(time.RFC3339), job.ID)
+	res, err := tx.ExecContext(ctx, `UPDATE jobs SET status='leased', leased_until=?, attempts=attempts+1, updated_at=? WHERE id=? AND `+leaseEligiblePredicate, leasedUntil, nowText, job.ID, nowText, nowText)
 	if err != nil {
 		return Job{}, false, err
 	}
@@ -65,18 +70,34 @@ func (q *Queue) Lease(ctx context.Context, leaseFor time.Duration) (Job, bool, e
 	if err := tx.Commit(); err != nil {
 		return Job{}, false, err
 	}
+	job.LeasedUntil = leasedUntil
 	return job, true, nil
 }
 
-func (q *Queue) Complete(ctx context.Context, id string) error {
-	_, err := q.db.ExecContext(ctx, `UPDATE jobs SET status='completed', updated_at=? WHERE id=?`, time.Now().UTC().Format(time.RFC3339), id)
-	return err
+func (q *Queue) Complete(ctx context.Context, job Job) (bool, error) {
+	res, err := q.db.ExecContext(ctx, `UPDATE jobs SET status='completed', leased_until=NULL, updated_at=? WHERE id=? AND status='leased' AND leased_until=?`, time.Now().UTC().Format(time.RFC3339), job.ID, job.LeasedUntil)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n > 0, nil
 }
 
-func (q *Queue) Fail(ctx context.Context, id string, message string) error {
+func (q *Queue) Fail(ctx context.Context, job Job, message string) (bool, bool, error) {
 	now := time.Now().UTC()
-	_, err := q.db.ExecContext(ctx, `UPDATE jobs SET status=CASE WHEN attempts>=max_attempts THEN 'failed' ELSE 'queued' END, last_error=?, run_after=?, updated_at=? WHERE id=?`, message, now.Add(2*time.Minute).Format(time.RFC3339), now.Format(time.RFC3339), id)
-	return err
+	res, err := q.db.ExecContext(ctx, `UPDATE jobs SET status=CASE WHEN attempts>=max_attempts THEN 'failed' ELSE 'queued' END, leased_until=NULL, last_error=?, run_after=?, updated_at=? WHERE id=? AND status='leased' AND leased_until=?`, message, now.Add(2*time.Minute).Format(time.RFC3339), now.Format(time.RFC3339), job.ID, job.LeasedUntil)
+	if err != nil {
+		return false, false, err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return false, false, nil
+	}
+	var status string
+	if err := q.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id=?`, job.ID).Scan(&status); err != nil {
+		return false, false, err
+	}
+	return status == "failed", true, nil
 }
 
 func nullable(value string) any {

@@ -66,6 +66,9 @@ Asynchronous workflows (e.g., crawling bookmarks, querying LLMs, syncing X timel
   - Keeps progress status (`queued`, `leased`, `completed`, `failed`).
   - Supports delayed jobs through `run_after`; reminder email jobs are scheduled
     for the reminder's current UTC due time.
+  - Recovers expired leases after worker crashes, while completion and failure
+    updates are fenced to the active `leased_until` value so stale workers cannot
+    overwrite a newer lease.
   - Limits execution concurrency using bounded pools of Go workers.
   - Recovers on server restart by scanning non-completed entries.
 

@@ -52,7 +52,7 @@ commands:
   install      interactive end-to-end server install
   plan         print the detected install plan without changing the host
   status       print host and Arivu install status
-  backup       copy SQLite DB, WAL, and SHM into /var/backups/arivu
+  backup       create a consistent SQLite backup under /var/backups/arivu
   restore      restore a backup directory
   upgrade      verify and install the latest Arivu binary, then restart service
   reconfigure  rerun the install wizard against an existing install
@@ -93,11 +93,7 @@ func runInstall(ctx context.Context, args []string) {
 	if err := installer.Apply(ctx, plan, applyOpts); err != nil {
 		log.Fatal(err)
 	}
-	if plan.ProxyMode == installer.ProxyManagedCaddy {
-		fmt.Printf("Arivu install complete: https://%s\n", opts.Domain)
-		return
-	}
-	fmt.Printf("Arivu service installed on %s:%d; finish proxy integration for %s.\n", plan.BindAddress, plan.BindPort, opts.Domain)
+	fmt.Print(completionMessage(plan))
 }
 
 func runPlan(ctx context.Context, args []string) {
@@ -178,6 +174,25 @@ func detectHostForOptions(ctx context.Context, opts installer.Options) installer
 	return installer.DetectHost(ctx, domain)
 }
 
+func completionMessage(plan installer.Plan) string {
+	if installer.RequiresManualFirewall(plan) {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Arivu service and Caddy installed for %s, but public HTTPS still needs firewall access.\n", plan.Options.Domain)
+		b.WriteString("Run these additive firewall commands when ready:\n")
+		for _, command := range installer.FirewallCommands(plan.Facts.Firewall) {
+			fmt.Fprintf(&b, "- %s\n", command)
+		}
+		return b.String()
+	}
+	if plan.ProxyMode == installer.ProxyManagedCaddy {
+		return fmt.Sprintf("Arivu install complete: https://%s\n", plan.Options.Domain)
+	}
+	if plan.ProxyMode == installer.ProxyAppOnly {
+		return fmt.Sprintf("Arivu service installed on %s:%d; configure your reverse proxy manually using the snippets printed above for %s.\n", plan.BindAddress, plan.BindPort, plan.Options.Domain)
+	}
+	return fmt.Sprintf("Arivu service installed on %s:%d; finish proxy integration for %s.\n", plan.BindAddress, plan.BindPort, plan.Options.Domain)
+}
+
 func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) installer.Options {
 	existing, err := installer.OptionsFromEnvFile("/etc/arivu/arivu.env")
 	if err != nil {
@@ -211,14 +226,17 @@ func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) inst
 }
 
 func interactiveWizard(opts installer.Options, apply installer.ApplyOptions) (installer.Options, installer.ApplyOptions, error) {
-	reader := bufio.NewReader(os.Stdin)
+	return interactiveWizardWithReader(bufio.NewReader(os.Stdin), opts, apply)
+}
+
+func interactiveWizardWithReader(reader *bufio.Reader, opts installer.Options, apply installer.ApplyOptions) (installer.Options, installer.ApplyOptions, error) {
 	opts.Domain = prompt(reader, "Domain/subdomain", opts.Domain)
 	opts.AdminEmail = prompt(reader, "Admin email", opts.AdminEmail)
 	opts.TLSEmail = prompt(reader, "TLS notification email", defaultString(opts.TLSEmail, opts.AdminEmail))
 	mode := prompt(reader, "Proxy mode [auto, managed-caddy, existing-proxy, app-only]", defaultString(string(opts.ProxyMode), string(installer.ProxyAuto)))
 	opts.ProxyMode = installer.NormalizeProxyMode(mode)
 	opts.SignupsEnabled = promptBool(reader, "Allow public signups", opts.SignupsEnabled)
-	opts.BackupEnabled = promptBool(reader, "Install daily SQLite backups", true)
+	opts.BackupEnabled = promptBool(reader, "Install daily SQLite backups", opts.BackupEnabled)
 	if !apply.DryRun && !opts.Reconfigure && apply.AdminPasswordFile == "" && apply.AdminPassword == "" {
 		password, err := readSecret("First admin password")
 		if err != nil {

@@ -40,8 +40,19 @@ func (a *App) runOneJob(ctx context.Context) {
 	}
 	if err != nil {
 		log.Printf("job %s failed: %v", job.ID, err)
-		_ = a.jobs.Fail(ctx, job.ID, err.Error())
+		terminal, active, failErr := a.jobs.Fail(ctx, job, err.Error())
+		if failErr != nil {
+			log.Printf("job %s failure update: %v", job.ID, failErr)
+			return
+		}
+		if terminal && active {
+			a.bookmarks.RecordJobTerminalFailure(ctx, job.Type, job.Payload)
+		}
 		return
 	}
-	_ = a.jobs.Complete(ctx, job.ID)
+	if completed, err := a.jobs.Complete(ctx, job); err != nil {
+		log.Printf("job %s complete update: %v", job.ID, err)
+	} else if !completed {
+		log.Printf("job %s complete skipped: stale lease", job.ID)
+	}
 }

@@ -100,7 +100,8 @@ queues and runs the proposal.
 Settings can import browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom,
 URL-bearing Readwise/Kindle CSV or TSV, Arivu JSON, or one URL per line.
 Exports include JSON backup, CSV, browser HTML, Markdown, and Obsidian ZIP vault
-output.
+output. Full JSON backups preserve X bookmark identity and metadata, including
+tweet ID, author handle/name, tweet URL, and available metrics.
 
 The same Settings import tab can also turn documents and media transcripts into
 searchable notes. Upload an EPUB, PDF, plain text, Markdown, HTML file, or image,

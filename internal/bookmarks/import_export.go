@@ -37,8 +37,8 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 			return err
 		}
 		err := s.processBookmark(ctx, body.BookmarkID, body.URL)
-		if body.ImportJobID != "" {
-			s.recordImportJobProgress(ctx, body.BookmarkID, body.ImportJobID, err)
+		if err == nil && body.ImportJobID != "" {
+			s.recordImportJobSuccess(ctx, body.BookmarkID, body.ImportJobID)
 		}
 		return err
 	default:
@@ -153,24 +153,22 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 		oldID := stringValue(bookmark["id"])
 		newID := fallback(oldID, ids.New())
 		parsed, _ := url.Parse(rawURL)
-		inserted, err := s.insertRestoredBookmark(ctx, userID, newID, rawURL, bookmark, parsed.Hostname(), now)
-		if err != nil {
-			continue
-		}
-		if !inserted {
-			var existing string
-			if err := s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE user_id=? AND url=?`, userID, rawURL).Scan(&existing); err == nil {
-				newID = existing
-			} else if err == sql.ErrNoRows && oldID != "" {
+		if existing := s.existingRestoredBookmarkID(ctx, userID, rawURL, bookmark); existing != "" {
+			newID = existing
+		} else {
+			inserted, err := s.insertRestoredBookmark(ctx, userID, newID, rawURL, bookmark, parsed.Hostname(), now)
+			if err != nil {
+				continue
+			}
+			if !inserted {
+				if oldID == "" {
+					continue
+				}
 				newID = ids.New()
 				if retryInserted, retryErr := s.insertRestoredBookmark(ctx, userID, newID, rawURL, bookmark, parsed.Hostname(), now); retryErr != nil || !retryInserted {
 					continue
 				}
-				restored++
-			} else {
-				continue
 			}
-		} else {
 			restored++
 		}
 		if oldID != "" {
@@ -195,9 +193,29 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	return map[string]any{"message": "Backup restored", "count": restored, "import_job_id": jobID, "source_report": s.importSourceReport(ctx, userID, jobID)}, true, nil
 }
 
+func (s *Service) existingRestoredBookmarkID(ctx context.Context, userID, rawURL string, bookmark map[string]any) string {
+	if tweetID := strings.TrimSpace(stringValue(bookmark["x_tweet_id"])); tweetID != "" {
+		var existing string
+		if err := s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE user_id=? AND x_tweet_id=?`, userID, tweetID).Scan(&existing); err == nil {
+			return existing
+		}
+	}
+	var existing string
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE user_id=? AND url=?`, userID, rawURL).Scan(&existing); err == nil {
+		return existing
+	}
+	return ""
+}
+
 func (s *Service) insertRestoredBookmark(ctx context.Context, userID, id, rawURL string, bookmark map[string]any, domainFallback, now string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,description,domain,favicon,thumbnail,sanitized_html,text_content,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, userID, rawURL, stringValue(bookmark["title"]), stringValue(bookmark["description"]), fallback(stringValue(bookmark["domain"]), domainFallback), nullableStringValue(stringValue(bookmark["favicon"])), nullableStringValue(stringValue(bookmark["thumbnail"])), sanitize.HTML(stringValue(bookmark["html_content"])), stringValue(bookmark["text_content"]), intValue(bookmark["reading_time"]), boolValue(bookmark["read_status"]), fallback(stringValue(bookmark["source"]), "restore"), fallback(stringValue(bookmark["created_at"]), now), fallback(stringValue(bookmark["updated_at"]), now), nullableStringValue(stringValue(bookmark["last_accessed"])), intValue(bookmark["view_count"]), intValueDefault(bookmark["version"], 1))
+	xMetrics := ""
+	if _, ok := bookmark["x_metrics"]; ok {
+		xMetrics = jsonString(bookmark["x_metrics"])
+	} else {
+		xMetrics = strings.TrimSpace(stringValue(bookmark["x_metrics_json"]))
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,description,domain,favicon,thumbnail,sanitized_html,text_content,reading_time,read_status,source,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json,created_at,updated_at,last_accessed,view_count,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, userID, rawURL, stringValue(bookmark["title"]), stringValue(bookmark["description"]), fallback(stringValue(bookmark["domain"]), domainFallback), nullableStringValue(stringValue(bookmark["favicon"])), nullableStringValue(stringValue(bookmark["thumbnail"])), sanitize.HTML(stringValue(bookmark["html_content"])), stringValue(bookmark["text_content"]), intValue(bookmark["reading_time"]), boolValue(bookmark["read_status"]), fallback(stringValue(bookmark["source"]), "restore"), nullableStringValue(stringValue(bookmark["x_tweet_id"])), nullableStringValue(stringValue(bookmark["x_author_username"])), nullableStringValue(stringValue(bookmark["x_author_name"])), nullableStringValue(stringValue(bookmark["x_tweet_url"])), nullableStringValue(xMetrics), fallback(stringValue(bookmark["created_at"]), now), fallback(stringValue(bookmark["updated_at"]), now), nullableStringValue(stringValue(bookmark["last_accessed"])), intValue(bookmark["view_count"]), intValueDefault(bookmark["version"], 1))
 	if err != nil {
 		return false, err
 	}
@@ -565,13 +583,20 @@ func (s *Service) writeObsidianExport(ctx context.Context, w http.ResponseWriter
 }
 
 func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
 	bookmarks := []map[string]any{}
 	for rows.Next() {
-		bookmarks = append(bookmarks, scanBookmarkRow(rows))
+		var tweetID, authorUsername, authorName, tweetURL, metrics sql.NullString
+		bookmark := scanBookmarkRow(rows, &tweetID, &authorUsername, &authorName, &tweetURL, &metrics)
+		bookmark["x_tweet_id"] = nullString(tweetID)
+		bookmark["x_author_username"] = nullString(authorUsername)
+		bookmark["x_author_name"] = nullString(authorName)
+		bookmark["x_tweet_url"] = nullString(tweetURL)
+		bookmark["x_metrics"] = jsonObjectValue(metrics.String)
+		bookmarks = append(bookmarks, bookmark)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
@@ -1130,18 +1155,34 @@ func obsidianWikiLink(item obsidianItem) string {
 	return fmt.Sprintf("[[%s|%s]]", item.Path, markdownText(item.Title))
 }
 
-func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, processErr error) {
+func (s *Service) RecordJobTerminalFailure(ctx context.Context, jobType string, payload string) {
+	if jobType != "bookmark.process" {
+		return
+	}
+	var body struct {
+		BookmarkID  string `json:"bookmark_id"`
+		ImportJobID string `json:"import_job_id"`
+	}
+	if err := json.Unmarshal([]byte(payload), &body); err != nil || body.ImportJobID == "" {
+		return
+	}
+	s.recordImportJobFailure(ctx, body.BookmarkID, body.ImportJobID)
+}
+
+func (s *Service) recordImportJobSuccess(ctx context.Context, bookmarkID string, importJobID string) {
+	s.recordImportJobProgress(ctx, bookmarkID, importJobID, 1, 1, 0)
+}
+
+func (s *Service) recordImportJobFailure(ctx context.Context, bookmarkID string, importJobID string) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='failed', updated_at=? WHERE bookmark_id=?`, now, bookmarkID)
+	s.recordImportJobProgress(ctx, bookmarkID, importJobID, 0, 0, 1)
+}
+
+func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, fetched int, processed int, failed int) {
 	userID, ok := s.bookmarkOwner(ctx, bookmarkID)
 	if !ok {
 		return
-	}
-	fetched := 1
-	processed := 1
-	failed := 0
-	if processErr != nil {
-		fetched = 0
-		processed = 0
-		failed = 1
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET content_fetched=content_fetched+?, ai_processed=ai_processed+?, failed=failed+?, updated_at=? WHERE id=? AND user_id=?`, fetched, processed, failed, now, importJobID, userID)

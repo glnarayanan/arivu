@@ -44,6 +44,12 @@ When submitting modifications or adding enhancements to the Arivu codebase, you 
    Ensure all tests execute cleanly without error:
    ```bash
    GOCACHE=/private/tmp/arivu-build-cache go test ./...
+   node --check internal/app/web/app.js
+   node --check internal/app/web/sw.js
+   node --check extension/background.js
+   node --check extension/content.js
+   node extension/url-utils.test.mjs
+   node extension/content.test.mjs
    ```
 2. **Standard Library Over Custom Dependencies**:
    Do not introduce third-party HTTP routers, custom caching packages, or framework abstractions. Maintain Go `net/http` standard libraries.

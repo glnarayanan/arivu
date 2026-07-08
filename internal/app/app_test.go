@@ -85,6 +85,20 @@ func TestWebAuthRequiresCSRFForBookmarkCreate(t *testing.T) {
 		t.Fatalf("bookmark without csrf status = %d", missingCSRF.StatusCode)
 	}
 
+	forgedCSRF := &http.Cookie{Name: "csrf_token", Value: "forged-csrf-token"}
+	req = httptest.NewRequest(http.MethodPost, "/api/bookmarks", strings.NewReader(`{"url":"https://example.com/forged"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", forgedCSRF.Value)
+	req.AddCookie(accessCookie)
+	req.AddCookie(forgedCSRF)
+	forgedRec := httptest.NewRecorder()
+	handler.ServeHTTP(forgedRec, req)
+	forged := forgedRec.Result()
+	defer forged.Body.Close()
+	if forged.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bookmark with forged csrf status = %d", forged.StatusCode)
+	}
+
 	req = httptest.NewRequest(http.MethodPost, "/api/bookmarks", strings.NewReader(`{"url":"https://example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfCookie.Value)
@@ -1906,6 +1920,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if !readStatus {
 		t.Fatal("review completion did not mark bookmark read")
 	}
+	if _, err := a.db.ExecContext(context.Background(), `UPDATE bookmarks SET source='x',x_tweet_id='tweet-123',x_author_username='arivu_dev',x_author_name='Arivu Dev',x_tweet_url='https://x.com/arivu_dev/status/tweet-123',x_metrics_json='{"like_count":12,"retweet_count":3}' WHERE id='capture' AND user_id=?`, userID); err != nil {
+		t.Fatalf("seed x bookmark metadata: %v", err)
+	}
 
 	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
 	if exportResp.StatusCode != http.StatusOK {
@@ -1997,6 +2014,10 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	bookmarkExport := exportBody.Bookmarks[0]
 	if bookmarkExport["id"] != "capture" || len(bookmarkExport["annotations"].([]any)) == 0 || len(bookmarkExport["notes"].([]any)) == 0 || len(bookmarkExport["tags"].([]any)) == 0 {
 		t.Fatalf("bookmark export missing linked data: %#v", bookmarkExport)
+	}
+	metrics, _ := bookmarkExport["x_metrics"].(map[string]any)
+	if bookmarkExport["x_tweet_id"] != "tweet-123" || bookmarkExport["x_author_username"] != "arivu_dev" || bookmarkExport["x_author_name"] != "Arivu Dev" || bookmarkExport["x_tweet_url"] != "https://x.com/arivu_dev/status/tweet-123" || metrics["like_count"] != float64(12) || metrics["retweet_count"] != float64(3) {
+		t.Fatalf("bookmark export missing x metadata: %#v", bookmarkExport)
 	}
 	var sawStandaloneNote bool
 	for _, note := range exportBody.Notes {
@@ -2186,6 +2207,10 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if restoredBookmark["id"] == "capture" || len(restoredBookmark["annotations"].([]any)) == 0 || len(restoredBookmark["notes"].([]any)) == 0 || len(restoredBookmark["tags"].([]any)) == 0 {
 		t.Fatalf("restored bookmark missing remapped linked data: %#v", restoredBookmark)
 	}
+	restoredMetrics, _ := restoredBookmark["x_metrics"].(map[string]any)
+	if restoredBookmark["x_tweet_id"] != "tweet-123" || restoredBookmark["x_author_username"] != "arivu_dev" || restoredBookmark["x_author_name"] != "Arivu Dev" || restoredBookmark["x_tweet_url"] != "https://x.com/arivu_dev/status/tweet-123" || restoredMetrics["like_count"] != float64(12) || restoredMetrics["retweet_count"] != float64(3) {
+		t.Fatalf("restored bookmark missing x metadata: %#v", restoredBookmark)
+	}
 	if summary, _ := restoredBookmark["ai_summary"].(map[string]any); summary["one_sentence"] != "The capture loop needs review." {
 		t.Fatalf("restored bookmark missing summary: %#v", restoredBookmark)
 	}
@@ -2207,6 +2232,59 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if !restoredStandalone || !restoredAlias {
 		t.Fatalf("restore missing standalone note or alias: %#v", restoredExport)
+	}
+	duplicateRestoreResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(exportRaw), restoreAccess, restoreCSRF)
+	if duplicateRestoreResp.StatusCode != http.StatusOK {
+		t.Fatalf("duplicate restore status = %d body=%s", duplicateRestoreResp.StatusCode, readBody(duplicateRestoreResp))
+	}
+	var duplicateRestoreBody struct {
+		Count int `json:"count"`
+	}
+	_ = json.NewDecoder(duplicateRestoreResp.Body).Decode(&duplicateRestoreBody)
+	duplicateRestoreResp.Body.Close()
+	if duplicateRestoreBody.Count != 0 {
+		t.Fatalf("duplicate restore created bookmark rows: %#v", duplicateRestoreBody)
+	}
+	restoreUserID := userIDForEmail(t, a, "restore@example.com")
+	var restoredBookmarkRows int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE user_id=? AND url='https://example.com/capture'`, restoreUserID).Scan(&restoredBookmarkRows); err != nil {
+		t.Fatalf("count restored duplicate rows: %v", err)
+	}
+	if restoredBookmarkRows != 1 {
+		t.Fatalf("duplicate restore left %d bookmark rows", restoredBookmarkRows)
+	}
+	var mutatedBackup map[string]any
+	if err := json.Unmarshal(exportRaw, &mutatedBackup); err != nil {
+		t.Fatalf("decode backup for x duplicate replay: %v", err)
+	}
+	mutatedBookmarks, _ := mutatedBackup["bookmarks"].([]any)
+	if len(mutatedBookmarks) == 0 {
+		t.Fatalf("backup missing bookmarks for x duplicate replay: %#v", mutatedBackup)
+	}
+	mutatedBookmark, _ := mutatedBookmarks[0].(map[string]any)
+	mutatedBookmark["url"] = "https://x.com/i/web/status/tweet-123"
+	mutatedRaw, err := json.Marshal(mutatedBackup)
+	if err != nil {
+		t.Fatalf("encode x duplicate replay backup: %v", err)
+	}
+	xDuplicateRestoreResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(mutatedRaw), restoreAccess, restoreCSRF)
+	if xDuplicateRestoreResp.StatusCode != http.StatusOK {
+		t.Fatalf("x duplicate restore status = %d body=%s", xDuplicateRestoreResp.StatusCode, readBody(xDuplicateRestoreResp))
+	}
+	var xDuplicateRestoreBody struct {
+		Count int `json:"count"`
+	}
+	_ = json.NewDecoder(xDuplicateRestoreResp.Body).Decode(&xDuplicateRestoreBody)
+	xDuplicateRestoreResp.Body.Close()
+	if xDuplicateRestoreBody.Count != 0 {
+		t.Fatalf("x duplicate restore created bookmark rows: %#v", xDuplicateRestoreBody)
+	}
+	var restoredTweetRows int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE user_id=? AND x_tweet_id='tweet-123'`, restoreUserID).Scan(&restoredTweetRows); err != nil {
+		t.Fatalf("count restored x duplicate rows: %v", err)
+	}
+	if restoredTweetRows != 1 {
+		t.Fatalf("x duplicate restore left %d tweet rows", restoredTweetRows)
 	}
 
 	missingSuggestionsCSRF := httptest.NewRequest(http.MethodPost, "/api/assistant/suggestions", strings.NewReader(`{"mode":"inbox"}`))
@@ -2845,6 +2923,11 @@ func TestAdminUserMutations(t *testing.T) {
 	if xEnabledBody["enabled"] != true {
 		t.Fatalf("runtime X setting was not effective: %#v", xEnabledBody)
 	}
+	badXRedirect := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"x_redirect_uri":"/relative/callback"}`, accessCookie, csrfCookie)
+	if badXRedirect.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad x redirect update status = %d body=%s", badXRedirect.StatusCode, readBody(badXRedirect))
+	}
+	badXRedirect.Body.Close()
 	deleteKey := adminRequest(t, handler, http.MethodDelete, "/api/admin/api-keys/gemini_api_key", "", accessCookie, csrfCookie)
 	if deleteKey.StatusCode != http.StatusOK {
 		t.Fatalf("api key delete = %d body=%s", deleteKey.StatusCode, readBody(deleteKey))

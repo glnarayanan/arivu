@@ -115,3 +115,75 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 		t.Fatalf("delete did not restore fallback: %#v", effective)
 	}
 }
+
+func TestXRedirectURIValidationAndBlankReset(t *testing.T) {
+	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	cfg := config.Config{AppURL: "https://app.example.test", SecretKey: "test-secret-with-enough-bytes"}
+	service := New(db, cfg)
+	if err := service.Set(context.Background(), KeyXRedirectURI, "https://auth.example.test/callback?provider=x", "admin@example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	effective, err := service.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.XRedirectURI != "https://auth.example.test/callback?provider=x" {
+		t.Fatalf("unexpected x redirect override: %#v", effective)
+	}
+
+	for _, value := range []string{
+		"/settings?section=connections",
+		"javascript:alert(1)",
+		"file:///tmp/arivu",
+		"https://example.com/callback\nSet-Cookie: bad=1",
+		"https://exa mple.com/callback",
+		"://missing-scheme",
+	} {
+		if err := service.Set(context.Background(), KeyXRedirectURI, value, "admin@example.com", ""); err == nil {
+			t.Fatalf("expected x_redirect_uri %q to be rejected", value)
+		}
+	}
+
+	if err := service.Set(context.Background(), KeyXRedirectURI, "   ", "admin@example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	effective, err = service.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.XRedirectURI != "https://app.example.test/settings?section=connections" {
+		t.Fatalf("blank x redirect did not reset to default: %#v", effective)
+	}
+	var rows int
+	if err := db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM settings WHERE key=?`, KeyXRedirectURI).Scan(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if rows != 0 {
+		t.Fatalf("blank x redirect left database override rows=%d", rows)
+	}
+}
+
+func TestInvalidXRedirectURIFallbackFailsClosed(t *testing.T) {
+	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	service := New(db, config.Config{
+		AppURL:       "https://app.example.test",
+		SecretKey:    "test-secret-with-enough-bytes",
+		XRedirectURI: "javascript:alert(1)",
+	})
+	if _, err := service.Effective(context.Background()); err == nil {
+		t.Fatal("expected invalid fallback x_redirect_uri to fail")
+	}
+	if _, err := service.StatusValue(context.Background(), KeyXRedirectURI); err == nil {
+		t.Fatal("expected invalid fallback x_redirect_uri status to fail")
+	}
+}
