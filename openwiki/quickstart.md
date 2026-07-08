@@ -61,6 +61,9 @@ The `arivu` command suite acts as both a web server and a local CLI manager:
 ./arivu save "https://go.dev"
 ./arivu list
 ./arivu search "SSRF mitigation"
+
+# Server installer
+./arivu-installer plan --domain arivu.example.com --admin-email admin@example.com
 ```
 
 ---
@@ -69,6 +72,7 @@ The `arivu` command suite acts as both a web server and a local CLI manager:
 
 ```
 |-- cmd/arivu/                  # CLI and server entrypoint
+|-- cmd/arivu-installer/        # Self-hosting server installer CLI
 |-- internal/
 |   |-- app/                    # HTTP handlers, routers, and embedded frontend (web/)
 |   |-- auth/                   # Identity, tokens, and audience enforcement
@@ -76,6 +80,7 @@ The `arivu` command suite acts as both a web server and a local CLI manager:
 |   |-- config/                 # Typed environment configurations
 |   |-- database/               # SQLite client, schema, migration pragmas
 |   |-- ids/                    # Cryptographically secure random ID generators
+|   |-- installer/              # Host preflight, install plans, and backup helpers
 |   |-- jobs/                   # Durable SQLite background queue and worker loops
 |   |-- migrate/                # Legacy Fernet-decryption and data ingesters
 |   |-- providers/              # Direct API wrappers for Gemini, Resend, and X

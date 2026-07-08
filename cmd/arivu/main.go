@@ -13,11 +13,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/app"
+	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/config"
+	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/migrate"
 )
 
@@ -29,6 +32,9 @@ func main() {
 			return
 		case "migrate":
 			runMigrate(os.Args[2:])
+			return
+		case "admin":
+			runAdmin(os.Args[2:])
 			return
 		case "version":
 			fmt.Println("arivu")
@@ -93,6 +99,53 @@ func runServe(args []string) {
 	if err := server.Shutdown(ctx); err != nil {
 		log.Printf("shutdown: %v", err)
 	}
+}
+
+func runAdmin(args []string) {
+	if len(args) < 1 {
+		log.Fatal("usage: arivu admin bootstrap --email admin@example.com --password-stdin")
+	}
+	switch args[0] {
+	case "bootstrap":
+		runAdminBootstrap(args[1:])
+	default:
+		log.Fatalf("unknown admin command %q", args[0])
+	}
+}
+
+func runAdminBootstrap(args []string) {
+	fs := flag.NewFlagSet("admin bootstrap", flag.ExitOnError)
+	email := fs.String("email", "", "Admin email")
+	passwordStdin := fs.Bool("password-stdin", false, "Read admin password from stdin")
+	dbPath := fs.String("db", envDefault("ARIVU_DB", "arivu.sqlite3"), "SQLite database path")
+	_ = fs.Parse(args)
+	if strings.TrimSpace(*email) == "" {
+		log.Fatal("--email is required")
+	}
+	if !*passwordStdin {
+		log.Fatal("--password-stdin is required")
+	}
+	raw, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		log.Fatal(err)
+	}
+	password := strings.TrimRight(string(raw), "\r\n")
+	cfg := config.FromEnv()
+	cfg.DBPath = *dbPath
+	db, err := database.Open(context.Background(), cfg.DBPath)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	user, created, err := auth.New(db, cfg).BootstrapAdmin(context.Background(), *email, password)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if created {
+		fmt.Printf("Created admin %s\n", user.Email)
+		return
+	}
+	fmt.Printf("Updated admin %s\n", user.Email)
 }
 
 func runMigrate(args []string) {

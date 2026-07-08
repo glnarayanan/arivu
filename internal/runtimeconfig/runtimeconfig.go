@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -15,6 +16,9 @@ import (
 )
 
 const (
+	KeyAppURL             = "app_url"
+	KeySignupEnabled      = "signups_enabled"
+	KeyCookieSecure       = "cookie_secure"
 	KeyGeminiAPIKey       = "gemini_api_key"
 	KeyResendAPIKey       = "resend_api_key"
 	KeyResendFromEmail    = "resend_from_email"
@@ -25,6 +29,9 @@ const (
 )
 
 var Keys = []string{
+	KeyAppURL,
+	KeySignupEnabled,
+	KeyCookieSecure,
 	KeyGeminiAPIKey,
 	KeyResendAPIKey,
 	KeyResendFromEmail,
@@ -41,12 +48,21 @@ var SecretKeys = map[string]bool{
 	KeyXClientSecret: true,
 }
 
+var BooleanKeys = map[string]bool{
+	KeySignupEnabled:      true,
+	KeyCookieSecure:       true,
+	KeyXIntegrationEnable: true,
+}
+
 type Service struct {
 	db  *sql.DB
 	cfg config.Config
 }
 
 type Effective struct {
+	AppURL              string
+	SignupEnabled       bool
+	CookieSecure        bool
 	GeminiAPIKey        string
 	ResendAPIKey        string
 	ResendFromEmail     string
@@ -79,12 +95,15 @@ func New(db *sql.DB, cfg config.Config) *Service {
 
 func FromConfig(cfg config.Config) Effective {
 	return Effective{
+		AppURL:              cfg.AppURL,
+		SignupEnabled:       cfg.SignupEnabled,
+		CookieSecure:        cfg.CookieSecure,
 		GeminiAPIKey:        cfg.GeminiAPIKey,
 		ResendAPIKey:        cfg.ResendAPIKey,
 		ResendFromEmail:     cfg.ResendFrom,
 		XClientID:           cfg.XClientID,
 		XClientSecret:       cfg.XClientSecret,
-		XRedirectURI:        defaultXRedirectURI(cfg),
+		XRedirectURI:        defaultXRedirectURI(cfg.AppURL),
 		XIntegrationEnabled: cfg.XEnabled,
 	}
 }
@@ -102,7 +121,23 @@ func IsSecret(key string) bool {
 	return SecretKeys[key]
 }
 
+func IsBoolean(key string) bool {
+	return BooleanKeys[key]
+}
+
 func (s *Service) Effective(ctx context.Context) (Effective, error) {
+	appURL, err := s.resolve(ctx, KeyAppURL)
+	if err != nil {
+		return Effective{}, err
+	}
+	signups, err := s.resolve(ctx, KeySignupEnabled)
+	if err != nil {
+		return Effective{}, err
+	}
+	cookieSecure, err := s.resolve(ctx, KeyCookieSecure)
+	if err != nil {
+		return Effective{}, err
+	}
 	gemini, err := s.resolve(ctx, KeyGeminiAPIKey)
 	if err != nil {
 		return Effective{}, err
@@ -127,11 +162,17 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 	if err != nil {
 		return Effective{}, err
 	}
+	if xRedirect.source == "default" {
+		xRedirect.value = defaultXRedirectURI(appURL.value)
+	}
 	xEnabled, err := s.resolve(ctx, KeyXIntegrationEnable)
 	if err != nil {
 		return Effective{}, err
 	}
 	return Effective{
+		AppURL:              appURL.value,
+		SignupEnabled:       parseBool(signups.value),
+		CookieSecure:        parseBool(cookieSecure.value),
 		GeminiAPIKey:        gemini.value,
 		ResendAPIKey:        resendKey.value,
 		ResendFromEmail:     resendFrom.value,
@@ -144,32 +185,65 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 
 func (s *Service) Status(ctx context.Context) (map[string]Value, error) {
 	result := map[string]Value{}
+	appURL, err := s.resolve(ctx, KeyAppURL)
+	if err != nil {
+		return nil, err
+	}
 	for _, key := range Keys {
-		value, err := s.resolve(ctx, key)
-		if err != nil {
-			return nil, err
+		value := appURL
+		if key != KeyAppURL {
+			var err error
+			value, err = s.resolve(ctx, key)
+			if err != nil {
+				return nil, err
+			}
 		}
-		item := Value{Source: value.source, KeyID: value.keyID, UpdatedAt: value.updatedAt}
-		if IsSecret(key) {
-			item.Configured = value.value != ""
-			item.MaskedValue = Mask(value.value)
-		} else if key == KeyXIntegrationEnable {
-			item.Configured = value.source != "unset"
-			item.Value = parseBool(value.value)
-		} else {
-			item.Configured = value.value != ""
-			item.Value = value.value
+		if key == KeyXRedirectURI && value.source == "default" {
+			value.value = defaultXRedirectURI(appURL.value)
 		}
-		result[key] = item
+		result[key] = statusValue(value)
 	}
 	return result, nil
+}
+
+func (s *Service) StatusValue(ctx context.Context, key string) (Value, error) {
+	value, err := s.resolve(ctx, key)
+	if err != nil {
+		return Value{}, err
+	}
+	if key == KeyXRedirectURI && value.source == "default" {
+		appURL, err := s.resolve(ctx, KeyAppURL)
+		if err != nil {
+			return Value{}, err
+		}
+		value.value = defaultXRedirectURI(appURL.value)
+	}
+	return statusValue(value), nil
+}
+
+func statusValue(value resolvedValue) Value {
+	item := Value{Source: value.source, KeyID: value.keyID, UpdatedAt: value.updatedAt}
+	if IsSecret(value.key) {
+		item.Configured = value.value != ""
+		item.MaskedValue = Mask(value.value)
+	} else if IsBoolean(value.key) {
+		item.Configured = value.source != "unset"
+		item.Value = parseBool(value.value)
+	} else {
+		item.Configured = value.value != ""
+		item.Value = value.value
+	}
+	return item
 }
 
 func (s *Service) Set(ctx context.Context, key string, value any, updatedBy string, keyID string) error {
 	if !Allowed(key) {
 		return fmt.Errorf("unknown setting key %s", key)
 	}
-	raw := settingString(value)
+	raw, err := normalizeValue(key, value)
+	if err != nil {
+		return err
+	}
 	now := nowRFC3339()
 	if IsSecret(key) {
 		ciphertext, err := secrets.Seal(s.cfg.SecretKey, raw)
@@ -182,7 +256,7 @@ func (s *Service) Set(ctx context.Context, key string, value any, updatedBy stri
 		_, err = s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,value_plain=NULL,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, nil, keyID, updatedBy, now)
 		return err
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, updatedBy, now)
+	_, err = s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, updatedBy, now)
 	return err
 }
 
@@ -223,6 +297,20 @@ func (s *Service) fallback(key string) resolvedValue {
 	value := ""
 	source := "unset"
 	switch key {
+	case KeyAppURL:
+		value, source = envFallback("APP_URL", s.cfg.AppURL)
+	case KeySignupEnabled:
+		if _, ok := os.LookupEnv("SIGNUPS_ENABLED"); ok || s.cfg.SignupEnabled {
+			value, source = boolString(s.cfg.SignupEnabled), "environment"
+		} else {
+			value, source = "false", "default"
+		}
+	case KeyCookieSecure:
+		if _, ok := os.LookupEnv("COOKIE_SECURE"); ok || s.cfg.CookieSecure {
+			value, source = boolString(s.cfg.CookieSecure), "environment"
+		} else {
+			value, source = "false", "default"
+		}
 	case KeyGeminiAPIKey:
 		value, source = envFallback("GEMINI_API_KEY", s.cfg.GeminiAPIKey)
 	case KeyResendAPIKey:
@@ -236,7 +324,7 @@ func (s *Service) fallback(key string) resolvedValue {
 	case KeyXRedirectURI:
 		value, source = envFallback("X_REDIRECT_URI", s.cfg.XRedirectURI)
 		if value == "" {
-			value, source = defaultXRedirectURI(s.cfg), "default"
+			value, source = defaultXRedirectURI(s.cfg.AppURL), "default"
 		}
 	case KeyXIntegrationEnable:
 		if _, ok := os.LookupEnv("X_INTEGRATION_ENABLED"); ok || s.cfg.XEnabled {
@@ -255,8 +343,26 @@ func envFallback(envKey string, cfgValue string) (string, string) {
 	return "", "unset"
 }
 
-func defaultXRedirectURI(cfg config.Config) string {
-	return strings.TrimRight(cfg.AppURL, "/") + "/settings?section=connections"
+func defaultXRedirectURI(appURL string) string {
+	return strings.TrimRight(appURL, "/") + "/settings?section=connections"
+}
+
+func normalizeValue(key string, value any) (string, error) {
+	raw := settingString(value)
+	if key == KeyAppURL {
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return "", fmt.Errorf("app_url must be an absolute http or https URL")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return "", fmt.Errorf("app_url must use http or https")
+		}
+		return strings.TrimRight(raw, "/"), nil
+	}
+	if IsBoolean(key) {
+		return boolString(parseBool(raw)), nil
+	}
+	return raw, nil
 }
 
 func settingString(value any) string {

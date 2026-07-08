@@ -19,13 +19,24 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	defer db.Close()
 
 	cfg := config.Config{
-		AppURL:       "https://app.example.test",
-		SecretKey:    "test-secret-with-enough-bytes",
-		GeminiAPIKey: "env-gemini",
-		ResendAPIKey: "env-resend",
-		XClientID:    "env-x-client",
+		AppURL:        "https://app.example.test",
+		SecretKey:     "test-secret-with-enough-bytes",
+		SignupEnabled: true,
+		CookieSecure:  true,
+		GeminiAPIKey:  "env-gemini",
+		ResendAPIKey:  "env-resend",
+		XClientID:     "env-x-client",
 	}
 	service := New(db, cfg)
+	if err := service.Set(context.Background(), KeyAppURL, "https://runtime.example.test/", "admin@example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Set(context.Background(), KeySignupEnabled, false, "admin@example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Set(context.Background(), KeyCookieSecure, false, "admin@example.com", ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Set(context.Background(), KeyGeminiAPIKey, "db-gemini", "admin@example.com", "test-key"); err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +54,10 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	if effective.GeminiAPIKey != "db-gemini" || effective.ResendAPIKey != "env-resend" || !effective.XIntegrationEnabled {
 		t.Fatalf("unexpected effective config: %#v", effective)
 	}
-	if effective.ResendFromEmail != "hello@example.com" || effective.XRedirectURI != "https://app.example.test/settings?section=connections" {
+	if effective.AppURL != "https://runtime.example.test" || effective.SignupEnabled || effective.CookieSecure {
+		t.Fatalf("unexpected runtime app config: %#v", effective)
+	}
+	if effective.ResendFromEmail != "hello@example.com" || effective.XRedirectURI != "https://runtime.example.test/settings?section=connections" {
 		t.Fatalf("unexpected plain/default config: %#v", effective)
 	}
 
@@ -71,6 +85,23 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	}
 	if status[KeyGeminiAPIKey].MaskedValue != "****mini" || status[KeyGeminiAPIKey].Source != "database" {
 		t.Fatalf("unexpected secret status: %#v", status[KeyGeminiAPIKey])
+	}
+	if status[KeySignupEnabled].Value != false || status[KeyCookieSecure].Value != false || status[KeyAppURL].Value != "https://runtime.example.test" {
+		t.Fatalf("unexpected runtime status: %#v", status)
+	}
+	if status[KeyXRedirectURI].Value != "https://runtime.example.test/settings?section=connections" {
+		t.Fatalf("unexpected x redirect status: %#v", status[KeyXRedirectURI])
+	}
+	xRedirect, err := service.StatusValue(context.Background(), KeyXRedirectURI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if xRedirect.Value != status[KeyXRedirectURI].Value {
+		t.Fatalf("single-key status drifted: %#v", xRedirect)
+	}
+
+	if err := service.Set(context.Background(), KeyAppURL, "file:///tmp/arivu", "admin@example.com", ""); err == nil {
+		t.Fatal("expected invalid app_url to fail")
 	}
 
 	if err := service.Delete(context.Background(), KeyGeminiAPIKey); err != nil {

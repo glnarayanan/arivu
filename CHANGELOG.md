@@ -74,9 +74,26 @@ All notable changes to this project will be documented in this file.
   tasks, reminders, and decision recording.
 - Added JSON backup/restore coverage for knowledge objects with source-reference
   remapping.
+- Added a first-party `arivu-installer` CLI for end-to-end Linux VPS installs,
+  including shared-host preflight, proxy-mode planning, systemd/env rendering,
+  backup/restore helpers, checksum verification, and operational commands.
+- Added a checksum-verifying `deploy/install.sh` bootstrap script for the
+  one-command installer flow.
+- Added installer support for pinned release versions, TLS email rendering in
+  Arivu-managed Caddy snippets, and reconfiguration defaults loaded from the
+  existing generated env file.
+- Added `arivu admin bootstrap --password-stdin` for installer-safe first-admin
+  creation without passing passwords through shell arguments.
+- Added a tag-based release workflow that publishes Linux app and installer
+  artifacts, checksums, build info, module inventory, and provenance
+  attestations.
 
 ### Changed
 
+- Hardened the self-hosting installer with strict domain validation, Caddy vhost
+  detection, HTTPS-only release downloads, GitHub attestation checks, service
+  user bootstrap ownership, managed-Caddy activation, consistent SQLite backups,
+  restore downtime safety, upgrade rollback, and reconfigure state preservation.
 - Removed the duplicate OpenWiki legacy migration overview and kept the fuller
   migration guide as the canonical migration documentation.
 - Reframed the README and generated GitHub Wiki home around Arivu's
@@ -88,6 +105,10 @@ All notable changes to this project will be documented in this file.
 - Admin API key settings now take effect at runtime through SQLite overrides,
   with encrypted provider secrets, plain operational settings, source-aware UI
   status, and per-setting override removal.
+- Runtime app settings now cover public URL, signup policy, and secure-cookie
+  behavior through the same SQLite override path used by provider settings.
+- The Admin page now includes a Settings tab for public URL, signup policy,
+  secure-cookie state, Gemini, Resend, and X configuration.
 - The Admin page now exposes overview, API usage, users, system, activity,
   collections, and audit sections backed by SQLite-native admin endpoints.
 - Admin password reset now uses the same Argon2id password storage as user

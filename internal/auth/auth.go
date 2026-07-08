@@ -79,7 +79,12 @@ func (s *Service) SetRuntimeSettings(fn func(context.Context) (runtimeconfig.Eff
 }
 
 func (s *Service) Signup(w http.ResponseWriter, r *http.Request) {
-	if !s.cfg.SignupEnabled {
+	effective, err := s.runtimeSettings(r.Context())
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "Could not load settings"})
+		return
+	}
+	if !effective.SignupEnabled {
 		writeJSON(w, http.StatusForbidden, map[string]any{"detail": "Signups are disabled"})
 		return
 	}
@@ -157,9 +162,10 @@ func (s *Service) Logout(w http.ResponseWriter, r *http.Request, user User) {
 	if cookie, err := r.Cookie("access_token"); err == nil {
 		_, _ = s.db.ExecContext(r.Context(), `UPDATE sessions SET revoked_at=? WHERE access_hash=?`, time.Now().UTC().Format(time.RFC3339), tokenHash(cookie.Value))
 	}
-	clearCookie(w, "access_token", s.cfg.CookieSecure)
-	clearCookie(w, "refresh_token", s.cfg.CookieSecure)
-	clearCookie(w, "csrf_token", s.cfg.CookieSecure)
+	cookieSecure := s.cookieSecure(r.Context())
+	clearCookie(w, "access_token", cookieSecure)
+	clearCookie(w, "refresh_token", cookieSecure)
+	clearCookie(w, "csrf_token", cookieSecure)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Logged out successfully"})
 }
 
@@ -286,6 +292,37 @@ func (s *Service) ResetUserPassword(ctx context.Context, userID string, newPassw
 	return err
 }
 
+func (s *Service) BootstrapAdmin(ctx context.Context, email string, password string) (User, bool, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" || len(password) < 8 {
+		return User{}, false, errors.New("admin email and password with at least 8 characters are required")
+	}
+	if !s.cfg.AdminEmails[email] {
+		return User{}, false, errors.New("bootstrap email must be listed in ADMIN_EMAILS")
+	}
+	hash, err := hashArgon2id(password)
+	if err != nil {
+		return User{}, false, err
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	var existing User
+	err = s.db.QueryRowContext(ctx, `SELECT id,email,name FROM users WHERE lower(email)=lower(?)`, email).Scan(&existing.ID, &existing.Email, &existing.Name)
+	if err == nil {
+		_, err = s.db.ExecContext(ctx, `UPDATE users SET password_hash=?, password_scheme='argon2id', invite_pending=0, banned=0, updated_at=? WHERE id=?`, hash, now, existing.ID)
+		if err != nil {
+			return User{}, false, err
+		}
+		_, _ = s.db.ExecContext(ctx, `UPDATE sessions SET revoked_at=? WHERE user_id=?`, now, existing.ID)
+		return existing, false, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return User{}, false, err
+	}
+	user := User{ID: ids.New(), Email: email, Name: "Admin"}
+	_, err = s.db.ExecContext(ctx, `INSERT INTO users(id,email,name,password_hash,password_scheme,invite_pending,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, user.ID, user.Email, user.Name, hash, "argon2id", false, now, now)
+	return user, true, err
+}
+
 func (s *Service) Profile(w http.ResponseWriter, r *http.Request, user User) {
 	writeJSON(w, http.StatusOK, user)
 }
@@ -341,9 +378,10 @@ func (s *Service) issueWebSession(w http.ResponseWriter, r *http.Request, user U
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": "Could not create session"})
 		return
 	}
-	setHTTPOnlyCookie(w, "access_token", tokens.AccessToken, s.cfg.SessionTTL, s.cfg.CookieSecure)
-	setHTTPOnlyCookie(w, "refresh_token", tokens.RefreshToken, s.cfg.RefreshTTL, s.cfg.CookieSecure)
-	setReadableCookie(w, "csrf_token", tokens.CSRFToken, s.cfg.RefreshTTL, s.cfg.CookieSecure)
+	cookieSecure := s.cookieSecure(r.Context())
+	setHTTPOnlyCookie(w, "access_token", tokens.AccessToken, s.cfg.SessionTTL, cookieSecure)
+	setHTTPOnlyCookie(w, "refresh_token", tokens.RefreshToken, s.cfg.RefreshTTL, cookieSecure)
+	setReadableCookie(w, "csrf_token", tokens.CSRFToken, s.cfg.RefreshTTL, cookieSecure)
 	writeJSON(w, http.StatusOK, map[string]any{"access_token": tokens.AccessToken, "refresh_token": tokens.RefreshToken, "token_type": "bearer", "csrf_token": tokens.CSRFToken})
 }
 
@@ -404,18 +442,26 @@ func (s *Service) userByEmail(ctx context.Context, email string) (User, string, 
 }
 
 func (s *Service) sendResetEmail(ctx context.Context, email string, token string) error {
-	resetURL, err := url.JoinPath(strings.TrimRight(s.cfg.AppURL, "/"), "reset-password")
+	effective, err := s.runtimeSettings(ctx)
+	if err != nil {
+		return err
+	}
+	resetURL, err := url.JoinPath(strings.TrimRight(effective.AppURL, "/"), "reset-password")
 	if err != nil {
 		return err
 	}
 	values := url.Values{"token": []string{token}}
 	link := resetURL + "?" + values.Encode()
 	body := `<p>Use this link to reset your Arivu password:</p><p><a href="` + html.EscapeString(link) + `">Reset password</a></p><p>This link expires in one hour.</p>`
+	return providers.ResendClient{APIKey: effective.ResendAPIKey, From: effective.ResendFromEmail}.Send(ctx, email, "Reset your Arivu password", body)
+}
+
+func (s *Service) cookieSecure(ctx context.Context) bool {
 	effective, err := s.runtimeSettings(ctx)
 	if err != nil {
-		return err
+		return s.cfg.CookieSecure
 	}
-	return providers.ResendClient{APIKey: effective.ResendAPIKey, From: effective.ResendFromEmail}.Send(ctx, email, "Reset your Arivu password", body)
+	return effective.CookieSecure
 }
 
 func hashArgon2id(password string) (string, error) {
