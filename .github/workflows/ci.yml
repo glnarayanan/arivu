@@ -25,6 +25,7 @@ jobs:
       - run: node --check extension/content.js
       - run: node --check extension/url-utils.js
       - run: node extension/url-utils.test.mjs
+      - run: node extension/content.test.mjs
       - run: go test ./...
       - name: Build release artifact
         run: |

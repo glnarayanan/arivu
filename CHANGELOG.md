@@ -90,6 +90,19 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Import jobs now recover expired leases after worker crashes and count each
+  bookmark's terminal import outcome once, so retryable failures no longer
+  inflate progress totals.
+- Full JSON backups now preserve X bookmark metadata, including tweet identity,
+  author fields, tweet URL, and available metrics.
+- Installer reconfigure keeps a disabled backup policy when the operator accepts
+  defaults, and restore checks local health before restarting backup timers or
+  reporting success.
+- Managed-Caddy installer output now prints manual firewall commands instead of
+  claiming public HTTPS completion when UFW/firewalld still needs operator
+  action, and app-only plans print Caddy, Nginx, and Apache snippets.
+- CI now runs the browser extension content-script test alongside the extension
+  URL/origin test.
 - Hardened the self-hosting installer with strict domain validation, Caddy vhost
   detection, HTTPS-only release downloads, GitHub attestation checks, service
   user bootstrap ownership, managed-Caddy activation, consistent SQLite backups,
@@ -165,6 +178,13 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Web CSRF checks now bind the submitted cookie/header token to the authenticated
+  session's stored CSRF hash.
+- Runtime X OAuth redirect URIs now reject relative, malformed, non-HTTP(S), and
+  whitespace/control-containing values.
+- Server-side URL fetching now rejects shared, documentation, benchmark,
+  multicast, reserved, IPv4-mapped, and IPv6 special-use targets in addition to
+  private, loopback, link-local, and unspecified addresses.
 - Web, CLI, and extension tokens are audience-isolated.
 - Login, forgot-password, and reset-password endpoints now use the existing SQLite `rate_limits` table to throttle repeated auth attempts.
 - Sensitive admin/account mutations now write `audit_events` rows, and provider setting updates are restricted to known keys.

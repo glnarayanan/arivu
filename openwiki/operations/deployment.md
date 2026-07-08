@@ -41,19 +41,24 @@ Proxy modes:
 
 - `auto`: choose the safest mode from detected host state.
 - `managed-caddy`: install an Arivu-owned Caddy site block on clean hosts,
-  add the Arivu `conf.d` import if needed, validate Caddy, and reload it.
+  add the Arivu `conf.d` import if needed, validate Caddy, and reload it. If
+  UFW or firewalld is detected, the installer prints exact additive commands
+  for ports 80 and 443 and does not claim public HTTPS is complete until the
+  operator runs them.
 - `existing-proxy`: bind Arivu to `127.0.0.1:<free-port>` and write proxy
   snippets for the existing proxy. The installer validates supported proxy
   configs but leaves final attachment to the existing proxy owner. `existing`
   is accepted as a CLI alias.
-- `app-only`: start Arivu on loopback and print proxy snippets without changing
-  web server config.
+- `app-only`: start Arivu on loopback and print Caddy, Nginx, and Apache
+  examples without changing web server config.
 
 Safety rules:
 
 - The installer never replaces global Caddy, Nginx, or Apache config.
 - The installer never stops unrelated services.
-- Firewall changes are additive only.
+- Firewall changes are manual by default and additive only. The installer
+  prints commands such as `sudo ufw allow 80/tcp` and `sudo ufw allow 443/tcp`
+  instead of silently opening ports.
 - If the requested domain already appears in an existing vhost, the installer
   stops and asks for a different domain or subdomain.
 
@@ -95,7 +100,8 @@ bind port, proxy mode, TLS email, version, backup policy, and signup setting.
 It does not replace the installed binary unless `--version`, `--artifact-url`,
 or `--checksums-url` is passed. It does not force an admin password unless you
 pass `--admin-password-file`, which rotates or creates the configured admin
-account through `arivu admin bootstrap`.
+account through `arivu admin bootstrap`. If backups are disabled in the
+existing env file, pressing Enter at the backup prompt keeps them disabled.
 
 ## Installed Files
 
@@ -123,7 +129,9 @@ uses a SQLite-consistent snapshot instead of raw-copying a live WAL database.
 
 `arivu-installer restore` requires a primary `arivu.sqlite3` backup file. On a
 root-managed install it stops only Arivu's service and backup timer, restores
-through a temporary file, repairs ownership, and starts Arivu again.
+through a temporary file, repairs ownership, starts Arivu again, and checks the
+local `/api/health` endpoint before restarting the backup timer or reporting
+restore success.
 
 `arivu-installer upgrade` keeps the previous binary until the replacement has
 passed systemd and local HTTP health checks. Failed health checks roll the
