@@ -454,6 +454,42 @@ func FormatPlan(plan Plan) string {
 			fmt.Fprintf(&b, "- %s (%s)\n", file.Path, file.Mode)
 		}
 	}
+	if RequiresManualFirewall(plan) {
+		b.WriteString("\nManual firewall commands required before public HTTPS is complete:\n")
+		for _, command := range FirewallCommands(plan.Facts.Firewall) {
+			fmt.Fprintf(&b, "- %s\n", command)
+		}
+	}
+	if plan.ProxyMode == ProxyAppOnly {
+		b.WriteString("\nManual proxy snippets:\n")
+		b.WriteString(AppOnlyProxySnippets(plan))
+	}
+	return b.String()
+}
+
+// RequiresManualFirewall reports whether public HTTP/HTTPS still depends on operator-owned firewall changes.
+func RequiresManualFirewall(plan Plan) bool {
+	return plan.ProxyMode == ProxyManagedCaddy && strings.TrimSpace(plan.Facts.Firewall) != ""
+}
+
+// FirewallCommands returns additive commands for opening HTTP/HTTPS on the detected firewall.
+func FirewallCommands(firewall string) []string {
+	switch strings.TrimSpace(firewall) {
+	case "ufw":
+		return []string{"sudo ufw allow 80/tcp", "sudo ufw allow 443/tcp"}
+	case "firewalld":
+		return []string{"sudo firewall-cmd --permanent --add-service=http", "sudo firewall-cmd --permanent --add-service=https", "sudo firewall-cmd --reload"}
+	default:
+		return []string{"open TCP ports 80 and 443 in the host firewall"}
+	}
+}
+
+// AppOnlyProxySnippets renders copyable reverse-proxy examples without adding managed proxy files.
+func AppOnlyProxySnippets(plan Plan) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "\nCaddy:\n%s", CaddyFile(plan.Options.Domain, plan.BindPort, plan.Options.TLSEmail))
+	fmt.Fprintf(&b, "\nNginx:\n%s", NginxSnippet(plan.Options.Domain, plan.BindPort))
+	fmt.Fprintf(&b, "\nApache:\n%s", ApacheSnippet(plan.Options.Domain, plan.BindPort))
 	return b.String()
 }
 

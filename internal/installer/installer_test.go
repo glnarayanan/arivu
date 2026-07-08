@@ -88,6 +88,29 @@ func TestBuildPlanAppOnlySkipsProxyFiles(t *testing.T) {
 	if hasFile(plan, "/etc/caddy/conf.d/arivu.caddy") || hasFile(plan, "/etc/nginx/snippets/arivu.conf") {
 		t.Fatalf("app-only should not manage proxy files: %#v", plan.Files)
 	}
+	formatted := FormatPlan(plan)
+	for _, expected := range []string{"Manual proxy snippets:", "Caddy:", "reverse_proxy 127.0.0.1:8090", "Nginx:", "proxy_pass http://127.0.0.1:8090", "Apache:", "ProxyPass / http://127.0.0.1:8090/"} {
+		if !strings.Contains(formatted, expected) {
+			t.Fatalf("app-only plan missing %q:\n%s", expected, formatted)
+		}
+	}
+}
+
+func TestManagedCaddyPlanWithFirewallPrintsManualCommands(t *testing.T) {
+	facts := cleanFacts()
+	facts.Commands["ufw"] = "/usr/sbin/ufw"
+	facts.Firewall = "ufw"
+	plan, err := BuildPlan(baseOptions(), facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !RequiresManualFirewall(plan) {
+		t.Fatalf("expected manual firewall requirement: %#v", plan)
+	}
+	formatted := FormatPlan(plan)
+	if !strings.Contains(formatted, "Manual firewall commands required") || !strings.Contains(formatted, "sudo ufw allow 80/tcp") || !strings.Contains(formatted, "sudo ufw allow 443/tcp") {
+		t.Fatalf("managed-caddy firewall plan missing manual commands:\n%s", formatted)
+	}
 }
 
 func TestBuildPlanBackupsDisabledSkipsBackupUnits(t *testing.T) {

@@ -93,11 +93,7 @@ func runInstall(ctx context.Context, args []string) {
 	if err := installer.Apply(ctx, plan, applyOpts); err != nil {
 		log.Fatal(err)
 	}
-	if plan.ProxyMode == installer.ProxyManagedCaddy {
-		fmt.Printf("Arivu install complete: https://%s\n", opts.Domain)
-		return
-	}
-	fmt.Printf("Arivu service installed on %s:%d; finish proxy integration for %s.\n", plan.BindAddress, plan.BindPort, opts.Domain)
+	fmt.Print(completionMessage(plan))
 }
 
 func runPlan(ctx context.Context, args []string) {
@@ -176,6 +172,25 @@ func detectHostForOptions(ctx context.Context, opts installer.Options) installer
 		domain = ""
 	}
 	return installer.DetectHost(ctx, domain)
+}
+
+func completionMessage(plan installer.Plan) string {
+	if installer.RequiresManualFirewall(plan) {
+		var b strings.Builder
+		fmt.Fprintf(&b, "Arivu service and Caddy installed for %s, but public HTTPS still needs firewall access.\n", plan.Options.Domain)
+		b.WriteString("Run these additive firewall commands when ready:\n")
+		for _, command := range installer.FirewallCommands(plan.Facts.Firewall) {
+			fmt.Fprintf(&b, "- %s\n", command)
+		}
+		return b.String()
+	}
+	if plan.ProxyMode == installer.ProxyManagedCaddy {
+		return fmt.Sprintf("Arivu install complete: https://%s\n", plan.Options.Domain)
+	}
+	if plan.ProxyMode == installer.ProxyAppOnly {
+		return fmt.Sprintf("Arivu service installed on %s:%d; configure your reverse proxy manually using the snippets printed above for %s.\n", plan.BindAddress, plan.BindPort, plan.Options.Domain)
+	}
+	return fmt.Sprintf("Arivu service installed on %s:%d; finish proxy integration for %s.\n", plan.BindAddress, plan.BindPort, plan.Options.Domain)
 }
 
 func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) installer.Options {
