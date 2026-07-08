@@ -2859,6 +2859,11 @@ func TestAdminUserMutations(t *testing.T) {
 	if xEnabledBody["enabled"] != true {
 		t.Fatalf("runtime X setting was not effective: %#v", xEnabledBody)
 	}
+	badXRedirect := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"x_redirect_uri":"/relative/callback"}`, accessCookie, csrfCookie)
+	if badXRedirect.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad x redirect update status = %d body=%s", badXRedirect.StatusCode, readBody(badXRedirect))
+	}
+	badXRedirect.Body.Close()
 	deleteKey := adminRequest(t, handler, http.MethodDelete, "/api/admin/api-keys/gemini_api_key", "", accessCookie, csrfCookie)
 	if deleteKey.StatusCode != http.StatusOK {
 		t.Fatalf("api key delete = %d body=%s", deleteKey.StatusCode, readBody(deleteKey))

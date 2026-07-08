@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/glnarayanan/arivu/internal/config"
 	"github.com/glnarayanan/arivu/internal/secrets"
@@ -244,6 +245,9 @@ func (s *Service) Set(ctx context.Context, key string, value any, updatedBy stri
 	if err != nil {
 		return err
 	}
+	if key == KeyXRedirectURI && raw == "" {
+		return s.Delete(ctx, key)
+	}
 	now := nowRFC3339()
 	if IsSecret(key) {
 		ciphertext, err := secrets.Seal(s.cfg.SecretKey, raw)
@@ -358,6 +362,22 @@ func normalizeValue(key string, value any) (string, error) {
 			return "", fmt.Errorf("app_url must use http or https")
 		}
 		return strings.TrimRight(raw, "/"), nil
+	}
+	if key == KeyXRedirectURI {
+		if raw == "" {
+			return "", nil
+		}
+		if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return "", fmt.Errorf("x_redirect_uri must not contain whitespace or control characters")
+		}
+		parsed, err := url.Parse(raw)
+		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+			return "", fmt.Errorf("x_redirect_uri must be an absolute http or https URL")
+		}
+		if parsed.Scheme != "http" && parsed.Scheme != "https" {
+			return "", fmt.Errorf("x_redirect_uri must use http or https")
+		}
+		return raw, nil
 	}
 	if IsBoolean(key) {
 		return boolString(parseBool(raw)), nil
