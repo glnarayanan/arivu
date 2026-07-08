@@ -59,6 +59,10 @@ sudo arivu-installer install \
 Use `arivu-installer plan --domain arivu.example.com --admin-email admin@example.com`
 to review host changes before applying them.
 
+To pin a release, run
+`curl -fsSL https://install.arivu.app | sudo ARIVU_VERSION=v1.2.3 bash` or
+pass `--version` to `arivu-installer install`/`upgrade`.
+
 For local development, requires Go 1.24 or newer:
 
 ```bash

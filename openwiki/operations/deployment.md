@@ -9,6 +9,12 @@ a Linux VPS end to end, while preserving unrelated apps on shared hosts.
 curl -fsSL https://install.arivu.app | sudo bash
 ```
 
+Pin a release when you need reproducible installs:
+
+```bash
+curl -fsSL https://install.arivu.app | sudo ARIVU_VERSION=v1.2.3 bash
+```
+
 The bootstrap script only downloads `arivu-installer`, verifies it against the
 release `SHA256SUMS`, installs it under `/usr/local/bin`, and starts the
 interactive installer.
@@ -34,7 +40,7 @@ Proxy modes:
 - `auto`: choose the safest mode from detected host state.
 - `managed-caddy`: install an Arivu-owned Caddy site block on clean hosts.
 - `existing-proxy`: bind Arivu to `127.0.0.1:<free-port>` and write proxy
-  snippets for the existing proxy.
+  snippets for the existing proxy. `existing` is accepted as a CLI alias.
 - `app-only`: start Arivu on loopback and print proxy snippets without changing
   web server config.
 
@@ -55,7 +61,8 @@ sudo arivu-installer install \
   --admin-email admin@example.com \
   --admin-password-file /root/arivu-admin-password \
   --tls-email ops@example.com \
-  --proxy-mode auto
+  --proxy-mode auto \
+  --version latest
 ```
 
 Preview changes without applying them:
@@ -74,6 +81,14 @@ sudo arivu-installer upgrade
 sudo arivu-installer reconfigure
 sudo arivu-installer uninstall
 ```
+
+`--tls-email` is rendered into Arivu-managed Caddy site blocks. Nginx and
+Apache snippets still leave certificate ownership to the existing proxy.
+
+`reconfigure` preloads the existing `/etc/arivu/arivu.env` domain, admin email,
+bind port, and signup setting. It does not force an admin password unless you
+pass `--admin-password-file`, which rotates or creates the admin account through
+`arivu admin bootstrap`.
 
 ## Installed Files
 

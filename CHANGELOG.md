@@ -79,6 +79,9 @@ All notable changes to this project will be documented in this file.
   backup/restore helpers, checksum verification, and operational commands.
 - Added a checksum-verifying `deploy/install.sh` bootstrap script for the
   one-command installer flow.
+- Added installer support for pinned release versions, TLS email rendering in
+  Arivu-managed Caddy snippets, and reconfiguration defaults loaded from the
+  existing generated env file.
 - Added `arivu admin bootstrap --password-stdin` for installer-safe first-admin
   creation without passing passwords through shell arguments.
 - Added a tag-based release workflow that publishes Linux app and installer

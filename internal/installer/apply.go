@@ -66,10 +66,12 @@ func Apply(ctx context.Context, plan Plan, opts ApplyOptions) error {
 			return err
 		}
 	}
-	if root == "/" {
+	if root == "/" && shouldBootstrapAdmin(plan, opts) {
 		if err := bootstrapAdmin(ctx, plan, opts); err != nil {
 			return err
 		}
+	}
+	if root == "/" {
 		if err := run(ctx, "systemctl", "daemon-reload"); err != nil {
 			return err
 		}
@@ -83,6 +85,10 @@ func Apply(ctx context.Context, plan Plan, opts ApplyOptions) error {
 		}
 	}
 	return nil
+}
+
+func shouldBootstrapAdmin(plan Plan, opts ApplyOptions) bool {
+	return !plan.Options.Reconfigure || opts.AdminPassword != "" || opts.AdminPasswordFile != ""
 }
 
 func installPackages(ctx context.Context, plan Plan) error {
@@ -139,7 +145,7 @@ func installArivuBinary(ctx context.Context, opts ApplyOptions, plan Plan) error
 	url := opts.ArtifactURL
 	sumsURL := opts.ChecksumsURL
 	if url == "" || sumsURL == "" {
-		defaultURL, defaultSums := LatestArtifactURLs("https://github.com/glnarayanan/arivu", plan.Facts.Arch)
+		defaultURL, defaultSums := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", plan.Options.Version, plan.Facts.Arch)
 		if url == "" {
 			url = defaultURL
 		}
@@ -218,8 +224,8 @@ func Restore(root string, backupDir string) error {
 	return nil
 }
 
-func Upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions) error {
-	plan := Plan{Facts: facts}
+func Upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version string) error {
+	plan := Plan{Facts: facts, Options: Options{Version: strings.TrimSpace(version)}}
 	if err := installArivuBinary(ctx, opts, plan); err != nil {
 		return err
 	}

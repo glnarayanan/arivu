@@ -60,15 +60,21 @@ commands:
 }
 
 func runInstall(ctx context.Context, args []string) {
-	opts, applyOpts, nonInteractive, yes, err := parseOptions(args, true)
+	opts, applyOpts, nonInteractive, yes, flagsSet, err := parseOptions(args)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if opts.Reconfigure {
+		opts = mergeExistingOptions(opts, flagsSet)
 	}
 	if !nonInteractive {
 		opts, applyOpts, err = interactiveWizard(opts, applyOpts)
 		if err != nil {
 			log.Fatal(err)
 		}
+	}
+	if err := validateInstallOptions(opts, applyOpts, nonInteractive, true); err != nil {
+		log.Fatal(err)
 	}
 	facts := installer.DetectHost(ctx, opts.Domain)
 	plan, err := installer.BuildPlan(opts, facts)
@@ -90,15 +96,21 @@ func runInstall(ctx context.Context, args []string) {
 }
 
 func runPlan(ctx context.Context, args []string) {
-	opts, _, nonInteractive, _, err := parseOptions(args, false)
+	opts, applyOpts, nonInteractive, _, flagsSet, err := parseOptions(args)
 	if err != nil {
 		log.Fatal(err)
+	}
+	if opts.Reconfigure {
+		opts = mergeExistingOptions(opts, flagsSet)
 	}
 	if !nonInteractive && opts.Domain == "" {
 		opts, _, err = interactiveWizard(opts, installer.ApplyOptions{DryRun: true})
 		if err != nil {
 			log.Fatal(err)
 		}
+	}
+	if err := validateInstallOptions(opts, applyOpts, nonInteractive, false); err != nil {
+		log.Fatal(err)
 	}
 	facts := installer.DetectHost(ctx, opts.Domain)
 	plan, err := installer.BuildPlan(opts, facts)
@@ -108,16 +120,17 @@ func runPlan(ctx context.Context, args []string) {
 	fmt.Println(installer.FormatPlan(plan))
 }
 
-func parseOptions(args []string, requireInstallPassword bool) (installer.Options, installer.ApplyOptions, bool, bool, error) {
+func parseOptions(args []string) (installer.Options, installer.ApplyOptions, bool, bool, map[string]bool, error) {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	var opts installer.Options
 	var apply installer.ApplyOptions
 	var proxyMode string
-	var nonInteractive, yes, reconfigure bool
+	var nonInteractive, yes bool
 	fs.StringVar(&opts.Domain, "domain", "", "Domain or subdomain for Arivu")
 	fs.StringVar(&opts.AdminEmail, "admin-email", "", "First admin email")
 	fs.StringVar(&opts.TLSEmail, "tls-email", "", "Email for TLS certificate notices")
-	fs.StringVar(&proxyMode, "proxy-mode", string(installer.ProxyAuto), "auto, managed-caddy, existing-proxy, or app-only")
+	fs.StringVar(&proxyMode, "proxy-mode", string(installer.ProxyAuto), "auto, managed-caddy, existing-proxy, existing, or app-only")
+	fs.StringVar(&opts.Version, "version", "", "Release version to install; empty/latest uses the latest release")
 	fs.BoolVar(&opts.SignupsEnabled, "signups-enabled", false, "Allow public signups after install")
 	fs.BoolVar(&opts.BackupEnabled, "backups", true, "Install daily SQLite backup timer")
 	fs.BoolVar(&opts.SkipDNSCheck, "skip-dns-check", false, "Skip domain-to-server DNS verification")
@@ -128,21 +141,55 @@ func parseOptions(args []string, requireInstallPassword bool) (installer.Options
 	fs.BoolVar(&apply.DryRun, "dry-run", false, "Validate and render without changing the host")
 	fs.BoolVar(&nonInteractive, "non-interactive", false, "Do not prompt; require flags")
 	fs.BoolVar(&yes, "yes", false, "Apply without the final interactive confirmation")
-	fs.BoolVar(&reconfigure, "reconfigure", false, "Reconfigure an existing install")
+	fs.BoolVar(&opts.Reconfigure, "reconfigure", false, "Reconfigure an existing install")
 	if err := fs.Parse(args); err != nil {
-		return opts, apply, false, false, err
+		return opts, apply, false, false, nil, err
 	}
-	_ = reconfigure
-	opts.ProxyMode = installer.ProxyMode(proxyMode)
+	flagsSet := map[string]bool{}
+	fs.Visit(func(flag *flag.Flag) {
+		flagsSet[flag.Name] = true
+	})
+	opts.ProxyMode = normalizeProxyMode(proxyMode)
+	return opts, apply, nonInteractive, yes, flagsSet, nil
+}
+
+func validateInstallOptions(opts installer.Options, apply installer.ApplyOptions, nonInteractive bool, requireInstallPassword bool) error {
 	if nonInteractive {
 		if strings.TrimSpace(opts.Domain) == "" || strings.TrimSpace(opts.AdminEmail) == "" {
-			return opts, apply, false, false, fmt.Errorf("--domain and --admin-email are required with --non-interactive")
+			return fmt.Errorf("--domain and --admin-email are required with --non-interactive")
 		}
-		if requireInstallPassword && apply.AdminPasswordFile == "" && !apply.DryRun {
-			return opts, apply, false, false, fmt.Errorf("--admin-password-file is required with --non-interactive install")
+		if requireInstallPassword && !opts.Reconfigure && apply.AdminPasswordFile == "" && !apply.DryRun {
+			return fmt.Errorf("--admin-password-file is required with --non-interactive install")
 		}
 	}
-	return opts, apply, nonInteractive, yes, nil
+	return nil
+}
+
+func normalizeProxyMode(value string) installer.ProxyMode {
+	if value == "existing" {
+		return installer.ProxyExistingProxy
+	}
+	return installer.ProxyMode(value)
+}
+
+func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) installer.Options {
+	existing, err := installer.OptionsFromEnvFile("/etc/arivu/arivu.env")
+	if err != nil {
+		return opts
+	}
+	if !flagsSet["domain"] {
+		opts.Domain = defaultString(opts.Domain, existing.Domain)
+	}
+	if !flagsSet["admin-email"] {
+		opts.AdminEmail = defaultString(opts.AdminEmail, existing.AdminEmail)
+	}
+	if !flagsSet["bind-port"] && opts.BindPort == 0 {
+		opts.BindPort = existing.BindPort
+	}
+	if !flagsSet["signups-enabled"] {
+		opts.SignupsEnabled = existing.SignupsEnabled
+	}
+	return opts
 }
 
 func interactiveWizard(opts installer.Options, apply installer.ApplyOptions) (installer.Options, installer.ApplyOptions, error) {
@@ -151,10 +198,10 @@ func interactiveWizard(opts installer.Options, apply installer.ApplyOptions) (in
 	opts.AdminEmail = prompt(reader, "Admin email", opts.AdminEmail)
 	opts.TLSEmail = prompt(reader, "TLS notification email", defaultString(opts.TLSEmail, opts.AdminEmail))
 	mode := prompt(reader, "Proxy mode [auto, managed-caddy, existing-proxy, app-only]", defaultString(string(opts.ProxyMode), string(installer.ProxyAuto)))
-	opts.ProxyMode = installer.ProxyMode(mode)
+	opts.ProxyMode = normalizeProxyMode(mode)
 	opts.SignupsEnabled = promptBool(reader, "Allow public signups", opts.SignupsEnabled)
 	opts.BackupEnabled = promptBool(reader, "Install daily SQLite backups", true)
-	if !apply.DryRun && apply.AdminPasswordFile == "" && apply.AdminPassword == "" {
+	if !apply.DryRun && !opts.Reconfigure && apply.AdminPasswordFile == "" && apply.AdminPassword == "" {
 		password, err := readSecret("First admin password")
 		if err != nil {
 			return opts, apply, err
@@ -252,9 +299,10 @@ func runUpgrade(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
 	artifactURL := fs.String("artifact-url", "", "Arivu binary artifact URL")
 	checksumsURL := fs.String("checksums-url", "", "SHA256SUMS URL")
+	version := fs.String("version", "", "Release version to install; empty/latest uses the latest release")
 	_ = fs.Parse(args)
 	facts := installer.DetectHost(ctx, "")
-	if err := installer.Upgrade(ctx, facts, installer.ApplyOptions{ArtifactURL: *artifactURL, ChecksumsURL: *checksumsURL}); err != nil {
+	if err := installer.Upgrade(ctx, facts, installer.ApplyOptions{ArtifactURL: *artifactURL, ChecksumsURL: *checksumsURL}, *version); err != nil {
 		log.Fatal(err)
 	}
 }

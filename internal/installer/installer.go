@@ -1,12 +1,15 @@
 package installer
 
 import (
+	"bufio"
 	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"fmt"
 	"net"
 	"net/mail"
+	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -31,6 +34,7 @@ type Options struct {
 	SkipDNSCheck   bool
 	BindPort       int
 	Version        string
+	Reconfigure    bool
 	ArtifactURL    string
 	ChecksumsURL   string
 }
@@ -76,8 +80,18 @@ type ManagedFile struct {
 
 func BuildPlan(opts Options, facts HostFacts) (Plan, error) {
 	opts.Domain = strings.ToLower(strings.TrimSpace(opts.Domain))
-	opts.AdminEmail = strings.ToLower(strings.TrimSpace(opts.AdminEmail))
-	opts.TLSEmail = strings.ToLower(strings.TrimSpace(opts.TLSEmail))
+	opts.Version = strings.TrimSpace(opts.Version)
+	var err error
+	opts.AdminEmail, err = normalizeEmail(opts.AdminEmail)
+	if err != nil {
+		return Plan{}, fmt.Errorf("admin email is invalid: %w", err)
+	}
+	if strings.TrimSpace(opts.TLSEmail) != "" {
+		opts.TLSEmail, err = normalizeEmail(opts.TLSEmail)
+		if err != nil {
+			return Plan{}, fmt.Errorf("TLS email is invalid: %w", err)
+		}
+	}
 	if opts.ProxyMode == "" {
 		opts.ProxyMode = ProxyAuto
 	}
@@ -117,14 +131,6 @@ func BuildPlan(opts Options, facts HostFacts) (Plan, error) {
 func validateOptions(opts Options) error {
 	if opts.Domain == "" {
 		return errors.New("domain is required")
-	}
-	if _, err := mail.ParseAddress(opts.AdminEmail); err != nil {
-		return fmt.Errorf("admin email is invalid: %w", err)
-	}
-	if opts.TLSEmail != "" {
-		if _, err := mail.ParseAddress(opts.TLSEmail); err != nil {
-			return fmt.Errorf("TLS email is invalid: %w", err)
-		}
 	}
 	if strings.Contains(opts.Domain, "/") || strings.Contains(opts.Domain, ":") {
 		return errors.New("domain must be a hostname, not a URL")
@@ -248,7 +254,7 @@ func plannedFiles(opts Options, facts HostFacts, mode ProxyMode, port int) []Man
 	}
 	switch mode {
 	case ProxyManagedCaddy:
-		files = append(files, ManagedFile{Path: "/etc/caddy/conf.d/arivu.caddy", Mode: "0644", Content: CaddyFile(opts.Domain, port)})
+		files = append(files, ManagedFile{Path: "/etc/caddy/conf.d/arivu.caddy", Mode: "0644", Content: CaddyFile(opts.Domain, port, opts.TLSEmail)})
 	case ProxyExistingProxy:
 		files = append(files, existingProxyFiles(opts, facts, port)...)
 	}
@@ -260,12 +266,12 @@ func existingProxyFiles(opts Options, facts HostFacts, port int) []ManagedFile {
 	case facts.Commands["nginx"] != "":
 		return []ManagedFile{{Path: "/etc/nginx/snippets/arivu.conf", Mode: "0644", Content: NginxSnippet(opts.Domain, port)}}
 	case facts.Commands["caddy"] != "":
-		return []ManagedFile{{Path: "/etc/arivu/proxy/Caddyfile.arivu", Mode: "0644", Content: CaddyFile(opts.Domain, port)}}
+		return []ManagedFile{{Path: "/etc/arivu/proxy/Caddyfile.arivu", Mode: "0644", Content: CaddyFile(opts.Domain, port, opts.TLSEmail)}}
 	case facts.Commands["apache2"] != "" || facts.Commands["httpd"] != "":
 		return []ManagedFile{{Path: "/etc/apache2/conf-available/arivu.conf", Mode: "0644", Content: ApacheSnippet(opts.Domain, port)}}
 	default:
 		return []ManagedFile{
-			{Path: "/etc/arivu/proxy/Caddyfile.arivu", Mode: "0644", Content: CaddyFile(opts.Domain, port)},
+			{Path: "/etc/arivu/proxy/Caddyfile.arivu", Mode: "0644", Content: CaddyFile(opts.Domain, port, opts.TLSEmail)},
 			{Path: "/etc/arivu/proxy/nginx.conf", Mode: "0644", Content: NginxSnippet(opts.Domain, port)},
 			{Path: "/etc/arivu/proxy/apache.conf", Mode: "0644", Content: ApacheSnippet(opts.Domain, port)},
 		}
@@ -346,11 +352,15 @@ WantedBy=timers.target
 `
 }
 
-func CaddyFile(domain string, port int) string {
+func CaddyFile(domain string, port int, tlsEmail string) string {
+	tlsLine := ""
+	if tlsEmail != "" {
+		tlsLine = "\ttls " + tlsEmail + "\n"
+	}
 	return fmt.Sprintf(`%s {
-	reverse_proxy 127.0.0.1:%d
+%s	reverse_proxy 127.0.0.1:%d
 }
-`, domain, port)
+`, domain, tlsLine, port)
 }
 
 func NginxSnippet(domain string, port int) string {
@@ -396,14 +406,22 @@ func GenerateSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-func LatestArtifactURLs(repo string, arch string) (string, string) {
+func ReleaseArtifactURLs(repo string, version string, arch string) (string, string) {
 	base := strings.TrimRight(repo, "/") + "/releases/latest/download"
+	if version != "" && version != "latest" {
+		base = strings.TrimRight(repo, "/") + "/releases/download/" + version
+	}
 	return base + "/arivu-linux-" + arch, base + "/SHA256SUMS"
 }
 
 func FormatPlan(plan Plan) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Arivu install plan for %s\n", plan.Options.Domain)
+	if plan.Options.Version != "" && plan.Options.Version != "latest" {
+		fmt.Fprintf(&b, "Release: %s\n", plan.Options.Version)
+	} else {
+		b.WriteString("Release: latest\n")
+	}
 	fmt.Fprintf(&b, "Proxy mode: %s\n", plan.ProxyMode)
 	fmt.Fprintf(&b, "App bind: %s:%d\n\n", plan.BindAddress, plan.BindPort)
 	if len(plan.Warnings) > 0 {
@@ -436,4 +454,77 @@ func ParsePort(value string) (int, error) {
 		return 0, errors.New("port must be between 1024 and 65535")
 	}
 	return port, nil
+}
+
+func OptionsFromEnvFile(path string) (Options, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return Options{}, err
+	}
+	defer file.Close()
+	values := map[string]string{}
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		key, value, ok := strings.Cut(strings.TrimSpace(scanner.Text()), "=")
+		if !ok || strings.HasPrefix(key, "#") {
+			continue
+		}
+		values[key] = strings.Trim(strings.TrimSpace(value), `"`)
+	}
+	if err := scanner.Err(); err != nil {
+		return Options{}, err
+	}
+	return optionsFromEnv(values), nil
+}
+
+func optionsFromEnv(values map[string]string) Options {
+	opts := Options{}
+	if appURL := strings.TrimSpace(values["APP_URL"]); appURL != "" {
+		opts.Domain = domainFromAppURL(appURL)
+	}
+	if adminEmails := strings.TrimSpace(values["ADMIN_EMAILS"]); adminEmails != "" {
+		opts.AdminEmail = strings.TrimSpace(strings.Split(adminEmails, ",")[0])
+	}
+	if addr := strings.TrimSpace(values["ARIVU_ADDR"]); addr != "" {
+		opts.BindPort = portFromAddr(addr)
+	}
+	opts.SignupsEnabled = truthy(values["SIGNUPS_ENABLED"])
+	return opts
+}
+
+func domainFromAppURL(value string) string {
+	parsed, err := url.Parse(value)
+	if err == nil && parsed.Host != "" {
+		return parsed.Hostname()
+	}
+	return strings.TrimPrefix(strings.TrimPrefix(value, "https://"), "http://")
+}
+
+func portFromAddr(addr string) int {
+	if _, portValue, err := net.SplitHostPort(addr); err == nil {
+		port, _ := ParsePort(portValue)
+		return port
+	}
+	if idx := strings.LastIndex(addr, ":"); idx >= 0 {
+		port, _ := ParsePort(addr[idx+1:])
+		return port
+	}
+	return 0
+}
+
+func truthy(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "t", "true", "y", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeEmail(value string) (string, error) {
+	parsed, err := mail.ParseAddress(strings.TrimSpace(value))
+	if err != nil {
+		return "", err
+	}
+	return strings.ToLower(parsed.Address), nil
 }

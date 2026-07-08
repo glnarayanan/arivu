@@ -46,4 +46,7 @@ else
 fi
 
 install -m 0755 "$tmp/$asset" "$install_dir/arivu-installer"
+if [ "$version" != "latest" ]; then
+  exec "$install_dir/arivu-installer" install --version "$version" "$@"
+fi
 exec "$install_dir/arivu-installer" install "$@"
