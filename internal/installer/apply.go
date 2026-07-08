@@ -95,17 +95,26 @@ func Apply(ctx context.Context, plan Plan, opts ApplyOptions) error {
 		if err := activateProxy(ctx, plan); err != nil {
 			return err
 		}
-		if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu.service"); err != nil {
+		if err := activateRootServices(ctx, plan); err != nil {
 			return err
 		}
-		if plan.Options.BackupEnabled {
-			if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu-backup.timer"); err != nil {
-				return err
-			}
-		}
-		if err := healthCheckFunc(ctx, plan.BindPort); err != nil {
+	}
+	return nil
+}
+
+func activateRootServices(ctx context.Context, plan Plan) error {
+	if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu.service"); err != nil {
+		return err
+	}
+	if plan.Options.BackupEnabled {
+		if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu-backup.timer"); err != nil {
 			return err
 		}
+	} else if plan.Options.Reconfigure {
+		_ = runCommand(ctx, "systemctl", "disable", "--now", "arivu-backup.timer")
+	}
+	if err := healthCheckFunc(ctx, plan.BindPort); err != nil {
+		return err
 	}
 	return nil
 }

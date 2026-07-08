@@ -2253,6 +2253,39 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if restoredBookmarkRows != 1 {
 		t.Fatalf("duplicate restore left %d bookmark rows", restoredBookmarkRows)
 	}
+	var mutatedBackup map[string]any
+	if err := json.Unmarshal(exportRaw, &mutatedBackup); err != nil {
+		t.Fatalf("decode backup for x duplicate replay: %v", err)
+	}
+	mutatedBookmarks, _ := mutatedBackup["bookmarks"].([]any)
+	if len(mutatedBookmarks) == 0 {
+		t.Fatalf("backup missing bookmarks for x duplicate replay: %#v", mutatedBackup)
+	}
+	mutatedBookmark, _ := mutatedBookmarks[0].(map[string]any)
+	mutatedBookmark["url"] = "https://x.com/i/web/status/tweet-123"
+	mutatedRaw, err := json.Marshal(mutatedBackup)
+	if err != nil {
+		t.Fatalf("encode x duplicate replay backup: %v", err)
+	}
+	xDuplicateRestoreResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(mutatedRaw), restoreAccess, restoreCSRF)
+	if xDuplicateRestoreResp.StatusCode != http.StatusOK {
+		t.Fatalf("x duplicate restore status = %d body=%s", xDuplicateRestoreResp.StatusCode, readBody(xDuplicateRestoreResp))
+	}
+	var xDuplicateRestoreBody struct {
+		Count int `json:"count"`
+	}
+	_ = json.NewDecoder(xDuplicateRestoreResp.Body).Decode(&xDuplicateRestoreBody)
+	xDuplicateRestoreResp.Body.Close()
+	if xDuplicateRestoreBody.Count != 0 {
+		t.Fatalf("x duplicate restore created bookmark rows: %#v", xDuplicateRestoreBody)
+	}
+	var restoredTweetRows int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE user_id=? AND x_tweet_id='tweet-123'`, restoreUserID).Scan(&restoredTweetRows); err != nil {
+		t.Fatalf("count restored x duplicate rows: %v", err)
+	}
+	if restoredTweetRows != 1 {
+		t.Fatalf("x duplicate restore left %d tweet rows", restoredTweetRows)
+	}
 
 	missingSuggestionsCSRF := httptest.NewRequest(http.MethodPost, "/api/assistant/suggestions", strings.NewReader(`{"mode":"inbox"}`))
 	missingSuggestionsCSRF.Header.Set("Content-Type", "application/json")

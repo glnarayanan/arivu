@@ -30,14 +30,22 @@ One of Arivu's core features is crawling user-saved URLs to index them. This pre
 ### Hardened Dialer Protections
 
 1. **Host & DNS Resolution Validation**: The custom dialer resolves DNS names and analyzes the destination IP addresses *before* making the physical handshake.
-2. **Private Address Boundary Filtering**: Rejects any address falling into local or private blocks:
+2. **Special-Use Address Boundary Filtering**: Rejects any address falling into
+   local, private, shared, documentation, benchmark, transition, multicast,
+   unspecified, reserved, or otherwise non-public ranges:
    - Loopback: `127.0.0.0/8`, `::1/128`
    - Private subnets (RFC 1918): `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`
    - Link-local: `169.254.0.0/16`, `fe80::/10`
-   - Multicast/Unspecified ranges.
+   - IPv4-mapped, NAT64, 6to4, documentation, benchmark, multicast, and
+     reserved ranges.
 3. **Environmental Proxy Erasure**: Forces a nil proxy configuration to prevent outgoing requests from bypassing checks through environment-scoped variables or local loopbacks.
 4. **Redirect Validation**: Evaluates target redirects sequentially. Every hop must resolve to a valid, public IP address or the request immediately aborts.
 5. **Content-Type & Size Limits**: Strict checks verify return payload types (rejecting large, binary files or non-HTML documents) and enforce a concrete reading limit (e.g., max 10MB) to prevent decompression bombs or disk fatigue.
+
+Runtime X OAuth redirect URI settings are validated whether they come from the
+Admin settings table or env/config fallback. Invalid schemes, relative URLs,
+whitespace/control values, and malformed URLs fail closed before an OAuth URL is
+generated.
 
 ---
 

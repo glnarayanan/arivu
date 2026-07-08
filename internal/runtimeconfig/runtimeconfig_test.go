@@ -167,3 +167,23 @@ func TestXRedirectURIValidationAndBlankReset(t *testing.T) {
 		t.Fatalf("blank x redirect left database override rows=%d", rows)
 	}
 }
+
+func TestInvalidXRedirectURIFallbackFailsClosed(t *testing.T) {
+	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	service := New(db, config.Config{
+		AppURL:       "https://app.example.test",
+		SecretKey:    "test-secret-with-enough-bytes",
+		XRedirectURI: "javascript:alert(1)",
+	})
+	if _, err := service.Effective(context.Background()); err == nil {
+		t.Fatal("expected invalid fallback x_redirect_uri to fail")
+	}
+	if _, err := service.StatusValue(context.Background(), KeyXRedirectURI); err == nil {
+		t.Fatal("expected invalid fallback x_redirect_uri status to fail")
+	}
+}

@@ -153,24 +153,22 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 		oldID := stringValue(bookmark["id"])
 		newID := fallback(oldID, ids.New())
 		parsed, _ := url.Parse(rawURL)
-		inserted, err := s.insertRestoredBookmark(ctx, userID, newID, rawURL, bookmark, parsed.Hostname(), now)
-		if err != nil {
-			continue
-		}
-		if !inserted {
-			var existing string
-			if err := s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE user_id=? AND url=?`, userID, rawURL).Scan(&existing); err == nil {
-				newID = existing
-			} else if err == sql.ErrNoRows && oldID != "" {
+		if existing := s.existingRestoredBookmarkID(ctx, userID, rawURL, bookmark); existing != "" {
+			newID = existing
+		} else {
+			inserted, err := s.insertRestoredBookmark(ctx, userID, newID, rawURL, bookmark, parsed.Hostname(), now)
+			if err != nil {
+				continue
+			}
+			if !inserted {
+				if oldID == "" {
+					continue
+				}
 				newID = ids.New()
 				if retryInserted, retryErr := s.insertRestoredBookmark(ctx, userID, newID, rawURL, bookmark, parsed.Hostname(), now); retryErr != nil || !retryInserted {
 					continue
 				}
-				restored++
-			} else {
-				continue
 			}
-		} else {
 			restored++
 		}
 		if oldID != "" {
@@ -193,6 +191,20 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	s.refreshSearchIndex(ctx, userID)
 	return map[string]any{"message": "Backup restored", "count": restored, "import_job_id": jobID, "source_report": s.importSourceReport(ctx, userID, jobID)}, true, nil
+}
+
+func (s *Service) existingRestoredBookmarkID(ctx context.Context, userID, rawURL string, bookmark map[string]any) string {
+	if tweetID := strings.TrimSpace(stringValue(bookmark["x_tweet_id"])); tweetID != "" {
+		var existing string
+		if err := s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE user_id=? AND x_tweet_id=?`, userID, tweetID).Scan(&existing); err == nil {
+			return existing
+		}
+	}
+	var existing string
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM bookmarks WHERE user_id=? AND url=?`, userID, rawURL).Scan(&existing); err == nil {
+		return existing
+	}
+	return ""
 }
 
 func (s *Service) insertRestoredBookmark(ctx context.Context, userID, id, rawURL string, bookmark map[string]any, domainFallback, now string) (bool, error) {

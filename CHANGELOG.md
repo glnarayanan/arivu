@@ -92,11 +92,14 @@ All notable changes to this project will be documented in this file.
 
 - Import jobs now recover expired leases after worker crashes and count each
   bookmark's terminal import outcome once, so retryable failures no longer
-  inflate progress totals.
+  inflate progress totals. Job completion and failure updates are now fenced to
+  the active lease so stale workers cannot overwrite a re-leased job.
 - Full JSON backups now preserve X bookmark metadata, including tweet identity,
-  author fields, tweet URL, and available metrics.
+  author fields, tweet URL, and available metrics, and X restore replay dedupes
+  by tweet identity as well as URL.
 - Installer reconfigure keeps a disabled backup policy when the operator accepts
-  defaults, and restore checks local health before restarting backup timers or
+  defaults, actively disables an existing backup timer when backups are turned
+  off, and restore checks local health before restarting backup timers or
   reporting success.
 - Managed-Caddy installer output now prints manual firewall commands instead of
   claiming public HTTPS completion when UFW/firewalld still needs operator
@@ -180,6 +183,10 @@ All notable changes to this project will be documented in this file.
 
 - Web CSRF checks now bind the submitted cookie/header token to the authenticated
   session's stored CSRF hash.
+- Runtime X OAuth redirect URI settings are validated for both Admin overrides
+  and env/config fallbacks before they can be used in OAuth URLs.
+- Safe fetch SSRF filtering now rejects additional IPv4 and IPv6 special-use
+  transition, benchmark, documentation, shared, reserved, and non-public ranges.
 - Runtime X OAuth redirect URIs now reject relative, malformed, non-HTTP(S), and
   whitespace/control-containing values.
 - Server-side URL fetching now rejects shared, documentation, benchmark,

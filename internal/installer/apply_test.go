@@ -141,6 +141,65 @@ func TestRootRestoreHealthFailureSkipsBackupTimer(t *testing.T) {
 	}
 }
 
+func TestRootReconfigureDisablesBackupTimerWhenBackupsDisabled(t *testing.T) {
+	var commands []string
+	oldRun := runCommand
+	oldHealth := healthCheckFunc
+	defer func() {
+		runCommand = oldRun
+		healthCheckFunc = oldHealth
+	}()
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	healthCheckFunc = func(context.Context, int) error { return nil }
+
+	err := activateRootServices(context.Background(), Plan{
+		Options:     Options{Reconfigure: true, BackupEnabled: false},
+		BindPort:    8080,
+		ProxyMode:   ProxyAppOnly,
+		BindAddress: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexCommand(commands, "systemctl disable --now arivu-backup.timer") < 0 {
+		t.Fatalf("disabled reconfigure did not stop backup timer: %#v", commands)
+	}
+	if indexCommand(commands, "systemctl enable --now arivu-backup.timer") >= 0 {
+		t.Fatalf("disabled reconfigure enabled backup timer: %#v", commands)
+	}
+}
+
+func TestRootFreshInstallWithBackupsDisabledDoesNotManageBackupTimer(t *testing.T) {
+	var commands []string
+	oldRun := runCommand
+	oldHealth := healthCheckFunc
+	defer func() {
+		runCommand = oldRun
+		healthCheckFunc = oldHealth
+	}()
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	healthCheckFunc = func(context.Context, int) error { return nil }
+
+	err := activateRootServices(context.Background(), Plan{
+		Options:     Options{Reconfigure: false, BackupEnabled: false},
+		BindPort:    8080,
+		ProxyMode:   ProxyAppOnly,
+		BindAddress: "127.0.0.1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if indexCommand(commands, "systemctl disable --now arivu-backup.timer") >= 0 || indexCommand(commands, "systemctl enable --now arivu-backup.timer") >= 0 {
+		t.Fatalf("fresh install with disabled backups managed backup timer: %#v", commands)
+	}
+}
+
 func restoreFixture(t *testing.T, env string) string {
 	t.Helper()
 	root := t.TempDir()

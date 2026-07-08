@@ -102,6 +102,8 @@ or `--checksums-url` is passed. It does not force an admin password unless you
 pass `--admin-password-file`, which rotates or creates the configured admin
 account through `arivu admin bootstrap`. If backups are disabled in the
 existing env file, pressing Enter at the backup prompt keeps them disabled.
+On a root-managed reconfigure, turning backups off also disables the existing
+`arivu-backup.timer` instead of leaving a previous timer running.
 
 ## Installed Files
 

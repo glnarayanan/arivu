@@ -289,12 +289,25 @@ func (s *Service) resolve(ctx context.Context, key string) (resolvedValue, error
 			}
 			return resolvedValue{key: key, value: opened, source: "database", keyID: keyID.String, updatedAt: updatedAt.String}, nil
 		}
-		return resolvedValue{key: key, value: normalizeStoredPlain(plain.String), source: "database", keyID: keyID.String, updatedAt: updatedAt.String}, nil
+		value := resolvedValue{key: key, value: normalizeStoredPlain(plain.String), source: "database", keyID: keyID.String, updatedAt: updatedAt.String}
+		return validateResolved(value)
 	}
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return resolvedValue{}, err
 	}
-	return s.fallback(key), nil
+	return validateResolved(s.fallback(key))
+}
+
+func validateResolved(value resolvedValue) (resolvedValue, error) {
+	if value.key != KeyXRedirectURI || value.source == "default" || value.value == "" {
+		return value, nil
+	}
+	normalized, err := normalizeValue(value.key, value.value)
+	if err != nil {
+		return resolvedValue{}, err
+	}
+	value.value = normalized
+	return value, nil
 }
 
 func (s *Service) fallback(key string) resolvedValue {

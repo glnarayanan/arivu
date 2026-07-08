@@ -52,7 +52,7 @@ commands:
   install      interactive end-to-end server install
   plan         print the detected install plan without changing the host
   status       print host and Arivu install status
-  backup       copy SQLite DB, WAL, and SHM into /var/backups/arivu
+  backup       create a consistent SQLite backup under /var/backups/arivu
   restore      restore a backup directory
   upgrade      verify and install the latest Arivu binary, then restart service
   reconfigure  rerun the install wizard against an existing install
