@@ -39,7 +39,8 @@ provider integrations.
 
 On a Linux VPS, use the installer. It prepares the server, detects shared-host
 proxy state, installs Arivu, creates the first admin, and leaves routine
-settings in Admin > Settings.
+settings in Admin > Settings. The bootstrap path requires `gh` so release
+attestations can be verified before any downloaded binary is installed.
 
 ```bash
 curl -fsSL https://install.arivu.app | sudo bash
@@ -61,7 +62,8 @@ to review host changes before applying them.
 
 To pin a release, run
 `curl -fsSL https://install.arivu.app | sudo ARIVU_VERSION=v1.2.3 bash` or
-pass `--version` to `arivu-installer install`/`upgrade`.
+pass `--version` to `arivu-installer install`/`upgrade`. `reconfigure` keeps
+the installed binary unless a version or artifact override is explicit.
 
 For local development, requires Go 1.24 or newer:
 

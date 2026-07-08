@@ -16,8 +16,10 @@ curl -fsSL https://install.arivu.app | sudo ARIVU_VERSION=v1.2.3 bash
 ```
 
 The bootstrap script only downloads `arivu-installer`, verifies it against the
-release `SHA256SUMS`, installs it under `/usr/local/bin`, and starts the
-interactive installer.
+release `SHA256SUMS`, verifies the GitHub artifact attestation with `gh`, installs
+it under `/usr/local/bin`, and starts the interactive installer. Hosts must have
+`gh` available for the one-command path; this keeps checksum verification from
+being the only trust control.
 
 The installer asks for:
 
@@ -38,9 +40,12 @@ existing Arivu files, and domain vhost conflicts.
 Proxy modes:
 
 - `auto`: choose the safest mode from detected host state.
-- `managed-caddy`: install an Arivu-owned Caddy site block on clean hosts.
+- `managed-caddy`: install an Arivu-owned Caddy site block on clean hosts,
+  add the Arivu `conf.d` import if needed, validate Caddy, and reload it.
 - `existing-proxy`: bind Arivu to `127.0.0.1:<free-port>` and write proxy
-  snippets for the existing proxy. `existing` is accepted as a CLI alias.
+  snippets for the existing proxy. The installer validates supported proxy
+  configs but leaves final attachment to the existing proxy owner. `existing`
+  is accepted as a CLI alias.
 - `app-only`: start Arivu on loopback and print proxy snippets without changing
   web server config.
 
@@ -86,9 +91,11 @@ sudo arivu-installer uninstall
 Apache snippets still leave certificate ownership to the existing proxy.
 
 `reconfigure` preloads the existing `/etc/arivu/arivu.env` domain, admin email,
-bind port, and signup setting. It does not force an admin password unless you
-pass `--admin-password-file`, which rotates or creates the admin account through
-`arivu admin bootstrap`.
+bind port, proxy mode, TLS email, version, backup policy, and signup setting.
+It does not replace the installed binary unless `--version`, `--artifact-url`,
+or `--checksums-url` is passed. It does not force an admin password unless you
+pass `--admin-password-file`, which rotates or creates the configured admin
+account through `arivu admin bootstrap`.
 
 ## Installed Files
 
@@ -108,6 +115,19 @@ admin emails, and `SECRET_KEY`.
 Routine settings should be changed in Admin > Settings. Runtime-editable values
 include public URL, signup policy, secure-cookie status, Gemini, Resend, and X
 settings. Secret provider values are encrypted in SQLite.
+
+## Backup, Restore, And Upgrade Safety
+
+`arivu-installer backup` fails if the primary SQLite database is missing and
+uses a SQLite-consistent snapshot instead of raw-copying a live WAL database.
+
+`arivu-installer restore` requires a primary `arivu.sqlite3` backup file. On a
+root-managed install it stops only Arivu's service and backup timer, restores
+through a temporary file, repairs ownership, and starts Arivu again.
+
+`arivu-installer upgrade` keeps the previous binary until the replacement has
+passed systemd and local HTTP health checks. Failed health checks roll the
+binary back and restart the Arivu service.
 
 ## Manual Development Run
 

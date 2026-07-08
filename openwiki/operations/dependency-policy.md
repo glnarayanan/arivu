@@ -27,9 +27,9 @@ called through narrow direct HTTP clients.
 - Release tags publish Linux AMD64 and ARM64 `arivu` and `arivu-installer`
   binaries, the bootstrap `install.sh`, build info, module inventory,
   `SHA256SUMS`, and GitHub artifact provenance attestations.
-- The bootstrap installer verifies `SHA256SUMS` before executing
-  `arivu-installer`; the installer verifies the Arivu binary before replacing
-  `/usr/local/bin/arivu`.
+- The bootstrap installer verifies `SHA256SUMS` and GitHub artifact
+  attestations before executing `arivu-installer`; the installer verifies the
+  Arivu binary checksum and attestation before replacing `/usr/local/bin/arivu`.
 - CI runs first-party browser JavaScript syntax checks and the extension
   URL/origin self-test with the GitHub runner's bundled Node runtime; Arivu
   still ships no npm dependency tree.

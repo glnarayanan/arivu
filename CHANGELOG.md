@@ -90,6 +90,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Hardened the self-hosting installer with strict domain validation, Caddy vhost
+  detection, HTTPS-only release downloads, GitHub attestation checks, service
+  user bootstrap ownership, managed-Caddy activation, consistent SQLite backups,
+  restore downtime safety, upgrade rollback, and reconfigure state preservation.
 - Removed the duplicate OpenWiki legacy migration overview and kept the fuller
   migration guide as the canonical migration documentation.
 - Reframed the README and generated GitHub Wiki home around Arivu's
