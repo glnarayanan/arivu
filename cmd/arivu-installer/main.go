@@ -211,14 +211,17 @@ func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) inst
 }
 
 func interactiveWizard(opts installer.Options, apply installer.ApplyOptions) (installer.Options, installer.ApplyOptions, error) {
-	reader := bufio.NewReader(os.Stdin)
+	return interactiveWizardWithReader(bufio.NewReader(os.Stdin), opts, apply)
+}
+
+func interactiveWizardWithReader(reader *bufio.Reader, opts installer.Options, apply installer.ApplyOptions) (installer.Options, installer.ApplyOptions, error) {
 	opts.Domain = prompt(reader, "Domain/subdomain", opts.Domain)
 	opts.AdminEmail = prompt(reader, "Admin email", opts.AdminEmail)
 	opts.TLSEmail = prompt(reader, "TLS notification email", defaultString(opts.TLSEmail, opts.AdminEmail))
 	mode := prompt(reader, "Proxy mode [auto, managed-caddy, existing-proxy, app-only]", defaultString(string(opts.ProxyMode), string(installer.ProxyAuto)))
 	opts.ProxyMode = installer.NormalizeProxyMode(mode)
 	opts.SignupsEnabled = promptBool(reader, "Allow public signups", opts.SignupsEnabled)
-	opts.BackupEnabled = promptBool(reader, "Install daily SQLite backups", true)
+	opts.BackupEnabled = promptBool(reader, "Install daily SQLite backups", opts.BackupEnabled)
 	if !apply.DryRun && !opts.Reconfigure && apply.AdminPasswordFile == "" && apply.AdminPassword == "" {
 		password, err := readSecret("First admin password")
 		if err != nil {
