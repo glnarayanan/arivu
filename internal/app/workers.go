@@ -40,7 +40,14 @@ func (a *App) runOneJob(ctx context.Context) {
 	}
 	if err != nil {
 		log.Printf("job %s failed: %v", job.ID, err)
-		_ = a.jobs.Fail(ctx, job.ID, err.Error())
+		terminal, failErr := a.jobs.Fail(ctx, job.ID, err.Error())
+		if failErr != nil {
+			log.Printf("job %s failure update: %v", job.ID, failErr)
+			return
+		}
+		if terminal {
+			a.bookmarks.RecordJobTerminalFailure(ctx, job.Type, job.Payload)
+		}
 		return
 	}
 	_ = a.jobs.Complete(ctx, job.ID)

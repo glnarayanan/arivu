@@ -19,6 +19,8 @@ type Job struct {
 	Payload string
 }
 
+const leaseEligiblePredicate = `((status='queued' AND run_after<=?) OR (status='leased' AND leased_until<=?))`
+
 func New(db *sql.DB) *Queue {
 	return &Queue{db: db}
 }
@@ -48,14 +50,15 @@ func (q *Queue) Lease(ctx context.Context, leaseFor time.Duration) (Job, bool, e
 	defer tx.Rollback()
 
 	var job Job
-	err = tx.QueryRowContext(ctx, `SELECT id,COALESCE(user_id,''),type,payload_json FROM jobs WHERE status='queued' AND run_after<=? ORDER BY priority ASC, created_at ASC LIMIT 1`, now.Format(time.RFC3339)).Scan(&job.ID, &job.UserID, &job.Type, &job.Payload)
+	nowText := now.Format(time.RFC3339)
+	err = tx.QueryRowContext(ctx, `SELECT id,COALESCE(user_id,''),type,payload_json FROM jobs WHERE `+leaseEligiblePredicate+` ORDER BY priority ASC, created_at ASC LIMIT 1`, nowText, nowText).Scan(&job.ID, &job.UserID, &job.Type, &job.Payload)
 	if err == sql.ErrNoRows {
 		return Job{}, false, nil
 	}
 	if err != nil {
 		return Job{}, false, err
 	}
-	res, err := tx.ExecContext(ctx, `UPDATE jobs SET status='leased', leased_until=?, attempts=attempts+1, updated_at=? WHERE id=? AND status='queued'`, now.Add(leaseFor).Format(time.RFC3339), now.Format(time.RFC3339), job.ID)
+	res, err := tx.ExecContext(ctx, `UPDATE jobs SET status='leased', leased_until=?, attempts=attempts+1, updated_at=? WHERE id=? AND `+leaseEligiblePredicate, now.Add(leaseFor).Format(time.RFC3339), nowText, job.ID, nowText, nowText)
 	if err != nil {
 		return Job{}, false, err
 	}
@@ -73,10 +76,17 @@ func (q *Queue) Complete(ctx context.Context, id string) error {
 	return err
 }
 
-func (q *Queue) Fail(ctx context.Context, id string, message string) error {
+func (q *Queue) Fail(ctx context.Context, id string, message string) (bool, error) {
 	now := time.Now().UTC()
 	_, err := q.db.ExecContext(ctx, `UPDATE jobs SET status=CASE WHEN attempts>=max_attempts THEN 'failed' ELSE 'queued' END, last_error=?, run_after=?, updated_at=? WHERE id=?`, message, now.Add(2*time.Minute).Format(time.RFC3339), now.Format(time.RFC3339), id)
-	return err
+	if err != nil {
+		return false, err
+	}
+	var status string
+	if err := q.db.QueryRowContext(ctx, `SELECT status FROM jobs WHERE id=?`, id).Scan(&status); err != nil {
+		return false, err
+	}
+	return status == "failed", nil
 }
 
 func nullable(value string) any {

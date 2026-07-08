@@ -5,7 +5,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -116,15 +115,46 @@ func TestRecordImportJobProgressIsUserScoped(t *testing.T) {
 	_, _ = db.ExecContext(ctx, `INSERT INTO import_jobs(id,user_id,total_bookmarks,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "import-2", "user-2", 1, "processing", now, now)
 	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
 
-	service.recordImportJobProgress(ctx, "bookmark-1", "import-1", nil)
+	service.recordImportJobSuccess(ctx, "bookmark-1", "import-1")
 	assertImportCounters(t, db, "import-1", 1, 1, 0, "processing")
 
-	service.recordImportJobProgress(ctx, "bookmark-2", "import-1", nil)
+	service.recordImportJobSuccess(ctx, "bookmark-2", "import-1")
 	assertImportCounters(t, db, "import-1", 1, 1, 0, "processing")
 
-	service.recordImportJobProgress(ctx, "bookmark-1", "import-1", errors.New("fetch failed"))
+	service.recordImportJobFailure(ctx, "bookmark-1", "import-1")
 	assertImportCounters(t, db, "import-1", 1, 1, 1, "completed")
 	assertImportCounters(t, db, "import-2", 0, 0, 0, "processing")
+}
+
+func TestImportJobProgressIgnoresRetryableProcessFailures(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.ExecContext(ctx, `INSERT INTO users(id,email,name,created_at,updated_at) VALUES(?,?,?,?,?)`, "user-1", "one@example.com", "One", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "bookmark-1", "user-1", "https://example.com/private", "Private", "example.com", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "summary-1", "bookmark-1", "user-1", "pending", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO import_jobs(id,user_id,total_bookmarks,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "import-1", "user-1", 1, "processing", now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	payload := `{"bookmark_id":"bookmark-1","url":"http://127.0.0.1/","import_job_id":"import-1"}`
+
+	if err := service.ProcessJob(ctx, "bookmark.process", payload); err == nil {
+		t.Fatal("expected process job to fail on blocked target")
+	}
+	assertImportCounters(t, db, "import-1", 0, 0, 0, "processing")
+
+	service.RecordJobTerminalFailure(ctx, "bookmark.process", payload)
+	assertImportCounters(t, db, "import-1", 0, 0, 1, "completed")
+	var status string
+	if err := db.QueryRowContext(ctx, `SELECT processing_status FROM ai_summaries WHERE bookmark_id='bookmark-1'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" {
+		t.Fatalf("summary status = %q, want failed", status)
+	}
 }
 
 func assertImportCounters(t *testing.T, db *sql.DB, id string, fetched int, processed int, failed int, status string) {

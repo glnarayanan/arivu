@@ -37,8 +37,8 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 			return err
 		}
 		err := s.processBookmark(ctx, body.BookmarkID, body.URL)
-		if body.ImportJobID != "" {
-			s.recordImportJobProgress(ctx, body.BookmarkID, body.ImportJobID, err)
+		if err == nil && body.ImportJobID != "" {
+			s.recordImportJobSuccess(ctx, body.BookmarkID, body.ImportJobID)
 		}
 		return err
 	default:
@@ -1130,18 +1130,34 @@ func obsidianWikiLink(item obsidianItem) string {
 	return fmt.Sprintf("[[%s|%s]]", item.Path, markdownText(item.Title))
 }
 
-func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, processErr error) {
+func (s *Service) RecordJobTerminalFailure(ctx context.Context, jobType string, payload string) {
+	if jobType != "bookmark.process" {
+		return
+	}
+	var body struct {
+		BookmarkID  string `json:"bookmark_id"`
+		ImportJobID string `json:"import_job_id"`
+	}
+	if err := json.Unmarshal([]byte(payload), &body); err != nil || body.ImportJobID == "" {
+		return
+	}
+	s.recordImportJobFailure(ctx, body.BookmarkID, body.ImportJobID)
+}
+
+func (s *Service) recordImportJobSuccess(ctx context.Context, bookmarkID string, importJobID string) {
+	s.recordImportJobProgress(ctx, bookmarkID, importJobID, 1, 1, 0)
+}
+
+func (s *Service) recordImportJobFailure(ctx context.Context, bookmarkID string, importJobID string) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='failed', updated_at=? WHERE bookmark_id=?`, now, bookmarkID)
+	s.recordImportJobProgress(ctx, bookmarkID, importJobID, 0, 0, 1)
+}
+
+func (s *Service) recordImportJobProgress(ctx context.Context, bookmarkID string, importJobID string, fetched int, processed int, failed int) {
 	userID, ok := s.bookmarkOwner(ctx, bookmarkID)
 	if !ok {
 		return
-	}
-	fetched := 1
-	processed := 1
-	failed := 0
-	if processErr != nil {
-		fetched = 0
-		processed = 0
-		failed = 1
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET content_fetched=content_fetched+?, ai_processed=ai_processed+?, failed=failed+?, updated_at=? WHERE id=? AND user_id=?`, fetched, processed, failed, now, importJobID, userID)
