@@ -67,6 +67,7 @@ func runInstall(ctx context.Context, args []string) {
 	if opts.Reconfigure {
 		opts = mergeExistingOptions(opts, flagsSet)
 	}
+	applyOpts.InstallBinary = !opts.Reconfigure || flagsSet["version"] || flagsSet["artifact-url"] || flagsSet["checksums-url"]
 	if !nonInteractive {
 		opts, applyOpts, err = interactiveWizard(opts, applyOpts)
 		if err != nil {
@@ -92,7 +93,11 @@ func runInstall(ctx context.Context, args []string) {
 	if err := installer.Apply(ctx, plan, applyOpts); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Arivu install complete: https://%s\n", opts.Domain)
+	if plan.ProxyMode == installer.ProxyManagedCaddy {
+		fmt.Printf("Arivu install complete: https://%s\n", opts.Domain)
+		return
+	}
+	fmt.Printf("Arivu service installed on %s:%d; finish proxy integration for %s.\n", plan.BindAddress, plan.BindPort, opts.Domain)
 }
 
 func runPlan(ctx context.Context, args []string) {
@@ -188,6 +193,18 @@ func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) inst
 	}
 	if !flagsSet["signups-enabled"] {
 		opts.SignupsEnabled = existing.SignupsEnabled
+	}
+	if !flagsSet["proxy-mode"] && existing.ProxyMode != "" {
+		opts.ProxyMode = existing.ProxyMode
+	}
+	if !flagsSet["version"] {
+		opts.Version = defaultString(opts.Version, existing.Version)
+	}
+	if !flagsSet["tls-email"] {
+		opts.TLSEmail = defaultString(opts.TLSEmail, existing.TLSEmail)
+	}
+	if !flagsSet["backups"] {
+		opts.BackupEnabled = existing.BackupEnabled
 	}
 	return opts
 }

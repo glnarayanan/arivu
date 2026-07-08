@@ -44,6 +44,9 @@ func TestBuildPlanNormalizesEmailAddresses(t *testing.T) {
 	if !strings.Contains(fileContent(plan, "/etc/arivu/arivu.env"), "ADMIN_EMAILS=admin@example.com") {
 		t.Fatalf("env did not normalize admin email: %q", fileContent(plan, "/etc/arivu/arivu.env"))
 	}
+	if !strings.Contains(fileContent(plan, "/etc/arivu/arivu.env"), "ARIVU_INSTALLER_PROXY_MODE=managed-caddy") {
+		t.Fatalf("env did not record resolved proxy mode: %q", fileContent(plan, "/etc/arivu/arivu.env"))
+	}
 	if !strings.Contains(fileContent(plan, "/etc/caddy/conf.d/arivu.caddy"), "\ttls ops@example.com\n") {
 		t.Fatalf("caddy did not normalize TLS email: %q", fileContent(plan, "/etc/caddy/conf.d/arivu.caddy"))
 	}
@@ -107,6 +110,44 @@ func TestBuildPlanRejectsExistingDomainVHost(t *testing.T) {
 	}
 }
 
+func TestBuildPlanAllowsOwnVHostDuringReconfigure(t *testing.T) {
+	opts := baseOptions()
+	opts.Reconfigure = true
+	facts := cleanFacts()
+	facts.EtcExists = true
+	facts.ExistingVHosts = []string{"https://arivu.example.com"}
+	if _, err := BuildPlan(opts, facts); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBuildPlanRejectsUnsafeDomains(t *testing.T) {
+	for _, domain := range []string{
+		"https://arivu.example.com",
+		"arivu.example.com:443",
+		"arivu.example.com/foo",
+		"arivu.example.com {",
+		"arivu.example.com\nexample.net",
+		"-bad.example.com",
+	} {
+		opts := baseOptions()
+		opts.Domain = domain
+		if _, err := BuildPlan(opts, cleanFacts()); err == nil {
+			t.Fatalf("expected %q to fail", domain)
+		}
+	}
+}
+
+func TestCaddyHostsFromLineParsesSiteLabels(t *testing.T) {
+	hosts := caddyHostsFromLine("https://arivu.example.com, www.example.com {")
+	if len(hosts) != 2 || hosts[0] != "arivu.example.com" || hosts[1] != "www.example.com" {
+		t.Fatalf("unexpected hosts: %#v", hosts)
+	}
+	if hosts := caddyHostsFromLine("reverse_proxy 127.0.0.1:8090 {"); len(hosts) != 0 {
+		t.Fatalf("directive should not be parsed as hosts: %#v", hosts)
+	}
+}
+
 func TestVerifyChecksumRejectsTamperedArtifact(t *testing.T) {
 	data := []byte("binary")
 	sum := sha256.Sum256(data)
@@ -140,6 +181,10 @@ func TestOptionsFromEnvFileLoadsReconfigureDefaults(t *testing.T) {
 		"APP_URL=https://arivu.example.net",
 		"SIGNUPS_ENABLED=true",
 		"ADMIN_EMAILS=admin@example.net,ops@example.net",
+		"ARIVU_INSTALLER_VERSION=v1.2.3",
+		"ARIVU_INSTALLER_PROXY_MODE=existing-proxy",
+		"ARIVU_TLS_EMAIL=ops@example.net",
+		"ARIVU_BACKUPS_ENABLED=false",
 		"",
 	}, "\n")), 0o600); err != nil {
 		t.Fatal(err)
@@ -150,6 +195,9 @@ func TestOptionsFromEnvFileLoadsReconfigureDefaults(t *testing.T) {
 	}
 	if opts.Domain != "arivu.example.net" || opts.AdminEmail != "admin@example.net" || opts.BindPort != 8123 || !opts.SignupsEnabled {
 		t.Fatalf("unexpected env options: %#v", opts)
+	}
+	if opts.Version != "v1.2.3" || opts.ProxyMode != ProxyExistingProxy || opts.TLSEmail != "ops@example.net" || opts.BackupEnabled {
+		t.Fatalf("unexpected installer env options: %#v", opts)
 	}
 }
 

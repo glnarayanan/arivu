@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type ProxyMode string
@@ -79,9 +80,12 @@ type ManagedFile struct {
 }
 
 func BuildPlan(opts Options, facts HostFacts) (Plan, error) {
-	opts.Domain = strings.ToLower(strings.TrimSpace(opts.Domain))
-	opts.Version = strings.TrimSpace(opts.Version)
 	var err error
+	opts.Domain, err = normalizeDomain(opts.Domain)
+	if err != nil {
+		return Plan{}, err
+	}
+	opts.Version = strings.TrimSpace(opts.Version)
 	opts.AdminEmail, err = normalizeEmail(opts.AdminEmail)
 	if err != nil {
 		return Plan{}, fmt.Errorf("admin email is invalid: %w", err)
@@ -132,9 +136,6 @@ func validateOptions(opts Options) error {
 	if opts.Domain == "" {
 		return errors.New("domain is required")
 	}
-	if strings.Contains(opts.Domain, "/") || strings.Contains(opts.Domain, ":") {
-		return errors.New("domain must be a hostname, not a URL")
-	}
 	switch opts.ProxyMode {
 	case ProxyAuto, ProxyManagedCaddy, ProxyExistingProxy, ProxyAppOnly:
 	default:
@@ -168,7 +169,10 @@ func validateHostFacts(opts Options, facts HostFacts) error {
 		return errors.New("systemd is required")
 	}
 	for _, host := range facts.ExistingVHosts {
-		if strings.EqualFold(strings.TrimSpace(host), opts.Domain) {
+		if sameHost(host, opts.Domain) {
+			if opts.Reconfigure && (facts.EtcExists || facts.DataExists || facts.ServiceExists) {
+				continue
+			}
 			return fmt.Errorf("domain %s already appears in an existing proxy vhost", opts.Domain)
 		}
 	}
@@ -233,7 +237,7 @@ func plannedActions(opts Options, facts HostFacts, mode ProxyMode, port int) []A
 		actions = append(actions, Action{"Print proxy snippets", "Leave web server configuration untouched and print Caddy/Nginx examples."})
 	}
 	if opts.BackupEnabled {
-		actions = append(actions, Action{"Install backup timer", "Back up the SQLite DB, WAL, and SHM files together under /var/backups/arivu."})
+		actions = append(actions, Action{"Install backup timer", "Back up SQLite with a consistent online snapshot under /var/backups/arivu."})
 	}
 	if facts.Firewall != "" {
 		actions = append(actions, Action{"Propose firewall additions", "Only add HTTP/HTTPS allowances when needed; never reset existing firewall rules."})
@@ -242,8 +246,10 @@ func plannedActions(opts Options, facts HostFacts, mode ProxyMode, port int) []A
 }
 
 func plannedFiles(opts Options, facts HostFacts, mode ProxyMode, port int) []ManagedFile {
+	envOpts := opts
+	envOpts.ProxyMode = mode
 	files := []ManagedFile{
-		{Path: "/etc/arivu/arivu.env", Mode: "0640", Content: EnvFile(opts, port, "GENERATED-BY-INSTALLER")},
+		{Path: "/etc/arivu/arivu.env", Mode: "0640", Content: EnvFile(envOpts, port, "GENERATED-BY-INSTALLER")},
 		{Path: "/etc/systemd/system/arivu.service", Mode: "0644", Content: ServiceFile()},
 	}
 	if opts.BackupEnabled {
@@ -283,6 +289,10 @@ func EnvFile(opts Options, port int, secret string) string {
 	if opts.SignupsEnabled {
 		signups = "true"
 	}
+	backups := "false"
+	if opts.BackupEnabled {
+		backups = "true"
+	}
 	lines := []string{
 		fmt.Sprintf("ARIVU_ADDR=127.0.0.1:%d", port),
 		"ARIVU_DB=/var/lib/arivu/arivu.sqlite3",
@@ -292,6 +302,10 @@ func EnvFile(opts Options, port int, secret string) string {
 		"ADMIN_EMAILS=" + opts.AdminEmail,
 		"SECRET_KEY=" + secret,
 		"ARIVU_FETCH_USER_AGENT=Arivu/2.0",
+		"ARIVU_INSTALLER_VERSION=" + opts.Version,
+		"ARIVU_INSTALLER_PROXY_MODE=" + string(opts.ProxyMode),
+		"ARIVU_TLS_EMAIL=" + opts.TLSEmail,
+		"ARIVU_BACKUPS_ENABLED=" + backups,
 		"",
 	}
 	return strings.Join(lines, "\n")
@@ -488,7 +502,15 @@ func optionsFromEnv(values map[string]string) Options {
 	if addr := strings.TrimSpace(values["ARIVU_ADDR"]); addr != "" {
 		opts.BindPort = portFromAddr(addr)
 	}
+	opts.Version = strings.TrimSpace(values["ARIVU_INSTALLER_VERSION"])
+	opts.ProxyMode = normalizeProxyModeValue(values["ARIVU_INSTALLER_PROXY_MODE"])
+	opts.TLSEmail = strings.TrimSpace(values["ARIVU_TLS_EMAIL"])
 	opts.SignupsEnabled = truthy(values["SIGNUPS_ENABLED"])
+	if _, ok := values["ARIVU_BACKUPS_ENABLED"]; ok {
+		opts.BackupEnabled = truthy(values["ARIVU_BACKUPS_ENABLED"])
+	} else {
+		opts.BackupEnabled = true
+	}
 	return opts
 }
 
@@ -527,4 +549,60 @@ func normalizeEmail(value string) (string, error) {
 		return "", err
 	}
 	return strings.ToLower(parsed.Address), nil
+}
+
+func normalizeDomain(value string) (string, error) {
+	host := strings.ToLower(strings.TrimSpace(value))
+	if host == "" {
+		return "", nil
+	}
+	if strings.Contains(host, "://") || strings.ContainsAny(host, "/:;{}") {
+		return "", errors.New("domain must be a hostname, not a URL or proxy directive")
+	}
+	for _, r := range host {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return "", errors.New("domain must not contain whitespace or control characters")
+		}
+	}
+	host = strings.TrimSuffix(host, ".")
+	if len(host) == 0 || len(host) > 253 {
+		return "", errors.New("domain must be a valid DNS hostname")
+	}
+	labels := strings.Split(host, ".")
+	for _, label := range labels {
+		if len(label) == 0 || len(label) > 63 {
+			return "", errors.New("domain must be a valid DNS hostname")
+		}
+		if strings.HasPrefix(label, "-") || strings.HasSuffix(label, "-") {
+			return "", errors.New("domain labels must not start or end with hyphen")
+		}
+		for _, r := range label {
+			if (r < 'a' || r > 'z') && (r < '0' || r > '9') && r != '-' {
+				return "", errors.New("domain must contain only DNS hostname characters")
+			}
+		}
+	}
+	return host, nil
+}
+
+func sameHost(candidate string, domain string) bool {
+	candidate = strings.TrimSpace(strings.ToLower(candidate))
+	if strings.Contains(candidate, "://") {
+		if parsed, err := url.Parse(candidate); err == nil {
+			candidate = parsed.Hostname()
+		}
+	}
+	candidate = strings.TrimSuffix(strings.Trim(candidate, "[]"), ".")
+	if host, _, err := net.SplitHostPort(candidate); err == nil {
+		candidate = host
+	}
+	return candidate == strings.TrimSuffix(strings.ToLower(domain), ".")
+}
+
+func normalizeProxyModeValue(value string) ProxyMode {
+	value = strings.TrimSpace(value)
+	if value == "existing" {
+		return ProxyExistingProxy
+	}
+	return ProxyMode(value)
 }

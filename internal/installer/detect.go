@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,7 +22,7 @@ func DetectHost(ctx context.Context, domain string) HostFacts {
 		Firewall:  "",
 	}
 	facts.OSID, facts.OSVersionID = readOSRelease()
-	for _, name := range []string{"apt-get", "curl", "sqlite3", "caddy", "nginx", "apache2", "httpd", "docker", "ufw", "firewall-cmd", "systemctl", "ss"} {
+	for _, name := range []string{"apt-get", "curl", "sqlite3", "caddy", "nginx", "apache2", "apache2ctl", "httpd", "docker", "ufw", "firewall-cmd", "systemctl", "ss"} {
 		if path, err := exec.LookPath(name); err == nil {
 			facts.Commands[name] = path
 		}
@@ -131,6 +132,9 @@ func detectVHosts() []string {
 					hosts[fields[1]] = true
 				}
 			}
+			for _, host := range caddyHostsFromLine(line) {
+				hosts[host] = true
+			}
 		})
 	}
 	result := make([]string, 0, len(hosts))
@@ -159,6 +163,43 @@ func walkConfig(root string, fn func(string)) error {
 		}
 		return nil
 	})
+}
+
+func caddyHostsFromLine(line string) []string {
+	line = strings.TrimSpace(strings.Split(line, "#")[0])
+	if !strings.Contains(line, "{") {
+		return nil
+	}
+	prefix := strings.TrimSpace(strings.SplitN(line, "{", 2)[0])
+	if prefix == "" {
+		return nil
+	}
+	switch strings.Fields(prefix)[0] {
+	case "handle", "handle_path", "route", "reverse_proxy", "respond", "redir", "tls", "log", "encode", "header", "file_server":
+		return nil
+	}
+	var hosts []string
+	for _, part := range strings.FieldsFunc(prefix, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' }) {
+		part = strings.TrimSpace(part)
+		if part == "" || strings.HasPrefix(part, ":") || strings.HasPrefix(part, "*:") {
+			continue
+		}
+		if strings.Contains(part, "://") {
+			if parsed, err := url.Parse(part); err == nil {
+				part = parsed.Hostname()
+			}
+		}
+		if strings.Contains(part, "/") {
+			continue
+		}
+		if host, _, err := net.SplitHostPort(part); err == nil {
+			part = host
+		}
+		if part != "" && !strings.ContainsAny(part, "{}") {
+			hosts = append(hosts, part)
+		}
+	}
+	return hosts
 }
 
 func publicIP(ctx context.Context) string {

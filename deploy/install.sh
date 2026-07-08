@@ -4,6 +4,7 @@ set -eu
 repo="${ARIVU_REPO:-https://github.com/glnarayanan/arivu}"
 version="${ARIVU_VERSION:-latest}"
 install_dir="${ARIVU_INSTALLER_DIR:-/usr/local/bin}"
+attest_repo="${ARIVU_ATTEST_REPO:-glnarayanan/arivu}"
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "Run this installer with sudo or as root." >&2
@@ -27,6 +28,11 @@ if [ "$version" != "latest" ]; then
   base="$repo/releases/download/$version"
 fi
 
+case "$base" in
+  https://*) ;;
+  *) echo "Arivu release downloads must use HTTPS." >&2; exit 1 ;;
+esac
+
 asset="arivu-installer-linux-$arch"
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -44,6 +50,12 @@ else
   echo "sha256sum or shasum is required to verify installer artifacts." >&2
   exit 1
 fi
+
+if ! command -v gh >/dev/null 2>&1; then
+  echo "gh is required to verify Arivu release provenance." >&2
+  exit 1
+fi
+gh attestation verify "$tmp/$asset" -R "$attest_repo" >/dev/null
 
 install -m 0755 "$tmp/$asset" "$install_dir/arivu-installer"
 if [ "$version" != "latest" ]; then
