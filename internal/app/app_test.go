@@ -85,6 +85,20 @@ func TestWebAuthRequiresCSRFForBookmarkCreate(t *testing.T) {
 		t.Fatalf("bookmark without csrf status = %d", missingCSRF.StatusCode)
 	}
 
+	forgedCSRF := &http.Cookie{Name: "csrf_token", Value: "forged-csrf-token"}
+	req = httptest.NewRequest(http.MethodPost, "/api/bookmarks", strings.NewReader(`{"url":"https://example.com/forged"}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", forgedCSRF.Value)
+	req.AddCookie(accessCookie)
+	req.AddCookie(forgedCSRF)
+	forgedRec := httptest.NewRecorder()
+	handler.ServeHTTP(forgedRec, req)
+	forged := forgedRec.Result()
+	defer forged.Body.Close()
+	if forged.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bookmark with forged csrf status = %d", forged.StatusCode)
+	}
+
 	req = httptest.NewRequest(http.MethodPost, "/api/bookmarks", strings.NewReader(`{"url":"https://example.com"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-CSRF-Token", csrfCookie.Value)
