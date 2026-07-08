@@ -232,9 +232,7 @@ func (a *App) adminUpdateSettings(w http.ResponseWriter, r *http.Request, user a
 		writeError(w, http.StatusBadRequest, "No fields to update")
 		return
 	}
-	if len(changed) > 0 {
-		a.auditEvent(r.Context(), user.ID, "admin.settings.update", "settings", "", map[string]any{"keys": changed})
-	}
+	a.auditEvent(r.Context(), user.ID, "admin.settings.update", "settings", "", map[string]any{"keys": changed})
 	writeJSON(w, http.StatusOK, map[string]any{"status": "updated", "fields": changed})
 }
 
@@ -253,16 +251,12 @@ func (a *App) adminDeleteSetting(w http.ResponseWriter, r *http.Request, user au
 		return
 	}
 	a.auditEvent(r.Context(), user.ID, "admin.settings.delete", "settings", "", map[string]any{"keys": []string{key}})
-	status, _ := a.runtime.Status(r.Context())
-	source := ""
-	if status[key].Source == "environment" {
-		source = "environment"
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"status": "removed", "key": key, "has_env_fallback": source == "environment"})
+	status, _ := a.runtime.StatusValue(r.Context(), key)
+	writeJSON(w, http.StatusOK, map[string]any{"status": "removed", "key": key, "has_env_fallback": status.Source == "environment"})
 }
 
 func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.User) {
-	status, _ := a.runtime.Status(r.Context())
+	gemini, _ := a.runtime.StatusValue(r.Context(), runtimeconfig.KeyGeminiAPIKey)
 	usage := a.usage.Snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"requests_today":          usage["requests_total"],
@@ -275,7 +269,7 @@ func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.Us
 		"limits":                  map[string]any{"max_rpm": 0, "max_tpm": 0, "max_daily": 0},
 		"current_date":            time.Now().UTC().Format("2006-01-02"),
 		"provider_usage":          usage,
-		"gemini_configured":       status[runtimeconfig.KeyGeminiAPIKey].Configured,
+		"gemini_configured":       gemini.Configured,
 		"summaries_completed":     countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='completed'`),
 		"summaries_pending":       countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='pending'`),
 		"summaries_failed":        countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='failed'`),

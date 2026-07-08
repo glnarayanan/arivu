@@ -26,7 +26,6 @@ type ApplyOptions struct {
 	AdminPassword     string
 	AdminPasswordFile string
 	DryRun            bool
-	Quiet             bool
 	ArtifactURL       string
 	ChecksumsURL      string
 	InstallBinary     bool
@@ -481,20 +480,10 @@ func sqliteQuote(value string) string {
 }
 
 func copyIfExists(source string, target string) error {
-	in, err := os.Open(source)
+	err := copyRequired(source, target)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o640)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	_, err = io.Copy(out, in)
 	return err
 }
 

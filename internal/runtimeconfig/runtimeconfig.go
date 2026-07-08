@@ -190,27 +190,50 @@ func (s *Service) Status(ctx context.Context) (map[string]Value, error) {
 		return nil, err
 	}
 	for _, key := range Keys {
-		value, err := s.resolve(ctx, key)
-		if err != nil {
-			return nil, err
+		value := appURL
+		if key != KeyAppURL {
+			var err error
+			value, err = s.resolve(ctx, key)
+			if err != nil {
+				return nil, err
+			}
 		}
 		if key == KeyXRedirectURI && value.source == "default" {
 			value.value = defaultXRedirectURI(appURL.value)
 		}
-		item := Value{Source: value.source, KeyID: value.keyID, UpdatedAt: value.updatedAt}
-		if IsSecret(key) {
-			item.Configured = value.value != ""
-			item.MaskedValue = Mask(value.value)
-		} else if IsBoolean(key) {
-			item.Configured = value.source != "unset"
-			item.Value = parseBool(value.value)
-		} else {
-			item.Configured = value.value != ""
-			item.Value = value.value
-		}
-		result[key] = item
+		result[key] = statusValue(value)
 	}
 	return result, nil
+}
+
+func (s *Service) StatusValue(ctx context.Context, key string) (Value, error) {
+	value, err := s.resolve(ctx, key)
+	if err != nil {
+		return Value{}, err
+	}
+	if key == KeyXRedirectURI && value.source == "default" {
+		appURL, err := s.resolve(ctx, KeyAppURL)
+		if err != nil {
+			return Value{}, err
+		}
+		value.value = defaultXRedirectURI(appURL.value)
+	}
+	return statusValue(value), nil
+}
+
+func statusValue(value resolvedValue) Value {
+	item := Value{Source: value.source, KeyID: value.keyID, UpdatedAt: value.updatedAt}
+	if IsSecret(value.key) {
+		item.Configured = value.value != ""
+		item.MaskedValue = Mask(value.value)
+	} else if IsBoolean(value.key) {
+		item.Configured = value.source != "unset"
+		item.Value = parseBool(value.value)
+	} else {
+		item.Configured = value.value != ""
+		item.Value = value.value
+	}
+	return item
 }
 
 func (s *Service) Set(ctx context.Context, key string, value any, updatedBy string, keyID string) error {

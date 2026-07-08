@@ -77,7 +77,7 @@ func runInstall(ctx context.Context, args []string) {
 	if err := validateInstallOptions(opts, applyOpts, nonInteractive, true); err != nil {
 		log.Fatal(err)
 	}
-	facts := installer.DetectHost(ctx, opts.Domain)
+	facts := detectHostForOptions(ctx, opts)
 	plan, err := installer.BuildPlan(opts, facts)
 	if err != nil {
 		log.Fatal(err)
@@ -117,7 +117,7 @@ func runPlan(ctx context.Context, args []string) {
 	if err := validateInstallOptions(opts, applyOpts, nonInteractive, false); err != nil {
 		log.Fatal(err)
 	}
-	facts := installer.DetectHost(ctx, opts.Domain)
+	facts := detectHostForOptions(ctx, opts)
 	plan, err := installer.BuildPlan(opts, facts)
 	if err != nil {
 		log.Fatal(err)
@@ -154,7 +154,7 @@ func parseOptions(args []string) (installer.Options, installer.ApplyOptions, boo
 	fs.Visit(func(flag *flag.Flag) {
 		flagsSet[flag.Name] = true
 	})
-	opts.ProxyMode = normalizeProxyMode(proxyMode)
+	opts.ProxyMode = installer.NormalizeProxyMode(proxyMode)
 	return opts, apply, nonInteractive, yes, flagsSet, nil
 }
 
@@ -170,11 +170,12 @@ func validateInstallOptions(opts installer.Options, apply installer.ApplyOptions
 	return nil
 }
 
-func normalizeProxyMode(value string) installer.ProxyMode {
-	if value == "existing" {
-		return installer.ProxyExistingProxy
+func detectHostForOptions(ctx context.Context, opts installer.Options) installer.HostFacts {
+	domain := opts.Domain
+	if opts.SkipDNSCheck {
+		domain = ""
 	}
-	return installer.ProxyMode(value)
+	return installer.DetectHost(ctx, domain)
 }
 
 func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) installer.Options {
@@ -215,7 +216,7 @@ func interactiveWizard(opts installer.Options, apply installer.ApplyOptions) (in
 	opts.AdminEmail = prompt(reader, "Admin email", opts.AdminEmail)
 	opts.TLSEmail = prompt(reader, "TLS notification email", defaultString(opts.TLSEmail, opts.AdminEmail))
 	mode := prompt(reader, "Proxy mode [auto, managed-caddy, existing-proxy, app-only]", defaultString(string(opts.ProxyMode), string(installer.ProxyAuto)))
-	opts.ProxyMode = normalizeProxyMode(mode)
+	opts.ProxyMode = installer.NormalizeProxyMode(mode)
 	opts.SignupsEnabled = promptBool(reader, "Allow public signups", opts.SignupsEnabled)
 	opts.BackupEnabled = promptBool(reader, "Install daily SQLite backups", true)
 	if !apply.DryRun && !opts.Reconfigure && apply.AdminPasswordFile == "" && apply.AdminPassword == "" {

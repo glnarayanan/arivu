@@ -39,8 +39,8 @@ func DetectHost(ctx context.Context, domain string) HostFacts {
 	facts.DataExists = pathExists("/var/lib/arivu")
 	facts.ServiceExists = pathExists("/etc/systemd/system/arivu.service")
 	facts.ExistingVHosts = detectVHosts()
-	facts.PublicIP = publicIP(ctx)
 	if domain != "" {
+		facts.PublicIP = publicIP(ctx)
 		facts.DomainIPs = lookupDomain(ctx, domain)
 	}
 	return facts

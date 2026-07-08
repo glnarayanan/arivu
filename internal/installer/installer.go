@@ -36,8 +36,6 @@ type Options struct {
 	BindPort       int
 	Version        string
 	Reconfigure    bool
-	ArtifactURL    string
-	ChecksumsURL   string
 }
 
 type HostFacts struct {
@@ -503,7 +501,7 @@ func optionsFromEnv(values map[string]string) Options {
 		opts.BindPort = portFromAddr(addr)
 	}
 	opts.Version = strings.TrimSpace(values["ARIVU_INSTALLER_VERSION"])
-	opts.ProxyMode = normalizeProxyModeValue(values["ARIVU_INSTALLER_PROXY_MODE"])
+	opts.ProxyMode = NormalizeProxyMode(values["ARIVU_INSTALLER_PROXY_MODE"])
 	opts.TLSEmail = strings.TrimSpace(values["ARIVU_TLS_EMAIL"])
 	opts.SignupsEnabled = truthy(values["SIGNUPS_ENABLED"])
 	if _, ok := values["ARIVU_BACKUPS_ENABLED"]; ok {
@@ -599,7 +597,7 @@ func sameHost(candidate string, domain string) bool {
 	return candidate == strings.TrimSuffix(strings.ToLower(domain), ".")
 }
 
-func normalizeProxyModeValue(value string) ProxyMode {
+func NormalizeProxyMode(value string) ProxyMode {
 	value = strings.TrimSpace(value)
 	if value == "existing" {
 		return ProxyExistingProxy

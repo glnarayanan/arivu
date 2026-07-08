@@ -92,6 +92,13 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	if status[KeyXRedirectURI].Value != "https://runtime.example.test/settings?section=connections" {
 		t.Fatalf("unexpected x redirect status: %#v", status[KeyXRedirectURI])
 	}
+	xRedirect, err := service.StatusValue(context.Background(), KeyXRedirectURI)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if xRedirect.Value != status[KeyXRedirectURI].Value {
+		t.Fatalf("single-key status drifted: %#v", xRedirect)
+	}
 
 	if err := service.Set(context.Background(), KeyAppURL, "file:///tmp/arivu", "admin@example.com", ""); err == nil {
 		t.Fatal("expected invalid app_url to fail")
