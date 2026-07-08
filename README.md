@@ -39,8 +39,10 @@ provider integrations.
 
 On a Linux VPS, use the installer. It prepares the server, detects shared-host
 proxy state, installs Arivu, creates the first admin, and leaves routine
-settings in Admin > Settings. The bootstrap path requires `gh` so release
-attestations can be verified before any downloaded binary is installed.
+settings in Admin > Settings. The bootstrap path uses an existing `gh` when
+available, or installs GitHub CLI from the official apt repository on supported
+Debian/Ubuntu hosts, so release attestations are verified before any downloaded
+binary is installed.
 
 ```bash
 curl -fsSL https://install.arivu.app | sudo bash
