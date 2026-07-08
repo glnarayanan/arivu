@@ -196,8 +196,14 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 }
 
 func (s *Service) insertRestoredBookmark(ctx context.Context, userID, id, rawURL string, bookmark map[string]any, domainFallback, now string) (bool, error) {
-	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,description,domain,favicon,thumbnail,sanitized_html,text_content,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, userID, rawURL, stringValue(bookmark["title"]), stringValue(bookmark["description"]), fallback(stringValue(bookmark["domain"]), domainFallback), nullableStringValue(stringValue(bookmark["favicon"])), nullableStringValue(stringValue(bookmark["thumbnail"])), sanitize.HTML(stringValue(bookmark["html_content"])), stringValue(bookmark["text_content"]), intValue(bookmark["reading_time"]), boolValue(bookmark["read_status"]), fallback(stringValue(bookmark["source"]), "restore"), fallback(stringValue(bookmark["created_at"]), now), fallback(stringValue(bookmark["updated_at"]), now), nullableStringValue(stringValue(bookmark["last_accessed"])), intValue(bookmark["view_count"]), intValueDefault(bookmark["version"], 1))
+	xMetrics := ""
+	if _, ok := bookmark["x_metrics"]; ok {
+		xMetrics = jsonString(bookmark["x_metrics"])
+	} else {
+		xMetrics = strings.TrimSpace(stringValue(bookmark["x_metrics_json"]))
+	}
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,description,domain,favicon,thumbnail,sanitized_html,text_content,reading_time,read_status,source,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json,created_at,updated_at,last_accessed,view_count,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, userID, rawURL, stringValue(bookmark["title"]), stringValue(bookmark["description"]), fallback(stringValue(bookmark["domain"]), domainFallback), nullableStringValue(stringValue(bookmark["favicon"])), nullableStringValue(stringValue(bookmark["thumbnail"])), sanitize.HTML(stringValue(bookmark["html_content"])), stringValue(bookmark["text_content"]), intValue(bookmark["reading_time"]), boolValue(bookmark["read_status"]), fallback(stringValue(bookmark["source"]), "restore"), nullableStringValue(stringValue(bookmark["x_tweet_id"])), nullableStringValue(stringValue(bookmark["x_author_username"])), nullableStringValue(stringValue(bookmark["x_author_name"])), nullableStringValue(stringValue(bookmark["x_tweet_url"])), nullableStringValue(xMetrics), fallback(stringValue(bookmark["created_at"]), now), fallback(stringValue(bookmark["updated_at"]), now), nullableStringValue(stringValue(bookmark["last_accessed"])), intValue(bookmark["view_count"]), intValueDefault(bookmark["version"], 1))
 	if err != nil {
 		return false, err
 	}
@@ -565,13 +571,20 @@ func (s *Service) writeObsidianExport(ctx context.Context, w http.ResponseWriter
 }
 
 func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
 	bookmarks := []map[string]any{}
 	for rows.Next() {
-		bookmarks = append(bookmarks, scanBookmarkRow(rows))
+		var tweetID, authorUsername, authorName, tweetURL, metrics sql.NullString
+		bookmark := scanBookmarkRow(rows, &tweetID, &authorUsername, &authorName, &tweetURL, &metrics)
+		bookmark["x_tweet_id"] = nullString(tweetID)
+		bookmark["x_author_username"] = nullString(authorUsername)
+		bookmark["x_author_name"] = nullString(authorName)
+		bookmark["x_tweet_url"] = nullString(tweetURL)
+		bookmark["x_metrics"] = jsonObjectValue(metrics.String)
+		bookmarks = append(bookmarks, bookmark)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()

@@ -1920,6 +1920,9 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if !readStatus {
 		t.Fatal("review completion did not mark bookmark read")
 	}
+	if _, err := a.db.ExecContext(context.Background(), `UPDATE bookmarks SET source='x',x_tweet_id='tweet-123',x_author_username='arivu_dev',x_author_name='Arivu Dev',x_tweet_url='https://x.com/arivu_dev/status/tweet-123',x_metrics_json='{"like_count":12,"retweet_count":3}' WHERE id='capture' AND user_id=?`, userID); err != nil {
+		t.Fatalf("seed x bookmark metadata: %v", err)
+	}
 
 	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
 	if exportResp.StatusCode != http.StatusOK {
@@ -2011,6 +2014,10 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	bookmarkExport := exportBody.Bookmarks[0]
 	if bookmarkExport["id"] != "capture" || len(bookmarkExport["annotations"].([]any)) == 0 || len(bookmarkExport["notes"].([]any)) == 0 || len(bookmarkExport["tags"].([]any)) == 0 {
 		t.Fatalf("bookmark export missing linked data: %#v", bookmarkExport)
+	}
+	metrics, _ := bookmarkExport["x_metrics"].(map[string]any)
+	if bookmarkExport["x_tweet_id"] != "tweet-123" || bookmarkExport["x_author_username"] != "arivu_dev" || bookmarkExport["x_author_name"] != "Arivu Dev" || bookmarkExport["x_tweet_url"] != "https://x.com/arivu_dev/status/tweet-123" || metrics["like_count"] != float64(12) || metrics["retweet_count"] != float64(3) {
+		t.Fatalf("bookmark export missing x metadata: %#v", bookmarkExport)
 	}
 	var sawStandaloneNote bool
 	for _, note := range exportBody.Notes {
@@ -2200,6 +2207,10 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if restoredBookmark["id"] == "capture" || len(restoredBookmark["annotations"].([]any)) == 0 || len(restoredBookmark["notes"].([]any)) == 0 || len(restoredBookmark["tags"].([]any)) == 0 {
 		t.Fatalf("restored bookmark missing remapped linked data: %#v", restoredBookmark)
 	}
+	restoredMetrics, _ := restoredBookmark["x_metrics"].(map[string]any)
+	if restoredBookmark["x_tweet_id"] != "tweet-123" || restoredBookmark["x_author_username"] != "arivu_dev" || restoredBookmark["x_author_name"] != "Arivu Dev" || restoredBookmark["x_tweet_url"] != "https://x.com/arivu_dev/status/tweet-123" || restoredMetrics["like_count"] != float64(12) || restoredMetrics["retweet_count"] != float64(3) {
+		t.Fatalf("restored bookmark missing x metadata: %#v", restoredBookmark)
+	}
 	if summary, _ := restoredBookmark["ai_summary"].(map[string]any); summary["one_sentence"] != "The capture loop needs review." {
 		t.Fatalf("restored bookmark missing summary: %#v", restoredBookmark)
 	}
@@ -2221,6 +2232,26 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if !restoredStandalone || !restoredAlias {
 		t.Fatalf("restore missing standalone note or alias: %#v", restoredExport)
+	}
+	duplicateRestoreResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(exportRaw), restoreAccess, restoreCSRF)
+	if duplicateRestoreResp.StatusCode != http.StatusOK {
+		t.Fatalf("duplicate restore status = %d body=%s", duplicateRestoreResp.StatusCode, readBody(duplicateRestoreResp))
+	}
+	var duplicateRestoreBody struct {
+		Count int `json:"count"`
+	}
+	_ = json.NewDecoder(duplicateRestoreResp.Body).Decode(&duplicateRestoreBody)
+	duplicateRestoreResp.Body.Close()
+	if duplicateRestoreBody.Count != 0 {
+		t.Fatalf("duplicate restore created bookmark rows: %#v", duplicateRestoreBody)
+	}
+	restoreUserID := userIDForEmail(t, a, "restore@example.com")
+	var restoredBookmarkRows int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE user_id=? AND url='https://example.com/capture'`, restoreUserID).Scan(&restoredBookmarkRows); err != nil {
+		t.Fatalf("count restored duplicate rows: %v", err)
+	}
+	if restoredBookmarkRows != 1 {
+		t.Fatalf("duplicate restore left %d bookmark rows", restoredBookmarkRows)
 	}
 
 	missingSuggestionsCSRF := httptest.NewRequest(http.MethodPost, "/api/assistant/suggestions", strings.NewReader(`{"mode":"inbox"}`))
