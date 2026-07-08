@@ -139,7 +139,7 @@ func installArivuBinary(ctx context.Context, opts ApplyOptions, plan Plan) error
 	url := opts.ArtifactURL
 	sumsURL := opts.ChecksumsURL
 	if url == "" || sumsURL == "" {
-		defaultURL, defaultSums := LatestArtifactURLs("https://github.com/glnarayanan/arivu", NormalizeArtifactArch(plan.Facts.Arch))
+		defaultURL, defaultSums := LatestArtifactURLs("https://github.com/glnarayanan/arivu", plan.Facts.Arch)
 		if url == "" {
 			url = defaultURL
 		}

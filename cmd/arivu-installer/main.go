@@ -86,7 +86,7 @@ func runInstall(ctx context.Context, args []string) {
 	if err := installer.Apply(ctx, plan, applyOpts); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Arivu install complete: %s\n", installer.PublicURL(opts.Domain))
+	fmt.Printf("Arivu install complete: https://%s\n", opts.Domain)
 }
 
 func runPlan(ctx context.Context, args []string) {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/mail"
-	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -397,15 +396,6 @@ func GenerateSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-func NormalizeArtifactArch(goarch string) string {
-	switch goarch {
-	case "amd64", "arm64":
-		return goarch
-	default:
-		return goarch
-	}
-}
-
 func LatestArtifactURLs(repo string, arch string) (string, string) {
 	base := strings.TrimRight(repo, "/") + "/releases/latest/download"
 	return base + "/arivu-linux-" + arch, base + "/SHA256SUMS"
@@ -435,10 +425,6 @@ func FormatPlan(plan Plan) string {
 		}
 	}
 	return b.String()
-}
-
-func PublicURL(domain string) string {
-	return (&url.URL{Scheme: "https", Host: domain}).String()
 }
 
 func ParsePort(value string) (int, error) {

@@ -15,11 +15,10 @@ import (
 
 func DetectHost(ctx context.Context, domain string) HostFacts {
 	facts := HostFacts{
-		Arch:       runtime.GOARCH,
-		HasSystemd: commandExists("systemctl"),
-		Commands:   map[string]string{},
-		Listeners:  map[int]string{},
-		Firewall:   "",
+		Arch:      runtime.GOARCH,
+		Commands:  map[string]string{},
+		Listeners: map[int]string{},
+		Firewall:  "",
 	}
 	facts.OSID, facts.OSVersionID = readOSRelease()
 	for _, name := range []string{"apt-get", "curl", "sqlite3", "caddy", "nginx", "apache2", "httpd", "docker", "ufw", "firewall-cmd", "systemctl", "ss"} {
@@ -27,6 +26,7 @@ func DetectHost(ctx context.Context, domain string) HostFacts {
 			facts.Commands[name] = path
 		}
 	}
+	facts.HasSystemd = facts.Commands["systemctl"] != ""
 	if facts.Commands["ufw"] != "" {
 		facts.Firewall = "ufw"
 	} else if facts.Commands["firewall-cmd"] != "" {
@@ -60,11 +60,6 @@ func readOSRelease() (string, string) {
 		}
 	}
 	return values["ID"], values["VERSION_ID"]
-}
-
-func commandExists(name string) bool {
-	_, err := exec.LookPath(name)
-	return err == nil
 }
 
 func detectListeners(ctx context.Context, ssPath string) map[int]string {
