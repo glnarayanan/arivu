@@ -3429,17 +3429,22 @@ function bindAdminSettingsPanel() {
   const form = document.querySelector("#admin-settings-form");
   const status = document.querySelector("#admin-settings-status");
   if (!form || !status) return;
+  let mutationBusy = false;
+  const field = (selector) => form.querySelector(selector);
   const refresh = async () => {
     const settings = await api("/admin/settings");
+    if (!form.isConnected || !status.isConnected) return;
     status.innerHTML = settingsStatus(settings);
-    document.querySelector("#admin-app-url").value = settings.app_url?.value || "";
-    document.querySelector("#admin-signups-enabled").checked = Boolean(settings.signups_enabled?.value);
-    document.querySelector("#admin-cookie-secure").checked = Boolean(settings.cookie_secure?.value);
-    document.querySelector("#admin-resend-from-email").value = settings.resend_from_email?.value || "";
-    document.querySelector("#admin-x-redirect-uri").value = settings.x_redirect_uri?.value || "";
-    document.querySelector("#admin-x-integration-enabled").checked = Boolean(settings.x_integration_enabled?.value);
+    field("#admin-app-url").value = settings.app_url?.value || "";
+    field("#admin-signups-enabled").checked = Boolean(settings.signups_enabled?.value);
+    field("#admin-cookie-secure").checked = Boolean(settings.cookie_secure?.value);
+    field("#admin-resend-from-email").value = settings.resend_from_email?.value || "";
+    field("#admin-x-redirect-uri").value = settings.x_redirect_uri?.value || "";
+    field("#admin-x-integration-enabled").checked = Boolean(settings.x_integration_enabled?.value);
     status.querySelectorAll("[data-admin-setting-revert]").forEach((button) => {
       button.addEventListener("click", async () => {
+        if (mutationBusy) return;
+        mutationBusy = true;
         const done = setButtonBusy(button, "Reverting");
         try {
           await api(`/admin/settings/${button.dataset.adminSettingRevert}`, { method: "DELETE" });
@@ -3449,19 +3454,22 @@ function bindAdminSettingsPanel() {
           ui.toast(err.message, "error");
         } finally {
           done();
+          mutationBusy = false;
         }
       });
     });
   };
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (mutationBusy) return;
+    mutationBusy = true;
     const done = setButtonBusy(event.submitter, "Saving");
     setFormMessage(form);
     const body = {
-      app_url: document.querySelector("#admin-app-url").value.trim(),
-      signups_enabled: document.querySelector("#admin-signups-enabled").checked,
-      cookie_secure: document.querySelector("#admin-cookie-secure").checked,
-      x_integration_enabled: document.querySelector("#admin-x-integration-enabled").checked,
+      app_url: field("#admin-app-url").value.trim(),
+      signups_enabled: field("#admin-signups-enabled").checked,
+      cookie_secure: field("#admin-cookie-secure").checked,
+      x_integration_enabled: field("#admin-x-integration-enabled").checked,
     };
     for (const [key, selector] of Object.entries({
       gemini_api_key: "#admin-gemini-api-key",
@@ -3471,7 +3479,7 @@ function bindAdminSettingsPanel() {
       resend_from_email: "#admin-resend-from-email",
       x_redirect_uri: "#admin-x-redirect-uri",
     })) {
-      const value = document.querySelector(selector).value.trim();
+      const value = field(selector).value.trim();
       if (value) body[key] = value;
     }
     try {
@@ -3484,6 +3492,7 @@ function bindAdminSettingsPanel() {
       ui.toast(err.message, "error");
     } finally {
       done();
+      mutationBusy = false;
     }
   });
 }

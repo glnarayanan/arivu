@@ -89,6 +89,9 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	if status[KeySignupEnabled].Value != false || status[KeyCookieSecure].Value != false || status[KeyAppURL].Value != "https://runtime.example.test" {
 		t.Fatalf("unexpected runtime status: %#v", status)
 	}
+	if status[KeyXRedirectURI].Value != "https://runtime.example.test/settings?section=connections" {
+		t.Fatalf("unexpected x redirect status: %#v", status[KeyXRedirectURI])
+	}
 
 	if err := service.Set(context.Background(), KeyAppURL, "file:///tmp/arivu", "admin@example.com", ""); err == nil {
 		t.Fatal("expected invalid app_url to fail")

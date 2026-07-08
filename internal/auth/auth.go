@@ -297,6 +297,9 @@ func (s *Service) BootstrapAdmin(ctx context.Context, email string, password str
 	if email == "" || len(password) < 8 {
 		return User{}, false, errors.New("admin email and password with at least 8 characters are required")
 	}
+	if !s.cfg.AdminEmails[email] {
+		return User{}, false, errors.New("bootstrap email must be listed in ADMIN_EMAILS")
+	}
 	hash, err := hashArgon2id(password)
 	if err != nil {
 		return User{}, false, err

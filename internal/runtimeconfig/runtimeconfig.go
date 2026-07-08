@@ -185,10 +185,17 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 
 func (s *Service) Status(ctx context.Context) (map[string]Value, error) {
 	result := map[string]Value{}
+	appURL, err := s.resolve(ctx, KeyAppURL)
+	if err != nil {
+		return nil, err
+	}
 	for _, key := range Keys {
 		value, err := s.resolve(ctx, key)
 		if err != nil {
 			return nil, err
+		}
+		if key == KeyXRedirectURI && value.source == "default" {
+			value.value = defaultXRedirectURI(appURL.value)
 		}
 		item := Value{Source: value.source, KeyID: value.keyID, UpdatedAt: value.updatedAt}
 		if IsSecret(key) {
