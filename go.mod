@@ -1,6 +1,6 @@
 module github.com/glnarayanan/arivu
 
-go 1.25.11
+go 1.25.12
 
 require (
 	github.com/mattn/go-sqlite3 v1.14.47
