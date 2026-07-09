@@ -113,6 +113,7 @@ func BuildPlan(opts Options, facts HostFacts) (Plan, error) {
 	if err != nil {
 		return Plan{}, err
 	}
+	warnings = append(warnings, dnsWarnings(opts, facts)...)
 	port := opts.BindPort
 	if port == 0 {
 		port = firstFreePort(facts.Listeners, 8090)
@@ -168,9 +169,6 @@ func validateHostFacts(opts Options, facts HostFacts) error {
 			return fmt.Errorf("domain %s already appears in an existing proxy vhost", opts.Domain)
 		}
 	}
-	if !opts.SkipDNSCheck && facts.PublicIP != "" && len(facts.DomainIPs) > 0 && !containsIP(facts.DomainIPs, facts.PublicIP) {
-		return fmt.Errorf("domain %s does not resolve to this server IP %s", opts.Domain, facts.PublicIP)
-	}
 	return nil
 }
 
@@ -193,6 +191,13 @@ func explicitModeWarnings(mode ProxyMode, facts HostFacts) []string {
 		return []string{"app-only mode will not configure TLS or reverse proxy files."}
 	}
 	return nil
+}
+
+func dnsWarnings(opts Options, facts HostFacts) []string {
+	if opts.SkipDNSCheck || facts.PublicIP == "" || len(facts.DomainIPs) == 0 || containsIP(facts.DomainIPs, facts.PublicIP) {
+		return nil
+	}
+	return []string{fmt.Sprintf("Domain %s currently resolves to %s, not this server IP %s. If DNS is still propagating, finish the install and rerun `sudo arivu-installer reconfigure --domain %s` after it points here. If Cloudflare proxy is enabled, Cloudflare edge IPs here are expected; make sure the Cloudflare DNS record targets %s as the origin.", opts.Domain, strings.Join(facts.DomainIPs, ", "), facts.PublicIP, opts.Domain, facts.PublicIP)}
 }
 
 func firstFreePort(listeners map[int]string, start int) int {

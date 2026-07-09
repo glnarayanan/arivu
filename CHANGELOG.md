@@ -104,6 +104,8 @@ All notable changes to this project will be documented in this file.
 - Managed-Caddy installer output now prints manual firewall commands instead of
   claiming public HTTPS completion when UFW/firewalld still needs operator
   action, and app-only plans print Caddy, Nginx, and Apache snippets.
+- Installer DNS mismatches are now warnings with Cloudflare/origin and
+  reconfigure guidance instead of hard install blockers.
 - CI now runs the browser extension content-script test alongside the extension
   URL/origin test.
 - Hardened the self-hosting installer with strict domain validation, Caddy vhost

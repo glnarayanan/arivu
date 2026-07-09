@@ -41,6 +41,24 @@ func TestBuildPlanAllowsFutureUbuntuVersions(t *testing.T) {
 	}
 }
 
+func TestBuildPlanWarnsOnDNSMismatch(t *testing.T) {
+	opts := baseOptions()
+	opts.SkipDNSCheck = false
+	facts := cleanFacts()
+	facts.PublicIP = "51.210.96.239"
+	facts.DomainIPs = []string{"104.21.1.1", "172.67.1.1"}
+	plan, err := BuildPlan(opts, facts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	formatted := FormatPlan(plan)
+	for _, expected := range []string{"currently resolves to 104.21.1.1, 172.67.1.1", "not this server IP 51.210.96.239", "Cloudflare proxy", "sudo arivu-installer reconfigure --domain arivu.example.com"} {
+		if !strings.Contains(formatted, expected) {
+			t.Fatalf("DNS warning missing %q:\n%s", expected, formatted)
+		}
+	}
+}
+
 func TestBuildPlanNormalizesEmailAddresses(t *testing.T) {
 	opts := baseOptions()
 	opts.AdminEmail = "Admin <ADMIN@EXAMPLE.COM>"
