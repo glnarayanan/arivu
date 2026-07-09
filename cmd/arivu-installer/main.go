@@ -5,6 +5,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
@@ -226,17 +227,26 @@ func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) inst
 }
 
 func interactiveWizard(opts installer.Options, apply installer.ApplyOptions) (installer.Options, installer.ApplyOptions, error) {
-	return interactiveWizardWithReader(bufio.NewReader(os.Stdin), opts, apply)
+	tty, err := os.OpenFile("/dev/tty", os.O_RDWR, 0)
+	if err != nil {
+		return opts, apply, fmt.Errorf("interactive install requires a terminal; rerun with --non-interactive flags")
+	}
+	defer tty.Close()
+	return interactiveWizardWithIO(bufio.NewReader(tty), tty, opts, apply)
 }
 
 func interactiveWizardWithReader(reader *bufio.Reader, opts installer.Options, apply installer.ApplyOptions) (installer.Options, installer.ApplyOptions, error) {
-	opts.Domain = prompt(reader, "Domain/subdomain", opts.Domain)
-	opts.AdminEmail = prompt(reader, "Admin email", opts.AdminEmail)
-	opts.TLSEmail = prompt(reader, "TLS notification email", defaultString(opts.TLSEmail, opts.AdminEmail))
-	mode := prompt(reader, "Proxy mode [auto, managed-caddy, existing-proxy, app-only]", defaultString(string(opts.ProxyMode), string(installer.ProxyAuto)))
+	return interactiveWizardWithIO(reader, os.Stdout, opts, apply)
+}
+
+func interactiveWizardWithIO(reader *bufio.Reader, out io.Writer, opts installer.Options, apply installer.ApplyOptions) (installer.Options, installer.ApplyOptions, error) {
+	opts.Domain = promptWithWriter(reader, out, "Domain/subdomain", opts.Domain)
+	opts.AdminEmail = promptWithWriter(reader, out, "Admin email", opts.AdminEmail)
+	opts.TLSEmail = promptWithWriter(reader, out, "TLS notification email", defaultString(opts.TLSEmail, opts.AdminEmail))
+	mode := promptWithWriter(reader, out, "Proxy mode [auto, managed-caddy, existing-proxy, app-only]", defaultString(string(opts.ProxyMode), string(installer.ProxyAuto)))
 	opts.ProxyMode = installer.NormalizeProxyMode(mode)
-	opts.SignupsEnabled = promptBool(reader, "Allow public signups", opts.SignupsEnabled)
-	opts.BackupEnabled = promptBool(reader, "Install daily SQLite backups", opts.BackupEnabled)
+	opts.SignupsEnabled = promptBoolWithWriter(reader, out, "Allow public signups", opts.SignupsEnabled)
+	opts.BackupEnabled = promptBoolWithWriter(reader, out, "Install daily SQLite backups", opts.BackupEnabled)
 	if !apply.DryRun && !opts.Reconfigure && apply.AdminPasswordFile == "" && apply.AdminPassword == "" {
 		password, err := readSecret("First admin password")
 		if err != nil {
@@ -248,10 +258,14 @@ func interactiveWizardWithReader(reader *bufio.Reader, opts installer.Options, a
 }
 
 func prompt(reader *bufio.Reader, label string, fallback string) string {
+	return promptWithWriter(reader, os.Stdout, label, fallback)
+}
+
+func promptWithWriter(reader *bufio.Reader, out io.Writer, label string, fallback string) string {
 	if fallback != "" {
-		fmt.Printf("%s [%s]: ", label, fallback)
+		fmt.Fprintf(out, "%s [%s]: ", label, fallback)
 	} else {
-		fmt.Printf("%s: ", label)
+		fmt.Fprintf(out, "%s: ", label)
 	}
 	value, _ := reader.ReadString('\n')
 	value = strings.TrimSpace(value)
@@ -262,11 +276,15 @@ func prompt(reader *bufio.Reader, label string, fallback string) string {
 }
 
 func promptBool(reader *bufio.Reader, label string, fallback bool) bool {
+	return promptBoolWithWriter(reader, os.Stdout, label, fallback)
+}
+
+func promptBoolWithWriter(reader *bufio.Reader, out io.Writer, label string, fallback bool) bool {
 	defaultLabel := "n"
 	if fallback {
 		defaultLabel = "y"
 	}
-	value := strings.ToLower(prompt(reader, label+" [y/n]", defaultLabel))
+	value := strings.ToLower(promptWithWriter(reader, out, label+" [y/n]", defaultLabel))
 	return value == "y" || value == "yes" || value == "true" || value == "1"
 }
 

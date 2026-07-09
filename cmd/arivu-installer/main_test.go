@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"strings"
 	"testing"
 
@@ -88,6 +89,32 @@ func TestValidateAllowsNonInteractiveReconfigureWithoutPassword(t *testing.T) {
 	}
 	if err := validateInstallOptions(opts, apply, nonInteractive, true); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInteractiveWizardWritesPromptsToProvidedOutput(t *testing.T) {
+	input := strings.Join([]string{
+		"arivu.example.com",
+		"admin@example.com",
+		"ops@example.com",
+		"app-only",
+		"n",
+		"y",
+		"",
+	}, "\n")
+	var out bytes.Buffer
+	got, _, err := interactiveWizardWithIO(bufio.NewReader(strings.NewReader(input)), &out, installer.Options{}, installer.ApplyOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Domain != "arivu.example.com" || got.AdminEmail != "admin@example.com" || got.TLSEmail != "ops@example.com" || got.ProxyMode != installer.ProxyAppOnly {
+		t.Fatalf("unexpected wizard options: %#v", got)
+	}
+	prompts := out.String()
+	for _, want := range []string{"Domain/subdomain: ", "Admin email: ", "TLS notification email", "Proxy mode", "Allow public signups", "Install daily SQLite backups"} {
+		if !strings.Contains(prompts, want) {
+			t.Fatalf("wizard output missing %q:\n%s", want, prompts)
+		}
 	}
 }
 
