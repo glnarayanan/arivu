@@ -207,10 +207,6 @@ func installArivuBinary(ctx context.Context, opts ApplyOptions, plan Plan) error
 	if err := os.WriteFile(tmp, binary, 0o755); err != nil {
 		return err
 	}
-	if err := verifyProvenance(ctx, tmp, url); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
 	return os.Rename(tmp, "/usr/local/bin/arivu")
 }
 
@@ -454,24 +450,6 @@ func validateDownloadURL(target string) error {
 		return fmt.Errorf("download URL %q must use https", target)
 	}
 	return nil
-}
-
-func verifyProvenance(ctx context.Context, artifactPath string, artifactURL string) error {
-	parsed, err := url.Parse(artifactURL)
-	if err != nil {
-		return err
-	}
-	if parsed.Host != "github.com" {
-		return fmt.Errorf("unsupported artifact provenance host %q", parsed.Host)
-	}
-	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
-	if len(parts) < 2 {
-		return fmt.Errorf("cannot infer GitHub repository from %s", artifactURL)
-	}
-	if _, err := exec.LookPath("gh"); err != nil {
-		return errors.New("gh is required to verify GitHub artifact attestations")
-	}
-	return runCommand(ctx, "gh", "attestation", "verify", artifactPath, "-R", parts[0]+"/"+parts[1])
 }
 
 func sqliteBackup(source string, target string) error {

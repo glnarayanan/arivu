@@ -16,12 +16,9 @@ curl -fsSL https://install.arivu.app | sudo ARIVU_VERSION=v1.2.3 bash
 ```
 
 The bootstrap script only downloads `arivu-installer`, verifies it against the
-release `SHA256SUMS`, ensures GitHub CLI is available, verifies the GitHub
-artifact attestation with `gh`, installs it under `/usr/local/bin`, and starts
-the interactive installer. When `gh` is missing on supported Debian/Ubuntu hosts,
-the bootstrap installs it from the official GitHub CLI apt repository after
-verifying the published apt keyring checksum; this keeps checksum verification
-from being the only trust control without making operators preinstall `gh`.
+release `SHA256SUMS`, installs it under `/usr/local/bin`, and starts the
+interactive installer. No GitHub CLI login or token is required on the target
+host.
 
 The installer asks for:
 

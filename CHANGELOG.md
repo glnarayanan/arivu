@@ -79,9 +79,6 @@ All notable changes to this project will be documented in this file.
   backup/restore helpers, checksum verification, and operational commands.
 - Added a checksum-verifying `deploy/install.sh` bootstrap script for the
   one-command installer flow.
-- Added bootstrap handling for missing GitHub CLI on supported Debian/Ubuntu
-  hosts, installing `gh` from the official apt repository before artifact
-  attestation verification.
 - Added installer support for pinned release versions, TLS email rendering in
   Arivu-managed Caddy snippets, and reconfiguration defaults loaded from the
   existing generated env file.
@@ -110,8 +107,8 @@ All notable changes to this project will be documented in this file.
 - CI now runs the browser extension content-script test alongside the extension
   URL/origin test.
 - Hardened the self-hosting installer with strict domain validation, Caddy vhost
-  detection, HTTPS-only release downloads, GitHub attestation checks, service
-  user bootstrap ownership, managed-Caddy activation, consistent SQLite backups,
+  detection, HTTPS-only release downloads, checksum verification, service user
+  bootstrap ownership, managed-Caddy activation, consistent SQLite backups,
   restore downtime safety, upgrade rollback, and reconfigure state preservation.
 - Removed the duplicate OpenWiki legacy migration overview and kept the fuller
   migration guide as the canonical migration documentation.
