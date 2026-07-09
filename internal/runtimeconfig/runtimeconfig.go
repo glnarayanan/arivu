@@ -107,7 +107,7 @@ func FromConfig(cfg config.Config) Effective {
 		SignupEnabled:       cfg.SignupEnabled,
 		CookieSecure:        cfg.CookieSecure,
 		GeminiAPIKey:        cfg.GeminiAPIKey,
-		GeminiModel:         fallbackString(cfg.GeminiModel, "gemini-2.5-flash"),
+		GeminiModel:         fallbackString(cfg.GeminiModel, config.DefaultGeminiModel),
 		GeminiBaseURL:       cfg.GeminiBaseURL,
 		ResendAPIKey:        cfg.ResendAPIKey,
 		ResendFromEmail:     cfg.ResendFrom,
@@ -353,9 +353,13 @@ func (s *Service) fallback(key string) resolvedValue {
 	case KeyGeminiAPIKey:
 		value, source = envFallback("GEMINI_API_KEY", s.cfg.GeminiAPIKey)
 	case KeyGeminiModel:
-		value, source = envFallback("GEMINI_MODEL", fallbackString(s.cfg.GeminiModel, "gemini-2.5-flash"))
+		value, source = envFallback("GEMINI_MODEL", fallbackString(s.cfg.GeminiModel, config.DefaultGeminiModel))
 	case KeyGeminiBaseURL:
-		value, source = envFallback("GEMINI_BASE_URL", s.cfg.GeminiBaseURL)
+		if _, ok := os.LookupEnv("GEMINI_BASE_URL"); ok || strings.TrimSpace(s.cfg.GeminiBaseURL) != "" {
+			value, source = strings.TrimSpace(s.cfg.GeminiBaseURL), "environment"
+		} else {
+			value, source = config.DefaultGeminiBaseURL, "default"
+		}
 	case KeyResendAPIKey:
 		value, source = envFallback("RESEND_API_KEY", s.cfg.ResendAPIKey)
 	case KeyResendFromEmail:
@@ -426,11 +430,11 @@ func normalizeValue(key string, value any) (string, error) {
 	}
 	if key == KeyGeminiModel {
 		if raw == "" {
-			return "gemini-2.5-flash", nil
+			return config.DefaultGeminiModel, nil
 		}
 		raw = strings.TrimPrefix(raw, "models/")
 		if strings.ContainsAny(raw, "/ \t\r\n") || strings.ContainsFunc(raw, unicode.IsControl) {
-			return "", fmt.Errorf("gemini_model must be a model id, such as gemini-2.5-flash or models/gemini-2.5-flash")
+			return "", fmt.Errorf("gemini_model must be a model id, such as %s or models/%s", config.DefaultGeminiModel, config.DefaultGeminiModel)
 		}
 		return raw, nil
 	}

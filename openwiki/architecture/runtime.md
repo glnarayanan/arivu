@@ -55,8 +55,9 @@ SQLite override, environment variable, then default. Admin API key updates write
 to `settings`; Gemini, Resend, and X read effective values at runtime. Gemini
 runtime settings include the encrypted API key plus plain `gemini_model` and
 `gemini_base_url` overrides for deployments that need a different generation
-model or proxy-compatible endpoint. Remote Gemini endpoints must use HTTPS;
-plain HTTP is accepted only for localhost development/test endpoints.
+model or proxy-compatible endpoint. The default Gemini base URL is
+`https://generativelanguage.googleapis.com`. Remote Gemini endpoints must use
+HTTPS; plain HTTP is accepted only for localhost development/test endpoints.
 
 ---
 

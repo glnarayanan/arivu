@@ -6,6 +6,11 @@ import (
 	"time"
 )
 
+const (
+	DefaultGeminiModel   = "gemini-2.5-flash"
+	DefaultGeminiBaseURL = "https://generativelanguage.googleapis.com"
+)
+
 type Config struct {
 	Addr           string
 	DBPath         string
@@ -42,7 +47,7 @@ func FromEnv() Config {
 		SignupEnabled:  envBool("SIGNUPS_ENABLED", true),
 		CookieSecure:   envBool("COOKIE_SECURE", false),
 		GeminiAPIKey:   os.Getenv("GEMINI_API_KEY"),
-		GeminiModel:    env("GEMINI_MODEL", "gemini-2.5-flash"),
+		GeminiModel:    env("GEMINI_MODEL", DefaultGeminiModel),
 		GeminiBaseURL:  os.Getenv("GEMINI_BASE_URL"),
 		ResendAPIKey:   os.Getenv("RESEND_API_KEY"),
 		ResendFrom:     os.Getenv("RESEND_FROM_EMAIL"),

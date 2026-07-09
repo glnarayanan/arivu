@@ -124,8 +124,9 @@ include public URL, signup policy, secure-cookie status, Gemini, Resend, and X
 settings. Secret provider values are encrypted in SQLite. Gemini deployments can
 override the generation model with `GEMINI_MODEL` or the `gemini_model` runtime
 setting, and can override the provider endpoint with `GEMINI_BASE_URL` or
-`gemini_base_url`. Gemini base URLs must use HTTPS unless they point to
-localhost for development or tests.
+`gemini_base_url`. When unset, Arivu uses Google's documented Gemini API base
+URL, `https://generativelanguage.googleapis.com`. Gemini base URLs must use
+HTTPS unless they point to localhost for development or tests.
 
 ## Backup, Restore, And Upgrade Safety
 

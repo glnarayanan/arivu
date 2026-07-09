@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/glnarayanan/arivu/internal/config"
 )
 
 const (
@@ -242,11 +244,11 @@ func (c GeminiClient) record(operation string, err error) {
 func (c GeminiClient) endpoint() string {
 	base := c.BaseURL
 	if base == "" {
-		base = "https://generativelanguage.googleapis.com"
+		base = config.DefaultGeminiBaseURL
 	}
 	model := strings.TrimSpace(c.Model)
 	if model == "" {
-		model = "gemini-2.5-flash"
+		model = config.DefaultGeminiModel
 	}
 	return strings.TrimRight(base, "/") + "/v1beta/models/" + model + ":generateContent?key=" + c.APIKey
 }
@@ -254,7 +256,7 @@ func (c GeminiClient) endpoint() string {
 func (c GeminiClient) embeddingEndpoint() string {
 	base := c.BaseURL
 	if base == "" {
-		base = "https://generativelanguage.googleapis.com"
+		base = config.DefaultGeminiBaseURL
 	}
 	return strings.TrimRight(base, "/") + "/v1beta/models/text-embedding-004:embedContent?key=" + c.APIKey
 }
