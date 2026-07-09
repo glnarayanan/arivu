@@ -55,9 +55,18 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 	if err != nil {
 		return err
 	}
-	summary := oneSentence(result.Text)
-	if aiSummary, err := s.geminiClient(ctx).GenerateSummary(ctx, result.Text); err == nil && strings.TrimSpace(aiSummary) != "" {
-		summary = strings.TrimSpace(aiSummary)
+	summary := map[string]any{
+		"one_sentence":   oneSentence(result.Text),
+		"long_form":      "",
+		"highlights":     []any{},
+		"suggested_tags": []any{},
+	}
+	summaryStatus := "fallback"
+	if aiSummary, err := s.geminiClient(ctx).GenerateSummaryFields(ctx, result.Text); err == nil {
+		for key, value := range aiSummary {
+			summary[key] = value
+		}
+		summaryStatus = "completed"
 	}
 	title := fallback(result.Title, result.Domain)
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -66,7 +75,8 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 	if err != nil {
 		return err
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='completed', one_sentence=?, updated_at=? WHERE bookmark_id=?`, summary, now, bookmarkID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=?, one_sentence=?, bullet_points_json=?, long_form=?, highlights_json=?, suggested_tags_json=?, updated_at=? WHERE bookmark_id=?`,
+		summaryStatus, stringValue(summary["one_sentence"]), jsonListString(summary["highlights"]), stringValue(summary["long_form"]), jsonListString(summary["highlights"]), jsonListString(summary["suggested_tags"]), now, bookmarkID)
 	s.storeEnrichment(ctx, bookmarkID, userID, s.enrichText(ctx, bookmarkID, userID, title, result.Description, result.Text))
 	s.refreshSearchIndex(ctx, userID)
 	return nil

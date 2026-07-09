@@ -80,7 +80,7 @@ func New(cfg config.Config) (*App, error) {
 	a.auth.SetRuntimeSettings(a.runtime.Effective)
 	a.jobs = jobs.New(db)
 	a.fetcher = safefetch.NewWithUserAgent(cfg.FetchUserAgent)
-	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{APIKey: cfg.GeminiAPIKey})
+	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{APIKey: cfg.GeminiAPIKey, Model: cfg.GeminiModel, BaseURL: cfg.GeminiBaseURL})
 	a.bookmarks.SetGeminiProvider(a.geminiClient)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
@@ -204,7 +204,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/extension/collections", a.withAudience("extension", a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/extension/bookmarks", a.withAudienceQuota("extension", quotaBookmarkCreate, a.bookmarks.Create))
 	mux.HandleFunc("GET /api/analytics/summary", a.withUser(a.bookmarks.AnalyticsSummary))
-	mux.HandleFunc("GET /api/analytics/reading-stats", a.withUser(a.bookmarks.AnalyticsSummary))
+	mux.HandleFunc("GET /api/analytics/reading-stats", a.withUser(a.bookmarks.AnalyticsReadingStats))
 	mux.HandleFunc("GET /api/analytics/topics", a.withUser(a.bookmarks.AnalyticsTopics))
 	mux.HandleFunc("GET /api/analytics/patterns", a.withUser(a.bookmarks.AnalyticsPatterns))
 	mux.HandleFunc("GET /api/analytics/insights", a.withUser(a.bookmarks.AnalyticsInsights))
@@ -251,10 +251,14 @@ func (a *App) Handler() http.Handler {
 
 func (a *App) geminiClient(ctx context.Context) providers.GeminiClient {
 	key := a.cfg.GeminiAPIKey
+	model := a.cfg.GeminiModel
+	baseURL := a.cfg.GeminiBaseURL
 	if effective, err := a.runtime.Effective(ctx); err == nil {
 		key = effective.GeminiAPIKey
+		model = effective.GeminiModel
+		baseURL = effective.GeminiBaseURL
 	}
-	return providers.GeminiClient{APIKey: key, Recorder: a.usage.RecordGemini}
+	return providers.GeminiClient{APIKey: key, Model: model, BaseURL: baseURL, Recorder: a.usage.RecordGemini}
 }
 
 func (a *App) withUser(next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {

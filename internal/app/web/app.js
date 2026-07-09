@@ -49,7 +49,7 @@ async function api(path, options = {}) {
     }
     throw new Error("We couldn't reach Arivu. Check your connection and try again.");
   }
-  if (res.status === 401 && !path.startsWith("/auth/") && !retried) {
+  if (res.status === 401 && path !== "/auth/refresh" && (!path.startsWith("/auth/") || path.startsWith("/auth/x/")) && !retried) {
     let refreshed;
     try {
       refreshed = await fetch("/api/auth/refresh", { method: "POST", credentials: "include", headers: csrf ? { "X-CSRF-Token": csrf } : {} });
@@ -3206,6 +3206,7 @@ async function bindConnectionsPanel() {
   const connect = document.querySelector("#x-connect");
   const sync = document.querySelector("#x-sync");
   const disconnect = document.querySelector("#x-disconnect");
+  let callbackError = "";
   const refresh = async () => {
     try {
       const enabled = await api("/auth/x/enabled");
@@ -3225,6 +3226,26 @@ async function bindConnectionsPanel() {
       status.innerHTML = `<p class="meta">${escapeHTML(err.message)}</p>`;
     }
   };
+  const params = new URLSearchParams(location.search);
+  const code = params.get("code");
+  const oauthState = params.get("state");
+  if (code && oauthState) {
+    status.innerHTML = `<p class="meta">Completing X connection.</p>`;
+    try {
+      const current = await api("/auth/x/callback", {
+        method: "POST",
+        body: JSON.stringify({ code, state: oauthState }),
+      });
+      ui.toast(`Connected X${current.x_username ? ` as @${current.x_username}` : ""}`, "success");
+    } catch (err) {
+      callbackError = err.message || "X authorization failed.";
+      ui.toast(callbackError, "error");
+    } finally {
+      const clean = new URL(location.href);
+      clean.search = "?section=connections";
+      history.replaceState({}, "", clean);
+    }
+  }
   connect.addEventListener("click", async (event) => {
     const done = setButtonBusy(event.currentTarget, "Opening");
     try {
@@ -3263,6 +3284,9 @@ async function bindConnectionsPanel() {
     }
   });
   await refresh();
+  if (callbackError) {
+    status.insertAdjacentHTML("afterbegin", `<p class="meta">${escapeHTML(callbackError)} Authorize X again. If this repeats, check the callback URL in Settings.</p>`);
+  }
 }
 
 function xConnectionStatus(status) {
@@ -3280,6 +3304,8 @@ function apiKeysPanel() {
     <form class="panel form" id="api-keys-form">
       <h3>Update keys</h3>
       <div class="field"><label for="gemini-api-key">Gemini API key</label><input id="gemini-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="gemini-model">Gemini model</label><input id="gemini-model" type="text" autocomplete="off" placeholder="gemini-2.5-flash"></div>
+      <div class="field"><label for="gemini-base-url">Gemini base URL</label><input id="gemini-base-url" type="url" autocomplete="off" placeholder="https://generativelanguage.googleapis.com"></div>
       <div class="field"><label for="resend-api-key">Resend API key</label><input id="resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
       <div class="field"><label for="resend-from-email">Resend from email</label><input id="resend-from-email" type="email" autocomplete="off"></div>
       <div class="field"><label for="x-client-id">X client ID</label><input id="x-client-id" type="text" autocomplete="off"></div>
@@ -3316,6 +3342,8 @@ async function bindAPIKeysPanel() {
       });
       document.querySelector("#x-redirect-uri").value = keys.x_redirect_uri?.value || "";
       document.querySelector("#x-integration-enabled").checked = Boolean(keys.x_integration_enabled?.value);
+      document.querySelector("#gemini-model").value = keys.gemini_model?.value || "";
+      document.querySelector("#gemini-base-url").value = keys.gemini_base_url?.value || "";
       document.querySelector("#resend-from-email").value = keys.resend_from_email?.value || "";
     } catch (err) {
       status.innerHTML = `<p class="meta">${escapeHTML(err.status === 403 ? "Admin access required." : err.message)}</p>`;
@@ -3329,6 +3357,8 @@ async function bindAPIKeysPanel() {
     const body = {};
     for (const [key, selector] of Object.entries({
       gemini_api_key: "#gemini-api-key",
+      gemini_model: "#gemini-model",
+      gemini_base_url: "#gemini-base-url",
       resend_api_key: "#resend-api-key",
       x_client_id: "#x-client-id",
       x_client_secret: "#x-client-secret",
@@ -3356,6 +3386,8 @@ async function bindAPIKeysPanel() {
 function apiKeyStatus(keys) {
   const labels = {
     gemini_api_key: "Gemini API key",
+    gemini_model: "Gemini model",
+    gemini_base_url: "Gemini base URL",
     resend_api_key: "Resend API key",
     resend_from_email: "Resend from email",
     x_client_id: "X client ID",
@@ -3363,7 +3395,7 @@ function apiKeyStatus(keys) {
     x_redirect_uri: "X redirect URI",
     x_integration_enabled: "X enabled",
   };
-  return ["gemini_api_key", "resend_api_key", "resend_from_email", "x_client_id", "x_client_secret", "x_redirect_uri", "x_integration_enabled"]
+  return ["gemini_api_key", "gemini_model", "gemini_base_url", "resend_api_key", "resend_from_email", "x_client_id", "x_client_secret", "x_redirect_uri", "x_integration_enabled"]
     .map((key) => {
       const item = keys[key] || {};
       const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
@@ -3389,6 +3421,8 @@ function adminSettingsPanel(settings) {
       <label class="checkbox-row"><input id="admin-cookie-secure" type="checkbox" ${settings.cookie_secure?.value ? "checked" : ""}> Secure browser cookies</label>
       <hr>
       <div class="field"><label for="admin-gemini-api-key">Gemini API key</label><input id="admin-gemini-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="admin-gemini-model">Gemini model</label><input id="admin-gemini-model" type="text" autocomplete="off" value="${escapeHTML(settings.gemini_model?.value || "")}"></div>
+      <div class="field"><label for="admin-gemini-base-url">Gemini base URL</label><input id="admin-gemini-base-url" type="url" autocomplete="off" value="${escapeHTML(settings.gemini_base_url?.value || "")}"></div>
       <div class="field"><label for="admin-resend-api-key">Resend API key</label><input id="admin-resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
       <div class="field"><label for="admin-resend-from-email">Resend from email</label><input id="admin-resend-from-email" type="email" autocomplete="off" value="${escapeHTML(settings.resend_from_email?.value || "")}"></div>
       <div class="field"><label for="admin-x-client-id">X client ID</label><input id="admin-x-client-id" type="text" autocomplete="off"></div>
@@ -3407,6 +3441,8 @@ function settingsStatus(settings) {
     signups_enabled: "Public signups",
     cookie_secure: "Secure cookies",
     gemini_api_key: "Gemini API key",
+    gemini_model: "Gemini model",
+    gemini_base_url: "Gemini base URL",
     resend_api_key: "Resend API key",
     resend_from_email: "Resend from email",
     x_client_id: "X client ID",
@@ -3438,6 +3474,8 @@ function bindAdminSettingsPanel() {
     field("#admin-app-url").value = settings.app_url?.value || "";
     field("#admin-signups-enabled").checked = Boolean(settings.signups_enabled?.value);
     field("#admin-cookie-secure").checked = Boolean(settings.cookie_secure?.value);
+    field("#admin-gemini-model").value = settings.gemini_model?.value || "";
+    field("#admin-gemini-base-url").value = settings.gemini_base_url?.value || "";
     field("#admin-resend-from-email").value = settings.resend_from_email?.value || "";
     field("#admin-x-redirect-uri").value = settings.x_redirect_uri?.value || "";
     field("#admin-x-integration-enabled").checked = Boolean(settings.x_integration_enabled?.value);
@@ -3473,6 +3511,8 @@ function bindAdminSettingsPanel() {
     };
     for (const [key, selector] of Object.entries({
       gemini_api_key: "#admin-gemini-api-key",
+      gemini_model: "#admin-gemini-model",
+      gemini_base_url: "#admin-gemini-base-url",
       resend_api_key: "#admin-resend-api-key",
       x_client_id: "#admin-x-client-id",
       x_client_secret: "#admin-x-client-secret",
@@ -3888,21 +3928,35 @@ function termCloud(terms) {
 
 async function analyticsPage() {
   await requireUser();
-  const [summary, topics, insights] = await Promise.all([
-    api("/analytics/summary"),
-    api("/analytics/topics").catch(() => ({ topics: [] })),
-    api("/analytics/insights").catch(() => ({ insights: [] })),
-  ]);
+  let summary;
+  try {
+    summary = await api("/analytics/summary");
+  } catch (err) {
+    setRoot(shell("Analytics", `<section class="panel">
+      <h2>Analytics unavailable</h2>
+      <p class="meta">${escapeHTML(err.message)}</p>
+      <p class="button-row"><button type="button" class="secondary" id="analytics-retry">Retry</button></p>
+    </section>`));
+    document.querySelector("#analytics-retry")?.addEventListener("click", () => render());
+    return;
+  }
+  const stats = summary.stats || summary;
   setRoot(shell("Analytics", `<section class="grid">
-    <div class="panel"><span class="meta">Bookmarks</span><h2>${summary.total_bookmarks || 0}</h2></div>
-    <div class="panel"><span class="meta">Collections</span><h2>${summary.total_collections || 0}</h2></div>
-    <div class="panel"><span class="meta">Unread</span><h2>${summary.unread_bookmarks || 0}</h2></div>
-    <div class="panel"><span class="meta">Read</span><h2>${summary.read_bookmarks || 0}</h2></div>
+    <div class="panel"><span class="meta">Bookmarks</span><h2>${stats.total_bookmarks || 0}</h2></div>
+    <div class="panel"><span class="meta">Collections</span><h2>${stats.total_collections || 0}</h2></div>
+    <div class="panel"><span class="meta">Unread</span><h2>${stats.unread_bookmarks || 0}</h2></div>
+    <div class="panel"><span class="meta">Read</span><h2>${stats.read_bookmarks || 0}</h2></div>
   </section>
   <section class="split">
-    <div class="panel"><h2>Top domains</h2>${topicList(topics.topics || [])}</div>
-    <div class="panel"><h2>Signals</h2>${insightList(insights.insights || [])}</div>
+    <div class="panel"><h2>Top domains</h2>${topicList(summary.topics || [])}</div>
+    <div class="panel" id="analytics-signals"><h2>Signals</h2>${insightList(summary.insights || [])}</div>
   </section>`));
+  api("/analytics/insights")
+    .then((insights) => {
+      const target = document.querySelector("#analytics-signals");
+      if (target) target.innerHTML = `<h2>Signals</h2>${insightList(insights.insights || summary.insights || [])}`;
+    })
+    .catch(() => {});
 }
 
 function topicList(items) {

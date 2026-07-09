@@ -24,6 +24,8 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 		SignupEnabled: true,
 		CookieSecure:  true,
 		GeminiAPIKey:  "env-gemini",
+		GeminiModel:   "env-model",
+		GeminiBaseURL: "https://gemini.env.test",
 		ResendAPIKey:  "env-resend",
 		XClientID:     "env-x-client",
 	}
@@ -40,6 +42,12 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	if err := service.Set(context.Background(), KeyGeminiAPIKey, "db-gemini", "admin@example.com", "test-key"); err != nil {
 		t.Fatal(err)
 	}
+	if err := service.Set(context.Background(), KeyGeminiModel, "gemini-custom", "admin@example.com", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Set(context.Background(), KeyGeminiBaseURL, "https://gemini.db.test/", "admin@example.com", ""); err != nil {
+		t.Fatal(err)
+	}
 	if err := service.Set(context.Background(), KeyXIntegrationEnable, true, "admin@example.com", ""); err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +59,7 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if effective.GeminiAPIKey != "db-gemini" || effective.ResendAPIKey != "env-resend" || !effective.XIntegrationEnabled {
+	if effective.GeminiAPIKey != "db-gemini" || effective.GeminiModel != "gemini-custom" || effective.GeminiBaseURL != "https://gemini.db.test" || effective.ResendAPIKey != "env-resend" || !effective.XIntegrationEnabled {
 		t.Fatalf("unexpected effective config: %#v", effective)
 	}
 	if effective.AppURL != "https://runtime.example.test" || effective.SignupEnabled || effective.CookieSecure {
@@ -86,6 +94,9 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	if status[KeyGeminiAPIKey].MaskedValue != "****mini" || status[KeyGeminiAPIKey].Source != "database" {
 		t.Fatalf("unexpected secret status: %#v", status[KeyGeminiAPIKey])
 	}
+	if status[KeyGeminiModel].Value != "gemini-custom" || status[KeyGeminiBaseURL].Value != "https://gemini.db.test" {
+		t.Fatalf("unexpected gemini provider status: %#v", status)
+	}
 	if status[KeySignupEnabled].Value != false || status[KeyCookieSecure].Value != false || status[KeyAppURL].Value != "https://runtime.example.test" {
 		t.Fatalf("unexpected runtime status: %#v", status)
 	}
@@ -113,6 +124,35 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	}
 	if effective.GeminiAPIKey != "env-gemini" {
 		t.Fatalf("delete did not restore fallback: %#v", effective)
+	}
+	if err := service.Set(context.Background(), KeyGeminiModel, "models/gemini-2.5-flash", "admin@example.com", ""); err != nil {
+		t.Fatalf("expected prefixed gemini model to normalize: %v", err)
+	}
+	effective, err = service.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.GeminiModel != "gemini-2.5-flash" {
+		t.Fatalf("prefixed gemini model was not normalized: %#v", effective)
+	}
+	if err := service.Set(context.Background(), KeyGeminiModel, "models/vendor/bad", "admin@example.com", ""); err == nil {
+		t.Fatal("expected slashy gemini model to fail")
+	}
+	if err := service.Set(context.Background(), KeyGeminiBaseURL, "http://localhost:8080/gemini/", "admin@example.com", ""); err != nil {
+		t.Fatalf("expected localhost gemini base url to be allowed: %v", err)
+	}
+	effective, err = service.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.GeminiBaseURL != "http://localhost:8080/gemini" {
+		t.Fatalf("localhost gemini base url was not normalized: %#v", effective)
+	}
+	if err := service.Set(context.Background(), KeyGeminiBaseURL, "http://gemini.example.com", "admin@example.com", ""); err == nil {
+		t.Fatal("expected remote http gemini base url to fail")
+	}
+	if err := service.Set(context.Background(), KeyGeminiBaseURL, "file:///tmp/gemini", "admin@example.com", ""); err == nil {
+		t.Fatal("expected invalid gemini base url to fail")
 	}
 }
 

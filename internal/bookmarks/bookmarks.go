@@ -434,17 +434,52 @@ func (s *Service) ownsBookmark(ctx context.Context, userID, bookmarkID string) b
 }
 
 func (s *Service) AnalyticsSummary(w http.ResponseWriter, r *http.Request, user auth.User) {
-	var total, read, unread, collections int
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*), COALESCE(SUM(CASE WHEN read_status THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN read_status THEN 0 ELSE 1 END),0) FROM bookmarks WHERE user_id=?`, user.ID).Scan(&total, &read, &unread)
-	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM collections WHERE user_id=?`, user.ID).Scan(&collections)
-	writeJSON(w, http.StatusOK, map[string]any{"total_bookmarks": total, "total_collections": collections, "read_bookmarks": read, "unread_bookmarks": unread})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"stats":    s.analyticsStats(r.Context(), user.ID),
+		"topics":   s.analyticsTopics(r.Context(), user.ID),
+		"patterns": s.analyticsPatterns(r.Context(), user.ID),
+		"insights": s.localInsights(r.Context(), user.ID),
+	})
 }
 
 func (s *Service) AnalyticsTopics(w http.ResponseWriter, r *http.Request, user auth.User) {
-	rows, err := s.db.QueryContext(r.Context(), `SELECT domain,COUNT(*) AS c FROM bookmarks WHERE user_id=? AND domain<>'' GROUP BY domain ORDER BY c DESC LIMIT 20`, user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"topics": s.analyticsTopics(r.Context(), user.ID)})
+}
+
+func (s *Service) AnalyticsPatterns(w http.ResponseWriter, r *http.Request, user auth.User) {
+	writeJSON(w, http.StatusOK, s.analyticsPatterns(r.Context(), user.ID))
+}
+
+func (s *Service) AnalyticsReadingStats(w http.ResponseWriter, r *http.Request, user auth.User) {
+	writeJSON(w, http.StatusOK, s.analyticsStats(r.Context(), user.ID))
+}
+
+func (s *Service) AnalyticsInsights(w http.ResponseWriter, r *http.Request, user auth.User) {
+	writeJSON(w, http.StatusOK, map[string]any{"insights": s.analyticsInsights(r.Context(), user.ID)})
+}
+
+func (s *Service) analyticsStats(ctx context.Context, userID string) map[string]any {
+	var total, read, unread, collections, readingMinutes int
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(CASE WHEN read_status THEN 1 ELSE 0 END),0), COALESCE(SUM(CASE WHEN read_status THEN 0 ELSE 1 END),0), COALESCE(SUM(reading_time),0) FROM bookmarks WHERE user_id=?`, userID).Scan(&total, &read, &unread, &readingMinutes)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM collections WHERE user_id=?`, userID).Scan(&collections)
+	completion := 0.0
+	if total > 0 {
+		completion = float64(read) / float64(total) * 100
+	}
+	return map[string]any{
+		"total_bookmarks":    total,
+		"total_collections":  collections,
+		"read_bookmarks":     read,
+		"unread_bookmarks":   unread,
+		"reading_minutes":    readingMinutes,
+		"completion_percent": completion,
+	}
+}
+
+func (s *Service) analyticsTopics(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT domain,COUNT(*) AS c FROM bookmarks WHERE user_id=? AND domain<>'' GROUP BY domain ORDER BY c DESC LIMIT 20`, userID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "Could not load topics")
-		return
+		return []map[string]any{}
 	}
 	defer rows.Close()
 	var topics []map[string]any
@@ -454,19 +489,21 @@ func (s *Service) AnalyticsTopics(w http.ResponseWriter, r *http.Request, user a
 		_ = rows.Scan(&domain, &count)
 		topics = append(topics, map[string]any{"topic": domain, "count": count})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"topics": topics})
+	return topics
 }
 
-func (s *Service) AnalyticsPatterns(w http.ResponseWriter, r *http.Request, user auth.User) {
-	writeJSON(w, http.StatusOK, map[string]any{"patterns": []map[string]any{{"label": "Saved bookmarks", "value": count(r.Context(), s.db, "bookmarks", user.ID)}}})
+func (s *Service) analyticsPatterns(ctx context.Context, userID string) map[string]any {
+	return map[string]any{"patterns": []map[string]any{{"label": "Saved bookmarks", "value": count(ctx, s.db, "bookmarks", userID)}}}
 }
 
-func (s *Service) AnalyticsInsights(w http.ResponseWriter, r *http.Request, user auth.User) {
-	insights := s.localInsights(r.Context(), user.ID)
-	if generated, err := s.geminiClient(r.Context()).GenerateInsight(r.Context(), s.analyticsPrompt(r.Context(), user.ID)); err == nil && strings.TrimSpace(generated) != "" {
+func (s *Service) analyticsInsights(ctx context.Context, userID string) []map[string]any {
+	insights := s.localInsights(ctx, userID)
+	insightCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if generated, err := s.geminiClient(ctx).GenerateInsight(insightCtx, s.analyticsPrompt(ctx, userID)); err == nil && strings.TrimSpace(generated) != "" {
 		insights = append(insights, map[string]any{"type": "ai", "message": strings.TrimSpace(generated), "severity": "info"})
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"insights": insights})
+	return insights
 }
 
 func (s *Service) localInsights(ctx context.Context, userID string) []map[string]any {

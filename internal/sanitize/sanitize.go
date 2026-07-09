@@ -14,6 +14,11 @@ var allowedTags = map[string]bool{
 	"h1": true, "h2": true, "h3": true, "h4": true, "a": true,
 }
 
+var dropTags = map[string]bool{
+	"script": true, "style": true, "noscript": true, "template": true,
+	"svg": true, "canvas": true,
+}
+
 func HTML(input string) string {
 	root, err := html.Parse(strings.NewReader(input))
 	if err != nil {
@@ -36,6 +41,9 @@ func renderNode(out *bytes.Buffer, n *html.Node) {
 		out.WriteString(stdhtml.EscapeString(n.Data))
 	case html.ElementNode:
 		tag := strings.ToLower(n.Data)
+		if dropTags[tag] {
+			return
+		}
 		if !allowedTags[tag] {
 			renderChildren(out, n)
 			return

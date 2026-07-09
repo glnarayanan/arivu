@@ -1,6 +1,36 @@
 {
-  "read_bookmarks": 1,
-  "total_bookmarks": 4,
-  "total_collections": 0,
-  "unread_bookmarks": 3
+  "insights": [
+    {
+      "message": "Strong reading habit: 100.0% of recent bookmarks were revisited.",
+      "severity": "success",
+      "type": "completion"
+    },
+    {
+      "message": "You have 3 unread bookmarks waiting for review.",
+      "severity": "info",
+      "type": "backlog"
+    }
+  ],
+  "patterns": {
+    "patterns": [
+      {
+        "label": "Saved bookmarks",
+        "value": 4
+      }
+    ]
+  },
+  "stats": {
+    "completion_percent": 25,
+    "read_bookmarks": 1,
+    "reading_minutes": 19,
+    "total_bookmarks": 4,
+    "total_collections": 0,
+    "unread_bookmarks": 3
+  },
+  "topics": [
+    {
+      "count": 4,
+      "topic": "example.com"
+    }
+  ]
 }
