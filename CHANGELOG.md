@@ -106,6 +106,8 @@ All notable changes to this project will be documented in this file.
   action, and app-only plans print Caddy, Nginx, and Apache snippets.
 - Installer DNS mismatches are now warnings with Cloudflare/origin and
   reconfigure guidance instead of hard install blockers.
+- Installer plan confirmation now reads from the terminal during `curl | sudo
+  bash` installs instead of accepting piped EOF as the default cancellation.
 - CI now runs the browser extension content-script test alongside the extension
   URL/origin test.
 - Hardened the self-hosting installer with strict domain validation, Caddy vhost

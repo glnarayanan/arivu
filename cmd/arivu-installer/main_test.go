@@ -3,11 +3,19 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"io"
 	"strings"
 	"testing"
 
 	"github.com/glnarayanan/arivu/internal/installer"
 )
+
+type fakeTTY struct {
+	io.Reader
+	io.Writer
+}
+
+func (f fakeTTY) Close() error { return nil }
 
 func TestParseOptionsAllowsNonInteractivePlanWithoutPassword(t *testing.T) {
 	_, _, nonInteractive, _, _, err := parseOptions([]string{
@@ -142,6 +150,21 @@ func TestInteractiveReconfigureKeepsDisabledBackupsOnDefault(t *testing.T) {
 	}
 	if got.BackupEnabled {
 		t.Fatalf("default backup prompt re-enabled disabled backups: %#v", got)
+	}
+}
+
+func TestConfirmReadsFromTTY(t *testing.T) {
+	original := openTTY
+	t.Cleanup(func() { openTTY = original })
+	var out bytes.Buffer
+	openTTY = func() (io.ReadWriteCloser, error) {
+		return fakeTTY{Reader: strings.NewReader("y\n"), Writer: &out}, nil
+	}
+	if !confirm("Apply this plan?") {
+		t.Fatal("expected tty confirmation to be accepted")
+	}
+	if !strings.Contains(out.String(), "Apply this plan?") {
+		t.Fatalf("confirmation prompt not written to tty: %q", out.String())
 	}
 }
 

@@ -288,9 +288,18 @@ func promptBoolWithWriter(reader *bufio.Reader, out io.Writer, label string, fal
 	return value == "y" || value == "yes" || value == "true" || value == "1"
 }
 
+var openTTY = func() (io.ReadWriteCloser, error) {
+	return os.OpenFile("/dev/tty", os.O_RDWR, 0)
+}
+
 func confirm(label string) bool {
-	reader := bufio.NewReader(os.Stdin)
-	return promptBool(reader, label, false)
+	tty, err := openTTY()
+	if err != nil {
+		reader := bufio.NewReader(os.Stdin)
+		return promptBool(reader, label, false)
+	}
+	defer tty.Close()
+	return promptBoolWithWriter(bufio.NewReader(tty), tty, label, false)
 }
 
 func readSecret(label string) (string, error) {
