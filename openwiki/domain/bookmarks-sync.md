@@ -8,8 +8,8 @@ Arivu is not just a bookmark vault; it is a knowledge engine that processes URL 
 
 Saving a bookmark initiates several processing stages to build a structured graph:
 
-1. **Extraction**: The `safefetch` engine validates the URL, fetches safe page contents, and sanitizes standard markup.
-2. **Analysis**: Text content is scanned locally to extract summary bullets, highlight candidates, suggested tags, entities, and concepts. Gemini embeddings are added only when a provider key is configured.
+1. **Extraction**: The `safefetch` engine validates the URL, fetches safe page contents, drops page chrome and script/style data, prefers readable article/main content, and stores sanitized article markup plus normalized article text.
+2. **Analysis**: Clean text drives deterministic reading time, local summaries, highlight candidates, suggested tags, entities, and concepts. Gemini summaries and embeddings are added only when a provider key is configured; local-only summaries are stored with fallback status rather than pretending an AI summary completed.
 3. **Graph Relationships**:
    - Establishes linkages between bookmarks and distinct parsed keywords.
    - Computes intersection degrees to link related bookmarks.
@@ -141,7 +141,7 @@ To keep the dependency surface small, Arivu bypasses vendor SDKs. External commu
 
 ### Gemini (`gemini.go`)
 - **Use Case**: Performs automated summaries, insights, and embedding generation.
-- **Details**: Direct JSON endpoint payload structure targeting Google Gemini endpoints, reading active access keys securely from the database settings envelope.
+- **Details**: Direct JSON endpoint payload structure targeting Google Gemini endpoints, reading active API key, generation model, and base URL settings from the runtime settings envelope.
 
 ### Resend (`resend.go`)
 - **Use Case**: Triggers transactional email verification notices.

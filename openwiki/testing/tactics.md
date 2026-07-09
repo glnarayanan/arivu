@@ -11,6 +11,7 @@ The repository defines split test targets spanning different logic surfaces:
 ### 1. Isolated Unit Tests
 Testing for key behaviors, including:
 - Host resolution, redirect counters, and range block logic inside `internal/safefetch/safefetch_test.go`.
+- Article extraction fixtures inside `internal/safefetch/safefetch_test.go` should prove that chrome, JSON, script, and style data do not feed reading time or summaries.
 - Restrictive CSS, HTML, and scripting scrubbing inside `internal/sanitize/sanitize_test.go`.
 - Password decryption structures, session validations, and tokens inside `internal/auth/auth_test.go` or `internal/migrate/`.
 
@@ -31,8 +32,9 @@ Frontend smoke checks stay outside the checked-in dependency tree. Use the
 running Go binary plus a temporary SQLite database, then cover the flows listed
 in `../architecture/frontend-runtime.md`. For second-brain route changes, capture
 desktop and mobile screenshots for `/dashboard`, `/inbox`, `/focus`, `/review`,
-`/assistant`, `/notes`, `/notes/:id`, `/bookmark/:id`, and `/settings`, and
-keep console errors empty.
+`/assistant`, `/notes`, `/notes/:id`, `/bookmark/:id`, `/settings`, and
+`/analytics`, and keep console errors empty. Theme checks should include
+primary buttons, cards, form controls, nav active state, and reader content.
 
 ---
 

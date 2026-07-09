@@ -100,9 +100,13 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   existing tags through the normalized tag APIs.
 - Settings profile uses the existing profile and password-change routes; Settings
   API keys uses the existing admin key status/update routes and shows an
-  admin-required message for non-admin users.
+  admin-required message for non-admin users. The Gemini section exposes API
+  key, generation model, and base URL runtime settings.
 - Settings connections exposes X status, connect, sync, and disconnect controls
-  through the existing X OAuth and sync routes.
+  through the existing X OAuth and sync routes. When X redirects back to
+  `/settings?section=connections&code=...&state=...`, the browser posts the
+  callback to the existing backend route, cleans the URL, refreshes status, and
+  keeps callback errors visible above the current connection state.
 - `/admin` exposes overview, API usage, user management, system, activity,
   collections, and audit sections for admin users.
 - Extension popup capture includes collection, quick note, and comma-separated
@@ -124,7 +128,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   Standalone notes open in `/notes/:id` and do not expose bookmark-only archive
   controls.
 - `/review`, `/duplicates`, `/knowledge-graph`, and `/analytics` are real
-  product routes, not placeholders.
+  product routes, not placeholders. Analytics renders from the combined
+  `stats`/`topics`/`patterns`/`insights` summary envelope on first paint, updates
+  optional AI insights asynchronously, and must show an in-page error state when
+  the required summary request fails.
 - Custom dialogs use `role="dialog"`, `aria-modal`, focus restoration, Escape
   close, and tab containment.
 - Menus use `aria-haspopup`, `aria-expanded`, `role="menu"`, roving
@@ -141,9 +148,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   the running binary.
 - Use a temporary SQLite database and `SIGNUPS_ENABLED=true` when checking
   first-run browser flows.
-- Cover `/dashboard`, `/inbox`, `/focus`, `/review`, `/assistant`, `/notes`,
-  `/notes/:id`, `/bookmark/:id`, and `/settings` at desktop and 390x844 mobile
-  sizes after second-brain route changes.
+- Cover `/auth`, `/dashboard`, `/analytics`, `/inbox`, `/focus`, `/review`,
+  `/assistant`, `/notes`, `/notes/:id`, `/bookmark/:id`, and `/settings` at
+  desktop and 390x844 mobile sizes after second-brain route or theme changes.
 - Keep console warning/error collection empty during completed checks.
 - Keep screenshot artifacts out of the repository unless a test needs them.
 
