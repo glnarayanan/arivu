@@ -149,13 +149,7 @@ func validateHostFacts(opts Options, facts HostFacts) error {
 	if facts.OSID != "" {
 		switch facts.OSID {
 		case "ubuntu":
-			if facts.OSVersionID != "" && facts.OSVersionID != "22.04" && facts.OSVersionID != "24.04" {
-				return fmt.Errorf("unsupported Ubuntu version %s", facts.OSVersionID)
-			}
 		case "debian":
-			if facts.OSVersionID != "" && facts.OSVersionID != "12" {
-				return fmt.Errorf("unsupported Debian version %s", facts.OSVersionID)
-			}
 		default:
 			return fmt.Errorf("unsupported Linux distribution %s", facts.OSID)
 		}

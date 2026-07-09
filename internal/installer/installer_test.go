@@ -33,6 +33,14 @@ func TestBuildPlanCleanHostUsesManagedCaddy(t *testing.T) {
 	}
 }
 
+func TestBuildPlanAllowsFutureUbuntuVersions(t *testing.T) {
+	facts := cleanFacts()
+	facts.OSVersionID = "26.04"
+	if _, err := BuildPlan(baseOptions(), facts); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestBuildPlanNormalizesEmailAddresses(t *testing.T) {
 	opts := baseOptions()
 	opts.AdminEmail = "Admin <ADMIN@EXAMPLE.COM>"
