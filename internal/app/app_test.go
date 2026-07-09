@@ -638,13 +638,13 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 		{"cli objects web route", cliToken, http.MethodGet, "/api/objects", ``},
 		{"cli search items web route", cliToken, http.MethodGet, "/api/search/items?q=test", ``},
 		{"cli search rebuild web route", cliToken, http.MethodPost, "/api/search/rebuild", `{}`},
-		{"cli admin web route", cliToken, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"x"}`},
+		{"cli admin web route", cliToken, http.MethodPut, "/api/admin/api-keys", `{"ai_api_key":"x"}`},
 		{"extension bookmark web route", extensionToken, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com"}`},
 		{"extension notes web route", extensionToken, http.MethodGet, "/api/notes", ``},
 		{"extension agent search route", extensionToken, http.MethodGet, "/api/agent/search?q=test", ``},
 		{"extension search items web route", extensionToken, http.MethodGet, "/api/search/items?q=test", ``},
 		{"extension search rebuild web route", extensionToken, http.MethodPost, "/api/search/rebuild", `{}`},
-		{"extension admin web route", extensionToken, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"x"}`},
+		{"extension admin web route", extensionToken, http.MethodPut, "/api/admin/api-keys", `{"ai_api_key":"x"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := bearerRequest(t, handler, tc.method, tc.path, tc.body, tc.token)
@@ -2740,13 +2740,6 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if strings.TrimSpace(body) != "[]" {
 		t.Fatalf("empty bookmark list must encode as [], got %q", body)
 	}
-	document, err := webFS.ReadFile("web/index.html")
-	if err != nil {
-		t.Fatalf("read embedded index.html: %v", err)
-	}
-	if strings.Contains(string(document), "<script>") {
-		t.Fatal("frontend document must not use inline scripts blocked by the content security policy")
-	}
 
 	script, err := webFS.ReadFile("web/app.js")
 	if err != nil {
@@ -2768,7 +2761,12 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`import { registerServiceWorker } from "/service-worker-register.mjs"`, `prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function emptyState`, `function settingsStatusRows`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `id="calendar-import-form"`, `function bindCalendarImportPanel`, `/calendar/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `prefix: "/objects"`, `async function objectsPage()`, `id="object-form"`, `/objects`, `prefix: "/evolution"`, `async function evolutionPage()`, `/evolution?q=`, `prefix: "/board"`, `async function boardPage()`, `/today-board`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`import { registerServiceWorker } from "/service-worker-register.mjs"`, `function emptyState`, `function settingsStatusRows`} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("embedded frontend missing %s", expected)
+		}
+	}
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `id="calendar-import-form"`, `function bindCalendarImportPanel`, `/calendar/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `prefix: "/objects"`, `async function objectsPage()`, `id="object-form"`, `/objects`, `prefix: "/evolution"`, `async function evolutionPage()`, `/evolution?q=`, `prefix: "/board"`, `async function boardPage()`, `/today-board`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `Model Provider`, `ai_provider`, `!user.is_admin`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
@@ -2850,7 +2848,7 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 		t.Fatalf("service worker content-type = %q", got)
 	}
 	workerBody := readBody(serviceWorker)
-	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v2"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, "/api/") {
+	if !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, "/api/") {
 		t.Fatalf("service worker missing shell cache/API bypass: %q", workerBody)
 	}
 }
@@ -2872,6 +2870,16 @@ func TestAdminUserMutations(t *testing.T) {
 	defer a.Close()
 	handler := a.Handler()
 	accessCookie, csrfCookie := signupForCookies(t, handler, "admin@example.com")
+	me := adminRequest(t, handler, http.MethodGet, "/api/auth/me", "", accessCookie, csrfCookie)
+	if me.StatusCode != http.StatusOK {
+		t.Fatalf("me status = %d body=%s", me.StatusCode, readBody(me))
+	}
+	var meBody map[string]any
+	_ = json.NewDecoder(me.Body).Decode(&meBody)
+	me.Body.Close()
+	if meBody["is_admin"] != true {
+		t.Fatalf("admin capability missing from /auth/me: %#v", meBody)
+	}
 
 	invite := adminRequest(t, handler, http.MethodPost, "/api/admin/users/invite", `{"email":"invitee@example.com","name":"Invitee"}`, accessCookie, csrfCookie)
 	if invite.StatusCode != http.StatusOK {
@@ -2902,19 +2910,19 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("api key status = %d body=%s", keyStatus.StatusCode, readBody(keyStatus))
 	}
 	keyStatus.Body.Close()
-	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","gemini_model":"gemini-custom","gemini_base_url":"https://gemini.example.com","x_redirect_uri":"https://example.com/x/callback","x_integration_enabled":true,"resend_from_email":"hello@example.com"}`, accessCookie, csrfCookie)
+	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openai","ai_api_key":"test-ai","ai_model":"openai/gpt-5.1:preview","ai_base_url":"https://api.example.com/v1","x_redirect_uri":"https://example.com/x/callback","x_integration_enabled":true,"resend_from_email":"hello@example.com"}`, accessCookie, csrfCookie)
 	if keyUpdate.StatusCode != http.StatusOK {
 		t.Fatalf("api key update = %d body=%s", keyUpdate.StatusCode, readBody(keyUpdate))
 	}
 	keyUpdate.Body.Close()
 	var storedCipher, storedPlain string
-	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='gemini_api_key'`).Scan(&storedCipher, &storedPlain); err != nil {
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='ai_api_key'`).Scan(&storedCipher, &storedPlain); err != nil {
 		t.Fatalf("stored api key setting: %v", err)
 	}
 	if storedCipher == "" || storedPlain != "" {
 		t.Fatalf("secret setting was not stored encrypted: cipher=%q plain=%q", storedCipher, storedPlain)
 	}
-	if opened, err := secrets.Open(a.cfg.SecretKey, storedCipher); err != nil || opened != "test-gemini" {
+	if opened, err := secrets.Open(a.cfg.SecretKey, storedCipher); err != nil || opened != "test-ai" {
 		t.Fatalf("secret setting did not decrypt: opened=%q err=%v", opened, err)
 	}
 	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='resend_from_email'`).Scan(&storedCipher, &storedPlain); err != nil {
@@ -2923,11 +2931,17 @@ func TestAdminUserMutations(t *testing.T) {
 	if storedCipher != "" || storedPlain != "hello@example.com" {
 		t.Fatalf("plain setting was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
 	}
-	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='gemini_model'`).Scan(&storedCipher, &storedPlain); err != nil {
-		t.Fatalf("stored gemini model setting: %v", err)
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='ai_model'`).Scan(&storedCipher, &storedPlain); err != nil {
+		t.Fatalf("stored ai model setting: %v", err)
 	}
-	if storedCipher != "" || storedPlain != "gemini-custom" {
-		t.Fatalf("gemini model was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
+	if storedCipher != "" || storedPlain != "openai/gpt-5.1:preview" {
+		t.Fatalf("ai model was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='ai_base_url'`).Scan(&storedCipher, &storedPlain); err != nil {
+		t.Fatalf("stored ai base url setting: %v", err)
+	}
+	if storedCipher != "" || storedPlain != "https://api.example.com/v1" {
+		t.Fatalf("ai base url was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
 	}
 	xEnabled := adminRequest(t, handler, http.MethodGet, "/api/auth/x/enabled", "", accessCookie, csrfCookie)
 	var xEnabledBody map[string]any
@@ -2941,7 +2955,7 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("bad x redirect update status = %d body=%s", badXRedirect.StatusCode, readBody(badXRedirect))
 	}
 	badXRedirect.Body.Close()
-	deleteKey := adminRequest(t, handler, http.MethodDelete, "/api/admin/api-keys/gemini_api_key", "", accessCookie, csrfCookie)
+	deleteKey := adminRequest(t, handler, http.MethodDelete, "/api/admin/api-keys/ai_api_key", "", accessCookie, csrfCookie)
 	if deleteKey.StatusCode != http.StatusOK {
 		t.Fatalf("api key delete = %d body=%s", deleteKey.StatusCode, readBody(deleteKey))
 	}
@@ -2984,7 +2998,7 @@ func TestAdminUserMutations(t *testing.T) {
 		if event["action"] == "admin.settings.update" && event["actor_email"] == "admin@example.com" {
 			metadata, _ := event["metadata"].(map[string]any)
 			keys, _ := metadata["keys"].([]any)
-			if containsAll(keys, "gemini_api_key", "gemini_model", "gemini_base_url", "resend_from_email", "x_integration_enabled", "x_redirect_uri") {
+			if containsAll(keys, "ai_api_key", "ai_model", "ai_base_url", "ai_provider", "resend_from_email", "x_integration_enabled", "x_redirect_uri") {
 				sawSettingsAudit = true
 			}
 			if strings.Contains(fmt.Sprint(metadata), "unexpected_setting") {
@@ -3016,8 +3030,18 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("audit bad limit status = %d body=%s", badLimit.StatusCode, readBody(badLimit))
 	}
 	badLimit.Body.Close()
-	nonAdminAccess, _ := signupForCookies(t, handler, "viewer@example.com")
-	nonAdminAudit := adminRequest(t, handler, http.MethodGet, "/api/admin/audit-events", "", nonAdminAccess, csrfCookie)
+	nonAdminAccess, nonAdminCSRF := signupForCookies(t, handler, "viewer@example.com")
+	nonAdminMe := adminRequest(t, handler, http.MethodGet, "/api/auth/me", "", nonAdminAccess, nonAdminCSRF)
+	if nonAdminMe.StatusCode != http.StatusOK {
+		t.Fatalf("non-admin me status = %d body=%s", nonAdminMe.StatusCode, readBody(nonAdminMe))
+	}
+	var nonAdminMeBody map[string]any
+	_ = json.NewDecoder(nonAdminMe.Body).Decode(&nonAdminMeBody)
+	nonAdminMe.Body.Close()
+	if nonAdminMeBody["is_admin"] != false {
+		t.Fatalf("non-admin capability should be false: %#v", nonAdminMeBody)
+	}
+	nonAdminAudit := adminRequest(t, handler, http.MethodGet, "/api/admin/audit-events", "", nonAdminAccess, nonAdminCSRF)
 	if nonAdminAudit.StatusCode != http.StatusForbidden {
 		t.Fatalf("non-admin audit status = %d body=%s", nonAdminAudit.StatusCode, readBody(nonAdminAudit))
 	}

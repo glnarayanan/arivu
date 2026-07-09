@@ -47,6 +47,7 @@ All notable changes to this project will be documented in this file.
 - Added Markdown/Obsidian-style bookmark export and a real Settings import/export panel.
 - Added Settings tag management for canonical tags and aliases.
 - Added Settings profile and API key panels backed by the existing profile, password-change, and admin key routes.
+- Added model-provider settings for text generation with OpenAI-compatible, Anthropic, Gemini, local, and custom presets; non-admin users no longer see the API Keys settings tab.
 - Added Settings connection controls for X status, connect, sync, and disconnect using the existing X routes.
 - Added an admin audit log API and Admin page panel for recent sensitive account, settings, and auth events.
 - Added a standalone Notes screen for creating, editing, and deleting freeform notes.
@@ -153,7 +154,7 @@ All notable changes to this project will be documented in this file.
 - Runtime app settings now cover public URL, signup policy, and secure-cookie
   behavior through the same SQLite override path used by provider settings.
 - The Admin page now includes a Settings tab for public URL, signup policy,
-  secure-cookie state, Gemini, Resend, and X configuration.
+  secure-cookie state, model-provider, Resend, and X configuration.
 - The Admin page now exposes overview, API usage, users, system, activity,
   collections, and audit sections backed by SQLite-native admin endpoints.
 - Admin password reset now uses the same Argon2id password storage as user

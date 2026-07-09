@@ -111,8 +111,8 @@ The same Settings import tab can also turn documents and media transcripts into
 searchable notes. Upload an EPUB, PDF, plain text, Markdown, HTML file, or image,
 or paste a YouTube/video transcript or OCR text. Arivu stores the result as a
 normal note with a `media:*` source so it appears in Inbox, search, export, and
-review. Image uploads use pasted OCR text when provided; if Gemini is configured,
-Arivu can attempt image text extraction automatically.
+review. Image uploads use pasted OCR text when provided; if the configured model
+provider is Gemini, Arivu can attempt image text extraction automatically.
 
 Calendar imports accept pasted ICS text and create meeting objects with UID,
 start, end, location, description, and source fields. Full JSON backups include
@@ -132,6 +132,6 @@ Legacy Arivu migrations use the JSON export path documented in
 Admins are listed in `ADMIN_EMAILS`. Admin users can manage provider settings,
 inspect audit events, and review system status from `/admin`.
 
-Provider integrations are optional. Without Gemini, Arivu still stores
-bookmarks, notes, tags, links, search, review, tasks, reminders, imports, and
-exports using local deterministic processing.
+Provider integrations are optional. Without a configured model provider, Arivu
+still stores bookmarks, notes, tags, links, search, review, tasks, reminders,
+imports, and exports using local deterministic processing.

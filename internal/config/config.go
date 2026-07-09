@@ -19,6 +19,10 @@ type Config struct {
 	AdminEmails    map[string]bool
 	SignupEnabled  bool
 	CookieSecure   bool
+	AIProvider     string
+	AIAPIKey       string
+	AIModel        string
+	AIBaseURL      string
 	GeminiAPIKey   string
 	GeminiModel    string
 	GeminiBaseURL  string
@@ -46,6 +50,10 @@ func FromEnv() Config {
 		AdminEmails:    emailSet(os.Getenv("ADMIN_EMAILS")),
 		SignupEnabled:  envBool("SIGNUPS_ENABLED", true),
 		CookieSecure:   envBool("COOKIE_SECURE", false),
+		AIProvider:     os.Getenv("AI_PROVIDER"),
+		AIAPIKey:       os.Getenv("AI_API_KEY"),
+		AIModel:        os.Getenv("AI_MODEL"),
+		AIBaseURL:      os.Getenv("AI_BASE_URL"),
 		GeminiAPIKey:   os.Getenv("GEMINI_API_KEY"),
 		GeminiModel:    env("GEMINI_MODEL", DefaultGeminiModel),
 		GeminiBaseURL:  os.Getenv("GEMINI_BASE_URL"),

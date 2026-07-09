@@ -120,13 +120,23 @@ listen address, SQLite path, public URL, secure-cookie default, signup default,
 admin emails, and `SECRET_KEY`.
 
 Routine settings should be changed in Admin > Settings. Runtime-editable values
-include public URL, signup policy, secure-cookie status, Gemini, Resend, and X
-settings. Secret provider values are encrypted in SQLite. Gemini deployments can
-override the generation model with `GEMINI_MODEL` or the `gemini_model` runtime
-setting, and can override the provider endpoint with `GEMINI_BASE_URL` or
-`gemini_base_url`. When unset, Arivu uses Google's documented Gemini API base
-URL, `https://generativelanguage.googleapis.com`. Gemini base URLs must use
-HTTPS unless they point to localhost for development or tests.
+include public URL, signup policy, secure-cookie status, model-provider, Resend,
+and X settings. Secret provider values are encrypted in SQLite. Text generation
+uses `AI_PROVIDER`, `AI_API_KEY`, `AI_MODEL`, and `AI_BASE_URL` or the matching
+SQLite runtime settings `ai_provider`, `ai_api_key`, `ai_model`, and
+`ai_base_url`. The selected provider supplies a sensible default Base URL that
+admins can override. Legacy `GEMINI_API_KEY`, `GEMINI_MODEL`,
+`GEMINI_BASE_URL`, and `gemini_*` runtime settings still backfill Gemini
+deployments. Remote model-provider base URLs must use HTTPS unless they point to
+localhost for development or tests.
+
+Built-in text-generation presets currently include OpenAI, OpenRouter, xAI,
+Gemini, Anthropic, DeepSeek, Mistral, Groq, Together AI, Fireworks AI,
+Perplexity, Cerebras, Z.ai, Hugging Face, LM Studio, Ollama/local, MiniMax, and
+Custom. OpenAI-compatible providers use `/chat/completions`; Anthropic uses the
+Messages API; Gemini uses the native Gemini generation endpoint. Provider-specific
+embeddings and image OCR are intentionally deferred except for the existing
+Gemini-backed paths. OpenCode-style client or proxy setups should use Custom.
 
 ## Backup, Restore, And Upgrade Safety
 

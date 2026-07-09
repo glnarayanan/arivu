@@ -45,11 +45,11 @@ with foreign keys.
 ## Second-Brain Defaults
 
 - AI fields are nullable. Saves, notes, annotations, tags, search, graph, review,
-  and exports must keep working without a Gemini key.
+  and exports must keep working without a configured model-provider key.
 - New saves create an `ai_summaries` placeholder and a visible background job.
   When processing succeeds, deterministic local extraction fills summary bullets,
   highlight quotes, suggested tags, graph entities, and graph concepts. Gemini
-  embeddings are added only when configured.
+  embeddings are added only when the selected provider is Gemini and configured.
 - New bookmarks and notes enter `item_states` as `inbox`. Users can move them
   through `processing`, `processed`, and `archived` without changing the source
   bookmark or note content.

@@ -80,7 +80,8 @@ func New(cfg config.Config) (*App, error) {
 	a.auth.SetRuntimeSettings(a.runtime.Effective)
 	a.jobs = jobs.New(db)
 	a.fetcher = safefetch.NewWithUserAgent(cfg.FetchUserAgent)
-	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{APIKey: cfg.GeminiAPIKey, Model: cfg.GeminiModel, BaseURL: cfg.GeminiBaseURL})
+	initialAI := runtimeconfig.FromConfig(cfg)
+	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{Provider: initialAI.AIProvider, APIKey: initialAI.AIAPIKey, Model: initialAI.AIModel, BaseURL: initialAI.AIBaseURL})
 	a.bookmarks.SetGeminiProvider(a.geminiClient)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
@@ -250,15 +251,11 @@ func (a *App) Handler() http.Handler {
 }
 
 func (a *App) geminiClient(ctx context.Context) providers.GeminiClient {
-	key := a.cfg.GeminiAPIKey
-	model := a.cfg.GeminiModel
-	baseURL := a.cfg.GeminiBaseURL
+	effective := runtimeconfig.FromConfig(a.cfg)
 	if effective, err := a.runtime.Effective(ctx); err == nil {
-		key = effective.GeminiAPIKey
-		model = effective.GeminiModel
-		baseURL = effective.GeminiBaseURL
+		return providers.GeminiClient{Provider: effective.AIProvider, APIKey: effective.AIAPIKey, Model: effective.AIModel, BaseURL: effective.AIBaseURL, Recorder: a.usage.RecordAI}
 	}
-	return providers.GeminiClient{APIKey: key, Model: model, BaseURL: baseURL, Recorder: a.usage.RecordGemini}
+	return providers.GeminiClient{Provider: effective.AIProvider, APIKey: effective.AIAPIKey, Model: effective.AIModel, BaseURL: effective.AIBaseURL, Recorder: a.usage.RecordAI}
 }
 
 func (a *App) withUser(next func(http.ResponseWriter, *http.Request, auth.User)) http.HandlerFunc {

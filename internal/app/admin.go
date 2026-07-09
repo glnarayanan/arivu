@@ -256,7 +256,7 @@ func (a *App) adminDeleteSetting(w http.ResponseWriter, r *http.Request, user au
 }
 
 func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.User) {
-	gemini, _ := a.runtime.StatusValue(r.Context(), runtimeconfig.KeyGeminiAPIKey)
+	ai, _ := a.runtime.StatusValue(r.Context(), runtimeconfig.KeyAIAPIKey)
 	usage := a.usage.Snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"requests_today":          usage["requests_total"],
@@ -269,7 +269,8 @@ func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.Us
 		"limits":                  map[string]any{"max_rpm": 0, "max_tpm": 0, "max_daily": 0},
 		"current_date":            time.Now().UTC().Format("2006-01-02"),
 		"provider_usage":          usage,
-		"gemini_configured":       gemini.Configured,
+		"ai_configured":           ai.Configured,
+		"gemini_configured":       ai.Configured,
 		"summaries_completed":     countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='completed'`),
 		"summaries_pending":       countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='pending'`),
 		"summaries_failed":        countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='failed'`),

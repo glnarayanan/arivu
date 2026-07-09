@@ -22,6 +22,7 @@ type GeminiClient struct {
 	APIKey   string
 	BaseURL  string
 	Model    string
+	Provider string
 	HTTP     *http.Client
 	Recorder func(operation string, err error)
 }
@@ -58,7 +59,7 @@ func (c GeminiClient) GenerateInsight(ctx context.Context, prompt string) (strin
 
 func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, data []byte) (result string, err error) {
 	defer func() { c.record("ocr", err) }()
-	if c.APIKey == "" {
+	if c.APIKey == "" || !c.usesGeminiNative() {
 		return "", ErrNotConfigured
 	}
 	mimeType = strings.TrimSpace(strings.Split(mimeType, ";")[0])
@@ -123,7 +124,7 @@ func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, dat
 
 func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskType string) (values []float64, err error) {
 	defer func() { c.record("embedding", err) }()
-	if c.APIKey == "" {
+	if c.APIKey == "" || !c.usesGeminiNative() {
 		return nil, ErrNotConfigured
 	}
 	if strings.TrimSpace(text) == "" {
@@ -191,6 +192,17 @@ func (c GeminiClient) generate(ctx context.Context, operation string, prompt str
 	if promptLimit > 0 && len(prompt) > promptLimit {
 		prompt = prompt[:promptLimit]
 	}
+	switch c.provider().Style {
+	case ProviderStyleAnthropic:
+		return c.generateAnthropic(ctx, prompt)
+	case ProviderStyleOpenAI:
+		return c.generateOpenAICompatible(ctx, prompt)
+	default:
+		return c.generateGemini(ctx, prompt)
+	}
+}
+
+func (c GeminiClient) generateGemini(ctx context.Context, prompt string) (string, error) {
 	body := map[string]any{
 		"contents": []map[string]any{{
 			"parts": []map[string]string{{"text": prompt}},
@@ -235,18 +247,152 @@ func (c GeminiClient) generate(ctx context.Context, operation string, prompt str
 	return decoded.Candidates[0].Content.Parts[0].Text, nil
 }
 
+func (c GeminiClient) generateOpenAICompatible(ctx context.Context, prompt string) (string, error) {
+	model := c.model()
+	if model == "" {
+		return "", fmt.Errorf("ai model is required")
+	}
+	baseURL := c.baseURL()
+	if baseURL == "" {
+		return "", fmt.Errorf("ai base url is required")
+	}
+	body := map[string]any{
+		"model": model,
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": prompt,
+		}},
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("ai provider status %d", resp.StatusCode)
+	}
+	var decoded struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return "", err
+	}
+	if len(decoded.Choices) == 0 || strings.TrimSpace(decoded.Choices[0].Message.Content) == "" {
+		return "", fmt.Errorf("ai provider returned no content")
+	}
+	return decoded.Choices[0].Message.Content, nil
+}
+
+func (c GeminiClient) generateAnthropic(ctx context.Context, prompt string) (string, error) {
+	model := c.model()
+	if model == "" {
+		return "", fmt.Errorf("ai model is required")
+	}
+	baseURL := c.baseURL()
+	if baseURL == "" {
+		return "", fmt.Errorf("ai base url is required")
+	}
+	body := map[string]any{
+		"model":      model,
+		"max_tokens": 4096,
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": prompt,
+		}},
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1/messages", &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return "", fmt.Errorf("anthropic status %d", resp.StatusCode)
+	}
+	var decoded struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return "", err
+	}
+	for _, part := range decoded.Content {
+		if strings.TrimSpace(part.Text) != "" {
+			return part.Text, nil
+		}
+	}
+	return "", fmt.Errorf("anthropic returned no content")
+}
+
 func (c GeminiClient) record(operation string, err error) {
 	if c.Recorder != nil {
 		c.Recorder(operation, err)
 	}
 }
 
+func (c GeminiClient) httpClient() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return &http.Client{Timeout: 30 * time.Second}
+}
+
+func (c GeminiClient) provider() ModelProvider {
+	return ModelProviderDefinition(c.Provider)
+}
+
+func (c GeminiClient) usesGeminiNative() bool {
+	return c.provider().Style == ProviderStyleGemini
+}
+
+func (c GeminiClient) baseURL() string {
+	base := strings.TrimSpace(c.BaseURL)
+	if base != "" {
+		return strings.TrimRight(base, "/")
+	}
+	return strings.TrimRight(c.provider().BaseURL, "/")
+}
+
+func (c GeminiClient) model() string {
+	model := strings.TrimSpace(c.Model)
+	if model != "" {
+		return model
+	}
+	return strings.TrimSpace(c.provider().DefaultModel)
+}
+
 func (c GeminiClient) endpoint() string {
-	base := c.BaseURL
+	base := c.baseURL()
 	if base == "" {
 		base = config.DefaultGeminiBaseURL
 	}
-	model := strings.TrimSpace(c.Model)
+	model := c.model()
 	if model == "" {
 		model = config.DefaultGeminiModel
 	}
@@ -254,7 +400,7 @@ func (c GeminiClient) endpoint() string {
 }
 
 func (c GeminiClient) embeddingEndpoint() string {
-	base := c.BaseURL
+	base := c.baseURL()
 	if base == "" {
 		base = config.DefaultGeminiBaseURL
 	}

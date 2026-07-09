@@ -8,6 +8,26 @@ const state = {
 };
 const offlineQueueKey = "arivu.offline.bookmarks";
 const offlineSnapshotKey = "arivu.offline.snapshots";
+const modelProviderPresets = [
+  { id: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", defaultModel: "" },
+  { id: "openrouter", label: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", defaultModel: "~openai/gpt-latest" },
+  { id: "xai", label: "xAI", baseURL: "https://api.x.ai/v1", defaultModel: "grok-4.5" },
+  { id: "gemini", label: "Gemini", baseURL: "https://generativelanguage.googleapis.com", defaultModel: "gemini-2.5-flash" },
+  { id: "anthropic", label: "Anthropic", baseURL: "https://api.anthropic.com", defaultModel: "" },
+  { id: "deepseek", label: "DeepSeek", baseURL: "https://api.deepseek.com", defaultModel: "deepseek-v4-pro" },
+  { id: "mistral", label: "Mistral", baseURL: "https://api.mistral.ai/v1", defaultModel: "mistral-large-latest" },
+  { id: "groq", label: "Groq", baseURL: "https://api.groq.com/openai/v1", defaultModel: "" },
+  { id: "together", label: "Together AI", baseURL: "https://api.together.ai/v1", defaultModel: "" },
+  { id: "fireworks", label: "Fireworks AI", baseURL: "https://api.fireworks.ai/inference/v1", defaultModel: "" },
+  { id: "perplexity", label: "Perplexity", baseURL: "https://api.perplexity.ai", defaultModel: "sonar-pro" },
+  { id: "cerebras", label: "Cerebras", baseURL: "https://api.cerebras.ai/v1", defaultModel: "" },
+  { id: "zai", label: "Z.ai", baseURL: "https://api.z.ai/api/paas/v4", defaultModel: "glm-4.5" },
+  { id: "huggingface", label: "Hugging Face", baseURL: "https://router.huggingface.co/v1", defaultModel: "" },
+  { id: "lmstudio", label: "LM Studio", baseURL: "http://localhost:1234/v1", defaultModel: "" },
+  { id: "ollama", label: "Ollama/local", baseURL: "http://localhost:11434/v1", defaultModel: "" },
+  { id: "minimax", label: "MiniMax", baseURL: "https://api.minimax.io/v1", defaultModel: "" },
+  { id: "custom", label: "Custom", baseURL: "", defaultModel: "" },
+];
 
 const routes = [
   { prefix: "/auth", page: authPage, access: "public" },
@@ -501,7 +521,7 @@ function shell(title, content) {
     ["/duplicates", "Duplicates"],
     ["/settings", "Settings"],
     ["/admin", "Admin"],
-  ];
+  ].filter(([href]) => href !== "/admin" || state.user?.is_admin);
   return `
     <a class="skip-link" href="#main-content">Skip to content</a>
     <div class="shell">
@@ -3018,16 +3038,17 @@ async function deleteAnnotation(button) {
 }
 
 async function settingsPage() {
-  await requireUser();
-  const section = new URLSearchParams(location.search).get("section") || "profile";
+  const user = await requireUser();
+  const requestedSection = new URLSearchParams(location.search).get("section") || "profile";
   const tabs = [
     ["profile", "Profile", "Manage your profile and account access."],
     ["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."],
     ["tags", "Tags", "Keep tag names consistent and merge aliases into one tag."],
     ["connections", "Connections", "Connect provider accounts and sync saved items."],
-    ["api-keys", "Provider settings", "Configure optional AI, email, and X connections."],
   ];
-  const active = tabs.some(([id]) => id === section) ? section : "profile";
+  if (user.is_admin) tabs.push(["api-keys", "Provider settings", "Configure optional AI, email, and X connections."]);
+  if (requestedSection === "api-keys" && !user.is_admin) history.replaceState({}, "", "/settings?section=profile");
+  const active = tabs.some(([id]) => id === requestedSection) ? requestedSection : "profile";
   setRoot(shell("Settings", `<section class="tabs" id="settings-tabs">
     <div class="tab-list" role="tablist" aria-label="Settings sections">
       ${tabs.map(([id, label]) => `<button type="button" role="tab" id="tab-${id}" aria-controls="panel-${id}" aria-selected="${id === active}">${label}</button>`).join("")}
@@ -3039,7 +3060,7 @@ async function settingsPage() {
   bindImportPanel();
   bindTagSettingsPanel();
   bindConnectionsPanel();
-  bindAPIKeysPanel();
+  if (user.is_admin) bindAPIKeysPanel();
 }
 
 function settingsPanel(id) {
@@ -3224,7 +3245,7 @@ async function bindConnectionsPanel() {
     try {
       const enabled = await api("/auth/x/enabled");
       if (!enabled.enabled) {
-        status.innerHTML = `<p class="meta">X is disabled. Add X client keys in API Keys, then enable X integration.</p>`;
+        status.innerHTML = `<p class="meta">X is disabled. Ask an admin to configure X client keys and enable X integration.</p>`;
         connect.disabled = true;
         sync.disabled = true;
         disconnect.disabled = true;
@@ -3308,6 +3329,49 @@ function xConnectionStatus(status) {
     <p class="meta">Status: ${escapeHTML(status.sync_status || "idle")} · Synced: ${Number(status.total_synced || 0)}${status.last_sync_at ? ` · Last sync: ${escapeHTML(status.last_sync_at)}` : ""}</p>`;
 }
 
+function modelProviderPreset(id) {
+  return modelProviderPresets.find((provider) => provider.id === id) || modelProviderPresets.find((provider) => provider.id === "custom");
+}
+
+function modelProviderOptions(selected = "gemini") {
+  return modelProviderPresets.map((provider) => `<option value="${escapeHTML(provider.id)}"${provider.id === selected ? " selected" : ""}>${escapeHTML(provider.label)}</option>`).join("");
+}
+
+function updateModelProviderHints(form, prefix) {
+  const providerField = form.querySelector(`#${prefix}ai-provider`);
+  const modelField = form.querySelector(`#${prefix}ai-model`);
+  const baseURLField = form.querySelector(`#${prefix}ai-base-url`);
+  if (!providerField || !modelField || !baseURLField) return;
+  const preset = modelProviderPreset(providerField.value);
+  modelField.placeholder = preset.defaultModel || "provider-model-id";
+  baseURLField.placeholder = preset.baseURL || "https://api.example.com/v1";
+}
+
+function setModelProviderFields(form, prefix, settings) {
+  const providerField = form.querySelector(`#${prefix}ai-provider`);
+  const modelField = form.querySelector(`#${prefix}ai-model`);
+  const baseURLField = form.querySelector(`#${prefix}ai-base-url`);
+  if (!providerField || !modelField || !baseURLField) return;
+  const providerID = settings.ai_provider?.value || providerField.value || "gemini";
+  const preset = modelProviderPreset(providerID);
+  providerField.value = preset.id;
+  modelField.value = settings.ai_model?.value || "";
+  baseURLField.value = settings.ai_base_url?.value || preset.baseURL || "";
+  updateModelProviderHints(form, prefix);
+}
+
+function bindModelProviderDefaults(form, prefix) {
+  const providerField = form.querySelector(`#${prefix}ai-provider`);
+  const baseURLField = form.querySelector(`#${prefix}ai-base-url`);
+  if (!providerField || !baseURLField) return;
+  providerField.addEventListener("change", () => {
+    const preset = modelProviderPreset(providerField.value);
+    baseURLField.value = preset.baseURL || "";
+    updateModelProviderHints(form, prefix);
+  });
+  updateModelProviderHints(form, prefix);
+}
+
 function apiKeysPanel() {
   return `<section class="split">
     <section class="panel">
@@ -3316,9 +3380,10 @@ function apiKeysPanel() {
     </section>
     <form class="panel form" id="api-keys-form">
       <h3>Update keys</h3>
-      <div class="field"><label for="gemini-api-key">Gemini API key</label><input id="gemini-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
-      <div class="field"><label for="gemini-model">Gemini model</label><input id="gemini-model" type="text" autocomplete="off" placeholder="gemini-2.5-flash"></div>
-      <div class="field"><label for="gemini-base-url">Gemini base URL</label><input id="gemini-base-url" type="url" autocomplete="off" placeholder="https://generativelanguage.googleapis.com"></div>
+      <div class="field"><label for="ai-provider">Model Provider</label><select id="ai-provider">${modelProviderOptions()}</select></div>
+      <div class="field"><label for="ai-model">Model</label><input id="ai-model" type="text" autocomplete="off"></div>
+      <div class="field"><label for="ai-api-key">API Key</label><input id="ai-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="ai-base-url">Base URL</label><input id="ai-base-url" type="url" autocomplete="off"></div>
       <div class="field"><label for="resend-api-key">Resend API key</label><input id="resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
       <div class="field"><label for="resend-from-email">Resend from email</label><input id="resend-from-email" type="email" autocomplete="off"></div>
       <div class="field"><label for="x-client-id">X client ID</label><input id="x-client-id" type="text" autocomplete="off"></div>
@@ -3335,6 +3400,7 @@ async function bindAPIKeysPanel() {
   const form = document.querySelector("#api-keys-form");
   const status = document.querySelector("#api-key-status");
   if (!form || !status) return;
+  bindModelProviderDefaults(form, "");
   const refresh = async () => {
     try {
       const keys = await api("/admin/api-keys");
@@ -3355,8 +3421,7 @@ async function bindAPIKeysPanel() {
       });
       document.querySelector("#x-redirect-uri").value = keys.x_redirect_uri?.value || "";
       document.querySelector("#x-integration-enabled").checked = Boolean(keys.x_integration_enabled?.value);
-      document.querySelector("#gemini-model").value = keys.gemini_model?.value || "";
-      document.querySelector("#gemini-base-url").value = keys.gemini_base_url?.value || "";
+      setModelProviderFields(form, "", keys);
       document.querySelector("#resend-from-email").value = keys.resend_from_email?.value || "";
     } catch (err) {
       status.innerHTML = `<p class="meta">${escapeHTML(err.status === 403 ? "Admin access required." : err.message)}</p>`;
@@ -3367,11 +3432,13 @@ async function bindAPIKeysPanel() {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Saving");
     setFormMessage(form);
-    const body = {};
+    const body = {
+      ai_provider: document.querySelector("#ai-provider").value,
+    };
     for (const [key, selector] of Object.entries({
-      gemini_api_key: "#gemini-api-key",
-      gemini_model: "#gemini-model",
-      gemini_base_url: "#gemini-base-url",
+      ai_api_key: "#ai-api-key",
+      ai_model: "#ai-model",
+      ai_base_url: "#ai-base-url",
       resend_api_key: "#resend-api-key",
       x_client_id: "#x-client-id",
       x_client_secret: "#x-client-secret",
@@ -3398,9 +3465,10 @@ async function bindAPIKeysPanel() {
 
 function apiKeyStatus(keys) {
   const labels = {
-    gemini_api_key: "Gemini API key",
-    gemini_model: "Gemini model",
-    gemini_base_url: "Gemini base URL",
+    ai_provider: "Model Provider",
+    ai_model: "Model",
+    ai_api_key: "API Key",
+    ai_base_url: "Base URL",
     resend_api_key: "Resend API key",
     resend_from_email: "Resend from email",
     x_client_id: "X client ID",
@@ -3416,14 +3484,26 @@ function settingsStatusRows(settings, labels, revertAttribute) {
     const item = settings[key] || {};
     const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
     const configured = item.configured || value;
+    const revertKey = settingRevertKey(key, item);
     return `<article class="annotation">
       <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
-      ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-${revertAttribute}="${escapeHTML(key)}">Remove override</button></p>` : ""}
+      ${revertKey ? `<p class="button-row"><button type="button" class="secondary" data-${revertAttribute}="${escapeHTML(revertKey)}">Remove override</button></p>` : ""}
     </article>`;
   }).join("");
 }
 
+function settingRevertKey(key, item) {
+  if (item.source === "database") return key;
+  if (item.source !== "legacy_database") return "";
+  return {
+    ai_api_key: "gemini_api_key",
+    ai_model: "gemini_model",
+    ai_base_url: "gemini_base_url",
+  }[key] || "";
+}
+
 function adminSettingsPanel(settings) {
+  const selectedProvider = settings.ai_provider?.value || "gemini";
   return `<section class="split">
     <section class="panel">
       <h3>Runtime status</h3>
@@ -3435,9 +3515,10 @@ function adminSettingsPanel(settings) {
       <label class="checkbox-row"><input id="admin-signups-enabled" type="checkbox" ${settings.signups_enabled?.value ? "checked" : ""}> Public signups enabled</label>
       <label class="checkbox-row"><input id="admin-cookie-secure" type="checkbox" ${settings.cookie_secure?.value ? "checked" : ""}> Secure browser cookies</label>
       <hr>
-      <div class="field"><label for="admin-gemini-api-key">Gemini API key</label><input id="admin-gemini-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
-      <div class="field"><label for="admin-gemini-model">Gemini model</label><input id="admin-gemini-model" type="text" autocomplete="off" value="${escapeHTML(settings.gemini_model?.value || "")}"></div>
-      <div class="field"><label for="admin-gemini-base-url">Gemini base URL</label><input id="admin-gemini-base-url" type="url" autocomplete="off" value="${escapeHTML(settings.gemini_base_url?.value || "")}"></div>
+      <div class="field"><label for="admin-ai-provider">Model Provider</label><select id="admin-ai-provider">${modelProviderOptions(selectedProvider)}</select></div>
+      <div class="field"><label for="admin-ai-model">Model</label><input id="admin-ai-model" type="text" autocomplete="off" value="${escapeHTML(settings.ai_model?.value || "")}"></div>
+      <div class="field"><label for="admin-ai-api-key">API Key</label><input id="admin-ai-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+      <div class="field"><label for="admin-ai-base-url">Base URL</label><input id="admin-ai-base-url" type="url" autocomplete="off" value="${escapeHTML(settings.ai_base_url?.value || "")}"></div>
       <div class="field"><label for="admin-resend-api-key">Resend API key</label><input id="admin-resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
       <div class="field"><label for="admin-resend-from-email">Resend from email</label><input id="admin-resend-from-email" type="email" autocomplete="off" value="${escapeHTML(settings.resend_from_email?.value || "")}"></div>
       <div class="field"><label for="admin-x-client-id">X client ID</label><input id="admin-x-client-id" type="text" autocomplete="off"></div>
@@ -3455,9 +3536,10 @@ function settingsStatus(settings) {
     app_url: "Public app URL",
     signups_enabled: "Public signups",
     cookie_secure: "Secure cookies",
-    gemini_api_key: "Gemini API key",
-    gemini_model: "Gemini model",
-    gemini_base_url: "Gemini base URL",
+    ai_provider: "Model Provider",
+    ai_model: "Model",
+    ai_api_key: "API Key",
+    ai_base_url: "Base URL",
     resend_api_key: "Resend API key",
     resend_from_email: "Resend from email",
     x_client_id: "X client ID",
@@ -3474,6 +3556,7 @@ function bindAdminSettingsPanel() {
   if (!form || !status) return;
   let mutationBusy = false;
   const field = (selector) => form.querySelector(selector);
+  bindModelProviderDefaults(form, "admin-");
   const refresh = async () => {
     const settings = await api("/admin/settings");
     if (!form.isConnected || !status.isConnected) return;
@@ -3481,8 +3564,7 @@ function bindAdminSettingsPanel() {
     field("#admin-app-url").value = settings.app_url?.value || "";
     field("#admin-signups-enabled").checked = Boolean(settings.signups_enabled?.value);
     field("#admin-cookie-secure").checked = Boolean(settings.cookie_secure?.value);
-    field("#admin-gemini-model").value = settings.gemini_model?.value || "";
-    field("#admin-gemini-base-url").value = settings.gemini_base_url?.value || "";
+    setModelProviderFields(form, "admin-", settings);
     field("#admin-resend-from-email").value = settings.resend_from_email?.value || "";
     field("#admin-x-redirect-uri").value = settings.x_redirect_uri?.value || "";
     field("#admin-x-integration-enabled").checked = Boolean(settings.x_integration_enabled?.value);
@@ -3515,11 +3597,12 @@ function bindAdminSettingsPanel() {
       signups_enabled: field("#admin-signups-enabled").checked,
       cookie_secure: field("#admin-cookie-secure").checked,
       x_integration_enabled: field("#admin-x-integration-enabled").checked,
+      ai_provider: field("#admin-ai-provider").value,
     };
     for (const [key, selector] of Object.entries({
-      gemini_api_key: "#admin-gemini-api-key",
-      gemini_model: "#admin-gemini-model",
-      gemini_base_url: "#admin-gemini-base-url",
+      ai_api_key: "#admin-ai-api-key",
+      ai_model: "#admin-ai-model",
+      ai_base_url: "#admin-ai-base-url",
       resend_api_key: "#admin-resend-api-key",
       x_client_id: "#admin-x-client-id",
       x_client_secret: "#admin-x-client-secret",
@@ -4035,17 +4118,17 @@ function adminOverviewPanel(data) {
 }
 
 function adminUsagePanel(data) {
-  const ops = data.provider_usage?.gemini || {};
+  const ops = data.provider_usage?.ai || data.provider_usage?.gemini || {};
   return `<section class="grid compact-grid">
-    ${adminStat("Gemini calls", data.requests_today, data.gemini_configured ? "Configured" : "Not configured")}
-    ${adminStat("Gemini errors", data.provider_usage?.errors_total || 0, data.provider_usage?.since || "")}
+    ${adminStat("AI calls", data.requests_today, data.ai_configured || data.gemini_configured ? "Configured" : "Not configured")}
+    ${adminStat("AI errors", data.provider_usage?.errors_total || 0, data.provider_usage?.since || "")}
     ${adminStat("Summaries done", data.summaries_completed, `Pending ${formatCount(data.summaries_pending)} · Failed ${formatCount(data.summaries_failed)}`)}
     ${adminStat("Jobs queued", data.background_jobs_queued, `Running ${formatCount(data.background_jobs_running)} · Failed ${formatCount(data.background_jobs_failed)}`)}
   </section>
   <section class="stack">${Object.entries(ops).map(([name, item]) => `<article class="annotation">
     <p><strong>${escapeHTML(name)}</strong> <span class="meta">${formatCount(item.requests)} calls · ${formatCount(item.errors)} errors</span></p>
     ${item.last_error ? `<p class="meta">${escapeHTML(item.last_error)}</p>` : ""}
-  </article>`).join("") || `<p class="meta">No Gemini calls recorded for this process.</p>`}</section>`;
+  </article>`).join("") || `<p class="meta">No AI calls recorded for this process.</p>`}</section>`;
 }
 
 function adminUsersPanel(users, sort, order) {

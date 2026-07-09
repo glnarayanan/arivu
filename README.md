@@ -33,7 +33,8 @@ provider integrations.
 - Web, CLI, and extension sessions are audience-isolated, with CSRF protection
   for browser mutations.
 - Outbound fetching is SSRF-shielded, archived HTML is sanitized on the backend,
-  and provider integrations use direct HTTP clients for Gemini, Resend, and X.
+  and provider integrations use direct HTTP clients for model providers, Resend,
+  and X.
 
 ## Quick Start
 

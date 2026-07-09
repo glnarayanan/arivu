@@ -9,7 +9,7 @@ Arivu is not just a bookmark vault; it is a knowledge engine that processes URL 
 Saving a bookmark initiates several processing stages to build a structured graph:
 
 1. **Extraction**: The `safefetch` engine validates the URL, fetches safe page contents, drops page chrome and script/style data, prefers readable article/main content, and stores sanitized article markup plus normalized article text.
-2. **Analysis**: Clean text drives deterministic reading time, local summaries, highlight candidates, suggested tags, entities, and concepts. Gemini summaries and embeddings are added only when a provider key is configured; local-only summaries are stored with fallback status rather than pretending an AI summary completed.
+2. **Analysis**: Clean text drives deterministic reading time, local summaries, highlight candidates, suggested tags, entities, and concepts. Model-provider summaries are added only when a provider key is configured; Gemini-backed embeddings remain available only for Gemini deployments for now. Local-only summaries are stored with fallback status rather than pretending an AI summary completed.
 3. **Graph Relationships**:
    - Establishes linkages between bookmarks and distinct parsed keywords.
    - Computes intersection degrees to link related bookmarks.
@@ -139,9 +139,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 
 To keep the dependency surface small, Arivu bypasses vendor SDKs. External communication runs through `/internal/providers/` over native standard library `net/http` calls wrapping typed JSON models.
 
-### Gemini (`gemini.go`)
-- **Use Case**: Performs automated summaries, insights, and embedding generation.
-- **Details**: Direct JSON endpoint payload structure targeting Google Gemini endpoints, reading active API key, generation model, and base URL settings from the runtime settings envelope.
+### Model Providers (`gemini.go`, `model_provider.go`)
+- **Use Case**: Performs automated summaries and insights through the configured text-generation provider. Gemini remains the image OCR and embedding provider for now.
+- **Details**: Direct JSON endpoint payloads target Gemini-native generation, OpenAI-compatible chat completions, or Anthropic Messages based on `ai_provider`. Runtime settings read the active Model Provider, Model, API Key, and Base URL from SQLite/env, with legacy Gemini settings used only as Gemini fallbacks.
 
 ### Resend (`resend.go`)
 - **Use Case**: Triggers transactional email verification notices.

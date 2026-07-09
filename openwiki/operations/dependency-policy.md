@@ -12,8 +12,8 @@ library and first-party browser code.
 The module targets Go 1.25 or newer so the patched `golang.org/x/crypto` and
 `golang.org/x/net` lines can be used without carrying known vulnerable versions.
 
-Provider SDKs are not used in the current rewrite. Gemini, Resend, and X are
-called through narrow direct HTTP clients.
+Provider SDKs are not used in the current rewrite. Model providers, Resend, and
+X are called through narrow direct HTTP clients.
 
 ## Supply-Chain Checks
 

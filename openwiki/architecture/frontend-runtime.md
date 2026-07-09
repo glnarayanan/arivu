@@ -106,10 +106,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   route.
 - Settings tags uses native forms to create primary tags and add aliases to
   existing tags through the normalized tag APIs.
-- Settings profile uses the existing profile and password-change routes; Settings
-  API keys uses the existing admin key status/update routes and shows an
-  admin-required message for non-admin users. The Gemini section exposes API
-  key, generation model, and base URL runtime settings.
+- Settings profile uses the existing profile and password-change routes. The
+  API Keys tab is rendered only for admins, uses the existing admin key
+  status/update routes, and exposes generic Model Provider, Model, API Key, and
+  Base URL runtime settings.
 - Settings connections exposes X status, connect, sync, and disconnect controls
   through the existing X OAuth and sync routes. When X redirects back to
   `/settings?section=connections&code=...&state=...`, the browser posts the

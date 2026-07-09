@@ -46,18 +46,19 @@ To achieve high concurrent throughput and protect data integrity, the driver ini
 
 The full tables structure is declared in `/internal/database/schema.sql`. It models:
 - **Core Entities**: `users`, `sessions`, `bookmarks`, `collections`, `collection_bookmarks` (join table).
-- **Processing Outputs**: `ai_summaries` (from Gemini), `bookmark_entities`, and `bookmark_concepts`.
+- **Processing Outputs**: `ai_summaries` (from the configured model provider), `bookmark_entities`, and `bookmark_concepts`.
 - **Integrations**: `import_jobs`, `x_connections`, `oauth_states`.
 - **Durable Controls**: `settings` (encrypted provider secrets plus plain runtime settings), `rate_limits`, `audit_events`, and `jobs`.
 
 `internal/runtimeconfig` resolves provider settings with this precedence:
 SQLite override, environment variable, then default. Admin API key updates write
-to `settings`; Gemini, Resend, and X read effective values at runtime. Gemini
-runtime settings include the encrypted API key plus plain `gemini_model` and
-`gemini_base_url` overrides for deployments that need a different generation
-model or proxy-compatible endpoint. The default Gemini base URL is
-`https://generativelanguage.googleapis.com`. Remote Gemini endpoints must use
-HTTPS; plain HTTP is accepted only for localhost development/test endpoints.
+to `settings`; model providers, Resend, and X read effective values at runtime.
+Text generation uses `ai_provider`, encrypted `ai_api_key`, `ai_model`, and
+`ai_base_url`. Legacy `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_BASE_URL`, and
+the older `gemini_*` SQLite keys remain fallbacks when the selected provider is
+Gemini so current installs keep working. Remote model-provider endpoints must
+use HTTPS; plain HTTP is accepted only for localhost development/test endpoints
+such as LM Studio or Ollama.
 
 ---
 
