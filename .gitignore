@@ -8,6 +8,7 @@ coverage.out
 *.sqlite3-*
 *.db
 *.db-*
+.local/
 
 # Local config and secrets
 .env
