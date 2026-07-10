@@ -31,8 +31,8 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
-  --shadow: 8px 8px 0 var(--ink);
-  --shadow-sm: 4px 4px 0 var(--ink);
+  --shadow: 5px 5px 0 var(--ink);
+  --shadow-sm: 2px 2px 0 var(--ink);
   --ease-out-quart: cubic-bezier(.25, 1, .5, 1);
   --font-display: "Bebas Neue", "Avenir Next Condensed", "Franklin Gothic Medium", Impact, sans-serif;
   --font-body: "DM Sans", "Aptos", "Helvetica Neue", sans-serif;
@@ -71,7 +71,7 @@ body {
   width: 100%;
   height: var(--space-1);
   pointer-events: none;
-  background: linear-gradient(90deg, var(--accent), var(--gold), var(--accent-2));
+  background: var(--accent);
   opacity: 0;
   transform: scaleX(.08);
   transform-origin: left;
@@ -82,11 +82,11 @@ body.is-routing #route-progress {
 }
 
 button {
-  font: 700 .875rem/1.2 var(--font-ui);
+  font: 600 .875rem/1.2 var(--font-ui);
 }
 
 button, .button {
-  border: 2px solid var(--line);
+  border: 1px solid var(--line);
   border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
@@ -102,7 +102,7 @@ button, .button {
   touch-action: manipulation;
 }
 
-button.secondary, .button.secondary { background: var(--panel); color: var(--ink); }
+button.secondary, .button.secondary { background: var(--panel); color: var(--ink); box-shadow: none; }
 button.danger, .button.danger { background: var(--danger); color: var(--on-strong); }
 button:disabled {
   cursor: not-allowed;
@@ -121,8 +121,8 @@ button.icon-button {
 }
 button:focus { outline: none; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible, textarea:focus-visible {
-  outline: 3px solid var(--focus);
-  outline-offset: 3px;
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 
 .skip-link {
@@ -158,7 +158,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .sidebar {
-  border-right: 2px solid var(--ink);
+  border-right: 1px solid var(--ink);
   background: var(--sidebar);
   padding: max(var(--space-5), env(safe-area-inset-top)) var(--space-5) var(--space-5);
   position: sticky;
@@ -168,7 +168,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .brand {
   font-family: var(--font-display);
-  font-size: 2.75rem;
+  font-size: 2.5rem;
   line-height: .85;
   text-transform: uppercase;
   letter-spacing: 0;
@@ -182,8 +182,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .nav a {
   color: var(--ink);
   text-decoration: none;
-  font: 700 .875rem/1 var(--font-ui);
-  border: 2px solid transparent;
+  font: 600 .875rem/1 var(--font-ui);
+  border: 1px solid transparent;
   min-height: 44px;
   display: flex;
   align-items: center;
@@ -194,15 +194,15 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   background: var(--panel);
 }
 .nav a.active {
-  box-shadow: inset 4px 0 0 var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
 }
 
 .stage-tabs a {
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--surface-warning);
   color: var(--ink);
   padding: var(--space-1) var(--space-2);
-  font: 700 .75rem/1.25 var(--font-ui);
+  font: 600 .75rem/1.25 var(--font-ui);
   text-decoration: none;
   text-transform: uppercase;
 }
@@ -255,8 +255,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .headline {
   font-family: var(--font-display);
-  font-size: 4.75rem;
-  line-height: .82;
+  font-size: clamp(3rem, 6vw, 4.25rem);
+  line-height: .88;
   text-transform: uppercase;
   letter-spacing: 0;
   margin: 0;
@@ -266,12 +266,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .panel {
   background: var(--panel);
-  border: 2px solid var(--ink);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--ink);
+  box-shadow: none;
   overflow-wrap: anywhere;
   padding: var(--space-5);
 }
-.panel:where(.reader, .primary-panel, .primary-work, .empty-state) {
+.panel:where(.reader, .primary-panel, .primary-work) {
+  border-width: 2px;
   box-shadow: var(--shadow);
 }
 .panel:where(.quiet-panel, .disclosure-panel) {
@@ -280,7 +281,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .panel h2,
 .panel h3 {
   font-family: var(--font-display);
-  font-weight: 800;
+  font-weight: 700;
   letter-spacing: 0;
   line-height: 1;
   margin: 0 0 var(--space-3);
@@ -312,7 +313,7 @@ details.panel > summary {
   gap: var(--space-3);
   padding: var(--space-4) var(--space-5);
   cursor: pointer;
-  font: 800 1rem/1 var(--font-display);
+  font: 700 1rem/1 var(--font-display);
   letter-spacing: 0;
   list-style: none;
   text-transform: uppercase;
@@ -326,12 +327,12 @@ details.panel > summary::before {
   height: 1.4rem;
   display: inline-grid;
   place-items: center;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--gold);
-  font: 900 1rem/1 var(--font-ui);
+  font: 700 1rem/1 var(--font-ui);
 }
 details.panel[open] > summary {
-  border-bottom: 2px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
   background: var(--surface-warning);
 }
 details.panel[open] > summary::before {
@@ -356,7 +357,7 @@ details.panel[open] > summary::before {
   display: block;
   margin: 0 0 var(--space-2);
   color: var(--muted);
-  font: 700 .75rem/1.2 var(--font-ui);
+  font: 600 .75rem/1.2 var(--font-ui);
   text-transform: uppercase;
 }
 .priority-buttons {
@@ -379,15 +380,15 @@ details.panel[open] > summary::before {
   place-items: center;
   padding: max(var(--space-5), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-5), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
 }
-.auth .panel { width: min(440px, 100%); }
-.auth h1 { font: 800 3.75rem/.86 var(--font-display); margin: 0 0 var(--space-4); text-transform: uppercase; letter-spacing: 0; }
+.auth .panel { width: min(440px, 100%); border-width: 2px; box-shadow: var(--shadow); }
+.auth h1 { font: 700 3.5rem/.9 var(--font-display); margin: 0 0 var(--space-4); text-transform: uppercase; letter-spacing: 0; }
 
 .form {
   display: grid;
   gap: var(--space-4);
 }
 .field { display: grid; gap: var(--space-2); }
-label { font: 700 .875rem/1 var(--font-ui); text-transform: uppercase; }
+label { font: 600 .875rem/1 var(--font-ui); text-transform: uppercase; }
 .checkbox-row {
   display: flex;
   align-items: center;
@@ -399,17 +400,17 @@ label { font: 700 .875rem/1 var(--font-ui); text-transform: uppercase; }
 input, select, textarea {
   width: 100%;
   min-height: 44px;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   border-radius: 0;
   background: var(--field);
   color: var(--ink);
   padding: var(--space-3);
-  font: 600 1rem/1.25 var(--font-ui);
+  font: 500 1rem/1.25 var(--font-ui);
 }
 progress {
   width: 100%;
   height: var(--space-3);
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--panel);
 }
 progress::-webkit-progress-bar { background: var(--panel); }
@@ -424,11 +425,11 @@ input::placeholder, textarea::placeholder {
 }
 .form-message {
   margin: 0;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--panel-strong);
   color: var(--ink);
   padding: var(--space-3);
-  font: 700 .875rem/1.35 var(--font-ui);
+  font: 600 .875rem/1.35 var(--font-ui);
 }
 .form-message-error {
   border-color: var(--danger);
@@ -443,17 +444,17 @@ input::placeholder, textarea::placeholder {
   margin: 0;
   max-width: 100%;
   overflow: auto;
-  border: 2px solid var(--line);
+  border: 1px solid var(--line);
   background: var(--field);
   padding: var(--space-3);
-  font: 600 .8125rem/1.5 var(--font-ui);
+  font: 500 .8125rem/1.5 var(--font-ui);
   white-space: pre-wrap;
 }
 .text-link {
   color: var(--ink);
-  font: 700 .875rem/1.35 var(--font-ui);
-  text-decoration-thickness: 2px;
-  text-underline-offset: 4px;
+  font: 600 .875rem/1.35 var(--font-ui);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 3px;
   width: fit-content;
 }
 
@@ -468,18 +469,18 @@ input::placeholder, textarea::placeholder {
 }
 .toolbar details {
   flex: 1 1 100%;
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--surface-quiet);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
 }
 .toolbar summary {
   cursor: pointer;
   padding: var(--space-3);
-  font: 800 .875rem/1 var(--font-ui);
+  font: 600 .875rem/1 var(--font-ui);
   text-transform: uppercase;
 }
 .toolbar details[open] summary {
-  border-bottom: 2px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
 }
 .toolbar details input,
 .toolbar details select {
@@ -506,13 +507,13 @@ input::placeholder, textarea::placeholder {
   min-height: 170px;
 }
 .bookmark h2 {
-  font: 800 1.375rem/1 var(--font-display);
+  font: 700 1.375rem/1 var(--font-display);
   text-transform: uppercase;
   letter-spacing: 0;
   margin: 0;
 }
 .meta {
-  font: 600 .875rem/1.4 var(--font-ui);
+  font: 500 .875rem/1.4 var(--font-ui);
   color: var(--muted);
 }
 .stack {
@@ -543,8 +544,8 @@ input::placeholder, textarea::placeholder {
   box-shadow: none;
 }
 .table-wrap {
-  border: 2px solid var(--ink);
-  box-shadow: var(--shadow-sm);
+  border: 1px solid var(--ink);
+  box-shadow: none;
   overflow-x: auto;
   margin-top: var(--space-5);
   background: var(--panel);
@@ -556,7 +557,7 @@ input::placeholder, textarea::placeholder {
 }
 .data-table th,
 .data-table td {
-  border-bottom: 2px solid var(--line-soft);
+  border-bottom: 1px solid var(--line-soft);
   padding: var(--space-3);
   text-align: left;
   vertical-align: top;
@@ -564,11 +565,11 @@ input::placeholder, textarea::placeholder {
 .data-table th {
   background: var(--ink);
   color: var(--on-strong);
-  font: 700 .75rem/1.2 var(--font-ui);
+  font: 600 .75rem/1.2 var(--font-ui);
   text-transform: uppercase;
 }
 .data-table td {
-  font: 600 .875rem/1.35 var(--font-ui);
+  font: 500 .875rem/1.35 var(--font-ui);
 }
 .chips {
   display: flex;
@@ -577,11 +578,11 @@ input::placeholder, textarea::placeholder {
 }
 .chips span,
 .chips a {
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--surface-warning);
   color: var(--ink);
   padding: var(--space-1) var(--space-2);
-  font: 700 .75rem/1.25 var(--font-ui);
+  font: 600 .75rem/1.25 var(--font-ui);
   text-decoration: none;
   text-transform: uppercase;
 }
@@ -593,9 +594,9 @@ input::placeholder, textarea::placeholder {
 }
 .insight-strip,
 .annotation {
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--panel-strong);
-  box-shadow: var(--shadow-sm);
+  box-shadow: none;
   padding: var(--space-4);
 }
 .insight-strip {
@@ -615,7 +616,7 @@ input::placeholder, textarea::placeholder {
 }
 .annotation blockquote {
   margin: 0;
-  border: 2px solid var(--line-soft);
+  border: 1px solid var(--line-soft);
   background: var(--surface-warning);
   padding: var(--space-3);
   font-size: 1.125rem;
@@ -626,16 +627,16 @@ input::placeholder, textarea::placeholder {
 }
 #job-status:not([hidden]) {
   display: block;
-  border: 2px dashed var(--ink);
+  border: 1px dashed var(--ink);
   background: var(--surface-info);
   padding: var(--space-3);
-  font: 700 .875rem/1.4 var(--font-ui);
+  font: 600 .875rem/1.4 var(--font-ui);
 }
 .empty-state {
   background: var(--panel-strong);
 }
 .empty-state h2 {
-  font: 800 1.875rem/.98 var(--font-display);
+  font: 700 1.75rem/1 var(--font-display);
   text-transform: uppercase;
   letter-spacing: 0;
   margin: var(--space-2) 0;
@@ -662,7 +663,7 @@ input::placeholder, textarea::placeholder {
 .reader-jump-highlight {
   background: var(--highlight);
   color: var(--ink);
-  outline: 2px solid var(--ink);
+  outline: 1px solid var(--ink);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -675,7 +676,7 @@ input::placeholder, textarea::placeholder {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  border-bottom: 2px solid var(--ink);
+  border-bottom: 1px solid var(--ink);
   padding-bottom: var(--space-3);
 }
 .tab-list [role="tab"] {
@@ -697,11 +698,11 @@ input::placeholder, textarea::placeholder {
   z-index: var(--z-toast);
 }
 .toast {
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--panel);
   box-shadow: var(--shadow-sm);
   padding: var(--space-3);
-  font: 700 .875rem/1.25 var(--font-ui);
+  font: 600 .875rem/1.25 var(--font-ui);
   position: relative;
   overflow: hidden;
 }
@@ -751,7 +752,7 @@ input::placeholder, textarea::placeholder {
   gap: var(--space-4);
 }
 .dialog h2 {
-  font: 800 2rem/.98 var(--font-display);
+  font: 700 1.875rem/1 var(--font-display);
   text-transform: uppercase;
   letter-spacing: 0;
   margin: 0;
@@ -766,7 +767,7 @@ input::placeholder, textarea::placeholder {
 }
 .command-palette section,
 .command-palette form {
-  border-top: 2px solid var(--line-soft);
+  border-top: 1px solid var(--line-soft);
   padding-top: var(--space-4);
 }
 .command-palette section:first-child {
@@ -774,7 +775,7 @@ input::placeholder, textarea::placeholder {
   padding-top: 0;
 }
 .command-palette h3 {
-  font: 800 1rem/1 var(--font-ui);
+  font: 600 1rem/1 var(--font-ui);
   margin: 0 0 var(--space-3);
   text-transform: uppercase;
   letter-spacing: 0;
@@ -787,7 +788,7 @@ input::placeholder, textarea::placeholder {
   min-width: 180px;
   max-width: min(20rem, calc(100vw - 2 * var(--space-4)));
   gap: var(--space-2);
-  border: 2px solid var(--ink);
+  border: 1px solid var(--ink);
   background: var(--panel);
   box-shadow: var(--shadow-sm);
   padding: var(--space-2);
@@ -807,14 +808,21 @@ input::placeholder, textarea::placeholder {
 }
 
 @media (max-width: 760px) {
-  .shell { grid-template-columns: 1fr; }
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    overflow-x: clip;
+  }
   .sidebar {
     position: sticky;
     top: 0;
     z-index: 20;
+    width: 100%;
+    min-width: 0;
     height: auto;
+    overflow: hidden;
     border-right: 0;
-    border-bottom: 2px solid var(--ink);
+    border-bottom: 1px solid var(--ink);
     padding: max(var(--space-3), env(safe-area-inset-top)) var(--space-4) var(--space-3);
   }
   .brand {
@@ -837,9 +845,9 @@ input::placeholder, textarea::placeholder {
     white-space: nowrap;
   }
   .nav a.active {
-    box-shadow: inset 0 -4px 0 var(--accent);
+    box-shadow: inset 0 -3px 0 var(--accent);
   }
-  .main { padding: var(--space-5); }
+  .main { width: 100%; max-width: 100vw; padding: var(--space-5); }
   .topbar { align-items: flex-start; flex-direction: column; }
   .top-actions {
     width: 100%;
@@ -877,7 +885,7 @@ input::placeholder, textarea::placeholder {
     transition: background-color .18s var(--ease-out-quart), color .18s var(--ease-out-quart), border-color .18s var(--ease-out-quart), opacity .18s var(--ease-out-quart), transform .18s var(--ease-out-quart);
   }
   button:not(:disabled):active, .button:active {
-    transform: translate(2px, 2px);
+    transform: translate(1px, 1px);
     box-shadow: 1px 1px 0 var(--ink);
   }
   .menu, .dialog, .toast { animation: hardReveal .22s var(--ease-out-quart) both; }
@@ -885,15 +893,15 @@ input::placeholder, textarea::placeholder {
   body.is-routing #route-progress { animation: routeSweep .9s var(--ease-out-quart) infinite; }
   @media (hover: hover) {
     button:hover:not(:disabled), .button:hover, .bookmark:hover {
-      transform: translate(-1px, -1px);
-      box-shadow: var(--shadow);
+      transform: translateY(-1px);
+      box-shadow: var(--shadow-sm);
     }
     .nav a:hover, .menu [role="menuitem"]:hover {
       transform: translateX(2px);
     }
   }
   @keyframes hardReveal {
-    from { opacity: 0; transform: translateY(10px); }
+    from { opacity: 0; transform: translateY(6px); }
     to { opacity: 1; transform: translateY(0); }
   }
   @keyframes routeSweep {
