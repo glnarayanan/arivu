@@ -123,8 +123,9 @@ All notable changes to this project will be documented in this file.
   when service activation or health checks fail. The one-line bootstrap now
   detects an existing install and repairs older installers through an in-place
   upgrade instead of relaunching the setup wizard.
-- Mutable embedded frontend assets now require cache revalidation, and service
-  worker update checks bypass the browser HTTP cache so a successful binary
+- Mutable embedded frontend assets now require cache revalidation. Service
+  worker update checks bypass stale HTTP cache entries, online shell requests
+  revalidate, and the offline shell cache advances to v3 so a successful binary
   upgrade cannot leave the previous interface active for hours.
 - Import jobs now recover expired leases after worker crashes and count each
   bookmark's terminal import outcome once, so retryable failures no longer

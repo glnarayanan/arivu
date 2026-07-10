@@ -1,4 +1,4 @@
-const CACHE = "arivu-shell-v2";
+const CACHE = "arivu-shell-v3";
 const SHELL = ["/", "/today", "/dashboard", "/app.js", "/service-worker-register.mjs", "/styles.css", "/favicon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
@@ -15,5 +15,5 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   const url = new URL(request.url);
   if (request.method !== "GET" || url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
-  event.respondWith(fetch(request).catch(() => caches.match(request).then((cached) => cached || caches.match("/"))));
+  event.respondWith(fetch(request, { cache: "no-cache" }).catch(() => caches.match(request).then((cached) => cached || caches.match("/"))));
 });
