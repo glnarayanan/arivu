@@ -1,3 +1,5 @@
+import { registerServiceWorker } from "/service-worker-register.mjs";
+
 const state = {
   user: null,
   cleanup: [],
@@ -1127,6 +1129,16 @@ function workflowEmptyState() {
   </div>`;
 }
 
+function emptyState({ eyebrow, title, body, tag = "div", panel = true, headingLevel = 2 }) {
+  const safeTag = tag === "article" || tag === "section" ? tag : "div";
+  const safeHeadingLevel = headingLevel === 3 ? 3 : 2;
+  return `<${safeTag} class="${panel ? "panel " : ""}empty-state">
+    <span class="meta">${escapeHTML(eyebrow)}</span>
+    <h${safeHeadingLevel}>${escapeHTML(title)}</h${safeHeadingLevel}>
+    <p>${escapeHTML(body)}</p>
+  </${safeTag}>`;
+}
+
 function dashboardFilters() {
   return {
     tag: document.querySelector("#filter-tag")?.value.trim() || "",
@@ -1252,7 +1264,7 @@ async function inboxPage() {
       </div>
     </section>
     <section class="stack">
-      ${items.map(inboxCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No ${escapeHTML(stageLabel(stage))} items</h2><p>New captures and notes appear in Inbox until you decide what to do with them.</p></div>`}
+      ${items.map(inboxCard).join("") || emptyState({ eyebrow: "Clear", title: `No ${stageLabel(stage)} items`, body: "New captures and notes appear in Inbox until you decide what to do with them." })}
     </section>
   `));
   document.querySelectorAll("[data-inbox-select]").forEach((checkbox) => {
@@ -1482,11 +1494,11 @@ function focusEmptyState(type, view) {
     completed: "completed",
   }[view] || view;
   if (type === "action" && view !== "pending" && view !== "completed") {
-    return `<div class="empty-state"><span class="meta">Clear</span><h3>No ${escapeHTML(label)} action items</h3><p>Action items stay in pending or completed. Timed work appears under reminders.</p></div>`;
+    return emptyState({ eyebrow: "Clear", title: `No ${label} action items`, body: "Action items stay in pending or completed. Timed work appears under reminders.", panel: false, headingLevel: 3 });
   }
   const noun = type === "action" ? "action items" : "reminders";
   const body = type === "action" ? "Tasks added from Inbox or a saved item appear here." : "Timed nudges from saved items appear here.";
-  return `<div class="empty-state"><span class="meta">Clear</span><h3>No ${escapeHTML(label)} ${noun}</h3><p>${body}</p></div>`;
+  return emptyState({ eyebrow: "Clear", title: `No ${label} ${noun}`, body, panel: false, headingLevel: 3 });
 }
 
 function itemHref(item) {
@@ -1559,7 +1571,7 @@ async function assistantPage() {
       </div>
     </section>
     <section class="stack">
-      ${actions.map(assistantActionCard).join("") || `<div class="panel empty-state"><span class="meta">No proposals</span><h2>Nothing waiting</h2><p>Queued assistant proposals appear here for review.</p></div>`}
+      ${actions.map(assistantActionCard).join("") || emptyState({ eyebrow: "No proposals", title: "Nothing waiting", body: "Queued assistant proposals appear here for review." })}
     </section>
   `));
   document.querySelector("#assistant-suggest-form").addEventListener("submit", submitAssistantSuggestions);
@@ -1627,7 +1639,7 @@ async function submitAssistantSuggestions(event) {
 
 function renderAssistantDrafts(drafts) {
   const target = document.querySelector("#assistant-drafts");
-  target.innerHTML = drafts.map(assistantDraftCard).join("") || `<div class="panel empty-state"><span class="meta">No drafts</span><h2>No reviewable draft found</h2><p>Try a different source or create a manual proposal.</p></div>`;
+  target.innerHTML = drafts.map(assistantDraftCard).join("") || emptyState({ eyebrow: "No drafts", title: "No reviewable draft found", body: "Try a different source or create a manual proposal." });
   target.querySelectorAll("[data-assistant-draft]").forEach((button) => {
     button.addEventListener("click", () => queueAssistantDraft(button));
   });
@@ -1912,7 +1924,7 @@ async function notesPage() {
       </section>
     </section>
     <section class="stack">
-      ${notes.map(noteListItem).join("") || `<div class="panel empty-state"><span class="meta">No notes</span><h2>Start with one thought</h2><p>Standalone notes can be linked to bookmarks later through the reader workflow.</p></div>`}
+      ${notes.map(noteListItem).join("") || emptyState({ eyebrow: "No notes", title: "Start with one thought", body: "Standalone notes can be linked to bookmarks later through the reader workflow." })}
     </section>
   `));
   const form = document.querySelector("#standalone-note-form");
@@ -2066,7 +2078,7 @@ async function objectsPage() {
       </form>
     </section>
     <section class="grid compact-grid">
-      ${objects.map(objectCard).join("") || `<article class="panel empty-state"><span class="meta">No objects</span><h2>Create the first object</h2><p>Use objects when a note needs to become a project, person, book, meeting, decision, or research thread.</p></article>`}
+      ${objects.map(objectCard).join("") || emptyState({ eyebrow: "No objects", title: "Create the first object", body: "Use objects when a note needs to become a project, person, book, meeting, decision, or research thread.", tag: "article" })}
     </section>
   `));
   bindObjectForms();
@@ -2155,7 +2167,7 @@ async function evolutionPage() {
       <button type="submit">Trace topic</button>
     </form>
     <section class="stack">
-      ${(result.timeline || []).map(evolutionItem).join("") || `<article class="panel empty-state"><span class="meta">No timeline yet</span><h2>Search a topic</h2><p>Arivu will line up matching daily notes, saved pages, notes, decisions, meetings, and projects.</p></article>`}
+      ${(result.timeline || []).map(evolutionItem).join("") || emptyState({ eyebrow: "No timeline yet", title: "Search a topic", body: "Arivu will line up matching daily notes, saved pages, notes, decisions, meetings, and projects.", tag: "article" })}
     </section>
   `));
   document.querySelector("#evolution-form").addEventListener("submit", (event) => {
@@ -3396,17 +3408,19 @@ function apiKeyStatus(keys) {
     x_redirect_uri: "X redirect URI",
     x_integration_enabled: "X enabled",
   };
-  return ["gemini_api_key", "gemini_model", "gemini_base_url", "resend_api_key", "resend_from_email", "x_client_id", "x_client_secret", "x_redirect_uri", "x_integration_enabled"]
-    .map((key) => {
-      const item = keys[key] || {};
-      const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
-      const configured = item.configured || value;
-      return `<article class="annotation">
-        <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
-        ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-api-key-revert="${escapeHTML(key)}">Remove override</button></p>` : ""}
-      </article>`;
-    })
-    .join("");
+  return settingsStatusRows(keys, labels, "api-key-revert");
+}
+
+function settingsStatusRows(settings, labels, revertAttribute) {
+  return Object.keys(labels).map((key) => {
+    const item = settings[key] || {};
+    const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
+    const configured = item.configured || value;
+    return `<article class="annotation">
+      <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
+      ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-${revertAttribute}="${escapeHTML(key)}">Remove override</button></p>` : ""}
+    </article>`;
+  }).join("");
 }
 
 function adminSettingsPanel(settings) {
@@ -3451,15 +3465,7 @@ function settingsStatus(settings) {
     x_redirect_uri: "X redirect URI",
     x_integration_enabled: "X enabled",
   };
-  return Object.keys(labels).map((key) => {
-    const item = settings[key] || {};
-    const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
-    const configured = item.configured || value;
-    return `<article class="annotation">
-      <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
-      ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-admin-setting-revert="${escapeHTML(key)}">Remove override</button></p>` : ""}
-    </article>`;
-  }).join("");
+  return settingsStatusRows(settings, labels, "admin-setting-revert");
 }
 
 function bindAdminSettingsPanel() {
@@ -3717,7 +3723,7 @@ async function reviewPage() {
       </section>
     </section>
     <section class="grid" aria-label="Review queue">
-      ${(queue.items || []).map(reviewCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No review items due</h2><p>Arivu will bring older or high-signal saves back when they are ready.</p></div>`}
+      ${(queue.items || []).map(reviewCard).join("") || emptyState({ eyebrow: "Clear", title: "No review items due", body: "Arivu will bring older or high-signal saves back when they are ready." })}
     </section>
   `));
   document.querySelectorAll("[data-review-complete]").forEach((button) => {
@@ -3736,7 +3742,7 @@ async function reviewPage() {
 
 function memoryCard(memory) {
   if (!memory.has_memory || !memory.bookmark) {
-    return `<section class="panel empty-state"><span class="meta">Daily memory</span><h2>No memory due</h2><p>${escapeHTML(memory.message || "Older, high-signal saves will appear here.")}</p></section>`;
+    return emptyState({ eyebrow: "Daily memory", title: "No memory due", body: memory.message || "Older, high-signal saves will appear here.", tag: "section" });
   }
   const item = memory.bookmark;
   const context = memory.context || {};
@@ -3859,7 +3865,7 @@ async function duplicatesPage() {
       <p>Merge repeated saves without losing collection links, summaries, or reading history.</p>
     </section>
     <section class="stack">
-      ${groups.map(duplicateGroup).join("") || `<div class="panel empty-state"><span class="meta">Clean</span><h2>No duplicates found</h2><p>Exact URL and high-similarity matches will appear here.</p></div>`}
+      ${groups.map(duplicateGroup).join("") || emptyState({ eyebrow: "Clean", title: "No duplicates found", body: "Exact URL and high-similarity matches will appear here." })}
     </section>
   `));
   document.querySelectorAll("[data-merge]").forEach((button) => {
@@ -4312,4 +4318,5 @@ addEventListener("popstate", () => {
   render();
 });
 addEventListener("online", () => flushOfflineBookmarks());
+registerServiceWorker();
 render();

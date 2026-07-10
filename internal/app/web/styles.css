@@ -31,6 +31,11 @@
   --space-5: 24px;
   --space-6: 32px;
   --space-7: 48px;
+  --line-width: 1px;
+  --line-width-strong: 2px;
+  --control-size: 44px;
+  --reader-max-width: 980px;
+  --reading-measure: 68ch;
   --shadow: 5px 5px 0 var(--ink);
   --shadow-sm: 2px 2px 0 var(--ink);
   --ease-out-quart: cubic-bezier(.25, 1, .5, 1);
@@ -86,11 +91,11 @@ button {
 }
 
 button, .button {
-  border: 1px solid var(--line);
+  border: var(--line-width) solid var(--line);
   border-radius: 0;
   background: var(--accent);
   color: var(--accent-ink);
-  min-height: 44px;
+  min-height: var(--control-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -111,8 +116,8 @@ button:disabled {
   box-shadow: 1px 1px 0 var(--ink);
 }
 button.icon-button {
-  width: 44px;
-  height: 44px;
+  width: var(--control-size);
+  height: var(--control-size);
   display: inline-grid;
   place-items: center;
   padding: 0;
@@ -158,7 +163,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .sidebar {
-  border-right: 1px solid var(--ink);
+  border-right: var(--line-width) solid var(--ink);
   background: var(--sidebar);
   padding: max(var(--space-5), env(safe-area-inset-top)) var(--space-5) var(--space-5);
   position: sticky;
@@ -183,8 +188,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   color: var(--ink);
   text-decoration: none;
   font: 600 .875rem/1 var(--font-ui);
-  border: 1px solid transparent;
-  min-height: 44px;
+  border: var(--line-width) solid transparent;
+  min-height: var(--control-size);
   display: flex;
   align-items: center;
   padding: 0 var(--space-3);
@@ -198,7 +203,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 .stage-tabs a {
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--surface-warning);
   color: var(--ink);
   padding: var(--space-1) var(--space-2);
@@ -266,13 +271,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .panel {
   background: var(--panel);
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   box-shadow: none;
   overflow-wrap: anywhere;
   padding: var(--space-5);
 }
 .panel:where(.reader, .primary-panel, .primary-work) {
-  border-width: 2px;
+  border-width: var(--line-width-strong);
   box-shadow: var(--shadow);
 }
 .panel:where(.quiet-panel, .disclosure-panel) {
@@ -327,12 +332,12 @@ details.panel > summary::before {
   height: 1.4rem;
   display: inline-grid;
   place-items: center;
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--gold);
   font: 700 1rem/1 var(--font-ui);
 }
 details.panel[open] > summary {
-  border-bottom: 1px solid var(--ink);
+  border-bottom: var(--line-width) solid var(--ink);
   background: var(--surface-warning);
 }
 details.panel[open] > summary::before {
@@ -366,7 +371,7 @@ details.panel[open] > summary::before {
   gap: var(--space-2);
 }
 .priority-buttons button {
-  min-height: 44px;
+  min-height: var(--control-size);
   padding: 0 var(--space-2);
 }
 .priority-buttons button.active {
@@ -380,7 +385,7 @@ details.panel[open] > summary::before {
   place-items: center;
   padding: max(var(--space-5), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-5), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
 }
-.auth .panel { width: min(440px, 100%); border-width: 2px; box-shadow: var(--shadow); }
+.auth .panel { width: min(440px, 100%); border-width: var(--line-width-strong); box-shadow: var(--shadow); }
 .auth h1 { font: 700 3.5rem/.9 var(--font-display); margin: 0 0 var(--space-4); text-transform: uppercase; letter-spacing: 0; }
 
 .form {
@@ -399,8 +404,8 @@ label { font: 600 .875rem/1 var(--font-ui); text-transform: uppercase; }
 }
 input, select, textarea {
   width: 100%;
-  min-height: 44px;
-  border: 1px solid var(--ink);
+  min-height: var(--control-size);
+  border: var(--line-width) solid var(--ink);
   border-radius: 0;
   background: var(--field);
   color: var(--ink);
@@ -410,7 +415,7 @@ input, select, textarea {
 progress {
   width: 100%;
   height: var(--space-3);
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--panel);
 }
 progress::-webkit-progress-bar { background: var(--panel); }
@@ -425,7 +430,7 @@ input::placeholder, textarea::placeholder {
 }
 .form-message {
   margin: 0;
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--panel-strong);
   color: var(--ink);
   padding: var(--space-3);
@@ -444,7 +449,7 @@ input::placeholder, textarea::placeholder {
   margin: 0;
   max-width: 100%;
   overflow: auto;
-  border: 1px solid var(--line);
+  border: var(--line-width) solid var(--line);
   background: var(--field);
   padding: var(--space-3);
   font: 500 .8125rem/1.5 var(--font-ui);
@@ -469,7 +474,7 @@ input::placeholder, textarea::placeholder {
 }
 .toolbar details {
   flex: 1 1 100%;
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--surface-quiet);
   box-shadow: none;
 }
@@ -480,7 +485,7 @@ input::placeholder, textarea::placeholder {
   text-transform: uppercase;
 }
 .toolbar details[open] summary {
-  border-bottom: 1px solid var(--ink);
+  border-bottom: var(--line-width) solid var(--ink);
 }
 .toolbar details input,
 .toolbar details select {
@@ -544,7 +549,7 @@ input::placeholder, textarea::placeholder {
   box-shadow: none;
 }
 .table-wrap {
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   box-shadow: none;
   overflow-x: auto;
   margin-top: var(--space-5);
@@ -557,7 +562,7 @@ input::placeholder, textarea::placeholder {
 }
 .data-table th,
 .data-table td {
-  border-bottom: 1px solid var(--line-soft);
+  border-bottom: var(--line-width) solid var(--line-soft);
   padding: var(--space-3);
   text-align: left;
   vertical-align: top;
@@ -578,7 +583,7 @@ input::placeholder, textarea::placeholder {
 }
 .chips span,
 .chips a {
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--surface-warning);
   color: var(--ink);
   padding: var(--space-1) var(--space-2);
@@ -594,7 +599,7 @@ input::placeholder, textarea::placeholder {
 }
 .insight-strip,
 .annotation {
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--panel-strong);
   box-shadow: none;
   padding: var(--space-4);
@@ -616,7 +621,7 @@ input::placeholder, textarea::placeholder {
 }
 .annotation blockquote {
   margin: 0;
-  border: 1px solid var(--line-soft);
+  border: var(--line-width) solid var(--line-soft);
   background: var(--surface-warning);
   padding: var(--space-3);
   font-size: 1.125rem;
@@ -627,7 +632,7 @@ input::placeholder, textarea::placeholder {
 }
 #job-status:not([hidden]) {
   display: block;
-  border: 1px dashed var(--ink);
+  border: var(--line-width) dashed var(--ink);
   background: var(--surface-info);
   padding: var(--space-3);
   font: 600 .875rem/1.4 var(--font-ui);
@@ -643,12 +648,12 @@ input::placeholder, textarea::placeholder {
 }
 
 .reader {
-  max-width: 980px;
+  max-width: var(--reader-max-width);
 }
 .reader-content {
   font-size: 1.125rem;
   line-height: 1.7;
-  max-width: 68ch;
+  max-width: var(--reading-measure);
 }
 .reader-content img,
 .reader-content iframe,
@@ -663,7 +668,7 @@ input::placeholder, textarea::placeholder {
 .reader-jump-highlight {
   background: var(--highlight);
   color: var(--ink);
-  outline: 1px solid var(--ink);
+  outline: var(--line-width) solid var(--ink);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -676,7 +681,7 @@ input::placeholder, textarea::placeholder {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  border-bottom: 1px solid var(--ink);
+  border-bottom: var(--line-width) solid var(--ink);
   padding-bottom: var(--space-3);
 }
 .tab-list [role="tab"] {
@@ -698,7 +703,7 @@ input::placeholder, textarea::placeholder {
   z-index: var(--z-toast);
 }
 .toast {
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--panel);
   box-shadow: var(--shadow-sm);
   padding: var(--space-3);
@@ -767,7 +772,7 @@ input::placeholder, textarea::placeholder {
 }
 .command-palette section,
 .command-palette form {
-  border-top: 1px solid var(--line-soft);
+  border-top: var(--line-width) solid var(--line-soft);
   padding-top: var(--space-4);
 }
 .command-palette section:first-child {
@@ -788,7 +793,7 @@ input::placeholder, textarea::placeholder {
   min-width: 180px;
   max-width: min(20rem, calc(100vw - 2 * var(--space-4)));
   gap: var(--space-2);
-  border: 1px solid var(--ink);
+  border: var(--line-width) solid var(--ink);
   background: var(--panel);
   box-shadow: var(--shadow-sm);
   padding: var(--space-2);
@@ -822,7 +827,7 @@ input::placeholder, textarea::placeholder {
     height: auto;
     overflow: hidden;
     border-right: 0;
-    border-bottom: 1px solid var(--ink);
+    border-bottom: var(--line-width) solid var(--ink);
     padding: max(var(--space-3), env(safe-area-inset-top)) var(--space-4) var(--space-3);
   }
   .brand {

@@ -374,7 +374,7 @@ func serveAsset(w http.ResponseWriter, r *http.Request, name string, data []byte
 	switch {
 	case strings.HasSuffix(name, ".css"):
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	case strings.HasSuffix(name, ".js"):
+	case strings.HasSuffix(name, ".js"), strings.HasSuffix(name, ".mjs"):
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case strings.HasSuffix(name, ".svg"):
 		w.Header().Set("Content-Type", "image/svg+xml")

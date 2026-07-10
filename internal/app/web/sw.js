@@ -1,5 +1,5 @@
-const CACHE = "arivu-shell-v1";
-const SHELL = ["/", "/today", "/dashboard", "/app.js", "/styles.css", "/favicon.svg", "/manifest.webmanifest"];
+const CACHE = "arivu-shell-v2";
+const SHELL = ["/", "/today", "/dashboard", "/app.js", "/service-worker-register.mjs", "/styles.css", "/favicon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(SHELL)));

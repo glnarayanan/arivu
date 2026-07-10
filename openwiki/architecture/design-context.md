@@ -28,3 +28,19 @@ Treat the embedded browser UI as flagship polish for a self-hosted app: small en
 - Reinforce the warm archive aesthetic through tokens and layout rhythm, not one-off styling.
 - Prefer compact, useful product copy over marketing language.
 - Keep mobile navigation compact enough that the current work surface appears quickly; use horizontal overflow or grouped controls rather than tall stacked route menus.
+
+## Interface System
+
+The embedded frontend keeps its design system inside the dependency-free assets:
+
+- `styles.css` defines semantic OKLCH color roles for action, information,
+  success, danger, attention, neutral surfaces, and focus. Reuse these roles
+  instead of adding route-specific colors.
+- Shared dimensions cover border weight, native control height, reader width,
+  and reading measure. Heavy borders and offset shadows belong to primary work
+  surfaces; supporting panels remain flat.
+- `app.js` owns shared native-browser patterns such as dialogs, menus, tabs,
+  toasts, form feedback, busy buttons, and escaped empty states. Extend these
+  primitives when a pattern repeats rather than copying route-specific markup.
+- Color never carries state alone: semantic surfaces retain labels, roles, and
+  visible control text, with contrast kept at WCAG AA or better.

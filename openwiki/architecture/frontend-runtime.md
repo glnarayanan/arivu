@@ -7,6 +7,8 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - `index.html`: root document and script/style references.
 - `styles.css`: design tokens, brutalist layout, responsive rules, and reduced-motion handling.
 - `app.js`: router, API client, auth flow, primary screens, and local UI state.
+- `service-worker-register.mjs`: CSP-approved, independently testable browser
+  lifecycle registration for `sw.js`.
 - `favicon.svg`: small embedded SVG icon served by both `/favicon.svg` and
   legacy `/favicon.ico` requests.
 - `manifest.webmanifest`: installable PWA metadata and GET share-target
@@ -15,7 +17,9 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   requests so authenticated data is never cached by the browser worker.
 - `app.js` UI primitives: toasts, modal dialogs, destructive confirmations,
   focus trapping, menu roving focus, settings tabs, escape handling, and route
-  cleanup for global listeners.
+  cleanup for global listeners. Repeated no-content views use the escaped
+  `emptyState` renderer, and provider/admin configuration rows use the shared
+  `settingsStatusRows` renderer.
 
 ## Runtime Rules
 
@@ -51,6 +55,10 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   `aria-describedby`.
 - Toasts use semantic tones for success and error feedback; error toasts use
   assertive alert semantics.
+- Interface colors use semantic OKLCH roles: orange for primary action, blue
+  for information, green for success, red for danger, and gold for attention.
+  Shared line, control-height, reader-width, and reading-measure tokens keep
+  repeated primitives consistent.
 - The authenticated shell includes a skip link and marks the active nav item with
   `aria-current="page"`.
 - `/today` is the default signed-in route. It reads `/api/daily-notes/{date}`,
@@ -152,6 +160,11 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   `/assistant`, `/notes`, `/notes/:id`, `/bookmark/:id`, and `/settings` at
   desktop and 390x844 mobile sizes after second-brain route or theme changes.
 - Keep console warning/error collection empty during completed checks.
+- Run `node --test internal/app/webtest/service-worker-register.test.mjs` after
+  changing service-worker startup or browser lifecycle behavior.
+- Confirm the document width does not exceed the viewport at 390x844; the
+  primary navigation should scroll within its own strip instead of widening
+  the page.
 - Keep screenshot artifacts out of the repository unless a test needs them.
 
 ## Ongoing Frontend Verification
