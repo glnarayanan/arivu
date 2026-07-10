@@ -94,6 +94,10 @@ sudo arivu-installer reconfigure
 sudo arivu-installer uninstall
 ```
 
+Release builds inject the Git tag into both binaries. A packaged release should
+report the same tag for the application and installer; `devel` is reserved for
+untagged local builds.
+
 `--tls-email` is rendered into Arivu-managed Caddy site blocks. Nginx and
 Apache snippets still leave certificate ownership to the existing proxy.
 

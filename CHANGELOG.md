@@ -39,8 +39,8 @@ All notable changes to this project will be documented in this file.
   including dynamic optional-host registration, Arivu-origin exclusion,
   exact-URL bookmark get-or-create, and extension-audience capture tests.
 - Added `arivu version`, `arivu --version`, `arivu-installer version`, and
-  `arivu-installer --version`, backed by the release module version embedded in
-  Go build metadata.
+  `arivu-installer --version`; tagged release builds inject the exact Git tag
+  into both binaries so installed versions remain authoritative.
 - Created the standalone low-dependency Go repository for Arivu.
 - Included the embedded frontend, SQLite persistence, auth/session subsystem, safe fetcher, sanitizer, job queue, provider clients, browser extension, deployment assets, and legacy migration tooling.
 - Added contribution guidelines, code of conduct, GitHub sponsorship metadata, and expanded security reporting policy.

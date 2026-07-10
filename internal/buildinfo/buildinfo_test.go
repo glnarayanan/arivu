@@ -35,6 +35,9 @@ func TestWriteIfRequestedIgnoresOtherCommands(t *testing.T) {
 }
 
 func TestVersionFallsBackForDevelopmentBuilds(t *testing.T) {
+	oldVersion := releaseVersion
+	releaseVersion = ""
+	t.Cleanup(func() { releaseVersion = oldVersion })
 	old := readBuildInfo
 	readBuildInfo = func() (*debug.BuildInfo, bool) {
 		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true
@@ -42,6 +45,22 @@ func TestVersionFallsBackForDevelopmentBuilds(t *testing.T) {
 	t.Cleanup(func() { readBuildInfo = old })
 
 	if got := Version(); got != "devel" {
+		t.Fatalf("Version() = %q", got)
+	}
+}
+
+func TestVersionPrefersInjectedReleaseVersion(t *testing.T) {
+	oldVersion := releaseVersion
+	releaseVersion = " v1.2.3 "
+	t.Cleanup(func() { releaseVersion = oldVersion })
+
+	old := readBuildInfo
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}, true
+	}
+	t.Cleanup(func() { readBuildInfo = old })
+
+	if got := Version(); got != "v1.2.3" {
 		t.Fatalf("Version() = %q", got)
 	}
 }
