@@ -30,7 +30,7 @@ func (s *Service) enrichText(ctx context.Context, bookmarkID, userID, title, des
 		Entities:   titleTerms(title, body, 10),
 		Concepts:   tags,
 	}
-	if embedding, err := s.geminiClient(ctx).GenerateEmbedding(ctx, body); err == nil && len(embedding) > 0 {
+	if embedding, err := s.aiClient(ctx).GenerateEmbedding(ctx, body); err == nil && len(embedding) > 0 {
 		result.Embedding = embedding
 	}
 	return result

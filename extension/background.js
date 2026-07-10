@@ -89,53 +89,56 @@ function installContextMenus() {
   });
 }
 
-async function saveBookmark(url) {
+async function postExtensionJSON(path, payloadFactory, missingTokenMessage) {
   const apiUrl = await getApiUrl();
   const tokenResult = await chrome.storage.session.get(['accessToken']);
 
   if (!tokenResult.accessToken) {
-    throw new Error('Missing extension token');
+    throw new Error(missingTokenMessage);
   }
 
-  const headers = {
-    'Content-Type': 'application/json',
-    'Authorization': `Bearer ${tokenResult.accessToken}`,
-  };
-  const response = await fetch(`${apiUrl}/extension/bookmarks`, {
+  const body = payloadFactory();
+  return fetch(`${apiUrl}${path}`, {
     method: 'POST',
-    headers,
-    body: JSON.stringify({ url }),
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${tokenResult.accessToken}`,
+    },
+    body: JSON.stringify(body),
   });
+}
+
+async function clearExtensionTokens() {
+  await chrome.storage.session.remove(['accessToken', 'refreshToken']);
+}
+
+async function saveBookmark(url) {
+  const response = await postExtensionJSON('/extension/bookmarks', () => ({ url }), 'Missing extension token');
 
   if (response.ok) return response.json().catch(() => ({}));
 
   if (response.status === 401) {
-    await chrome.storage.session.remove(['accessToken', 'refreshToken']);
+    await clearExtensionTokens();
   }
 
   throw new Error(`Save failed: ${response.status}`);
 }
 
 async function saveAnnotation({ url, title = '', quote, note = '' }) {
-  const apiUrl = await getApiUrl();
-  const tokenResult = await chrome.storage.session.get(['accessToken']);
   const selectedQuote = String(quote || '').replace(/\s+/g, ' ').trim().slice(0, 4000);
 
-  if (!tokenResult.accessToken) throw new Error('Open Arivu to reconnect the extension');
-  if (!url || !selectedQuote) throw new Error('Select a passage to annotate');
-
-  const response = await fetch(`${apiUrl}/extension/annotations`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${tokenResult.accessToken}`,
+  const response = await postExtensionJSON(
+    '/extension/annotations',
+    () => {
+      if (!url || !selectedQuote) throw new Error('Select a passage to annotate');
+      return { url, title, quote: selectedQuote, note: String(note || '').trim() };
     },
-    body: JSON.stringify({ url, title, quote: selectedQuote, note: String(note || '').trim() }),
-  });
+    'Open Arivu to reconnect the extension',
+  );
 
   if (response.ok) return response.json();
   if (response.status === 401) {
-    await chrome.storage.session.remove(['accessToken', 'refreshToken']);
+    await clearExtensionTokens();
     throw new Error('Session expired — open Arivu to reconnect the extension');
   }
   const body = await response.json().catch(() => ({}));

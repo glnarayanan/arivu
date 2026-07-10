@@ -56,7 +56,7 @@ function runBackground({ fetchStatus = 200, permissionGranted = true } = {}) {
   };
   vm.createContext(context);
   vm.runInContext(readFileSync(new URL('./background.js', import.meta.url), 'utf8'), context);
-  return { context, fetches, handlers, local, registeredScripts, unregisteredScriptIDs, removedSessionKeys };
+  return { context, fetches, handlers, local, session, registeredScripts, unregisteredScriptIDs, removedSessionKeys };
 }
 
 const directCapture = runBackground();
@@ -75,6 +75,11 @@ assert.deepEqual(JSON.parse(directCapture.fetches[0].options.body), {
   quote: 'Selected passage',
   note: 'Why it matters',
 });
+
+const pageSave = runBackground();
+assert.deepEqual(await pageSave.context.saveBookmark('https://example.com/page'), { annotation: { id: 'annotation-1' } });
+assert.equal(pageSave.fetches[0].url, 'https://arivu.example/api/extension/bookmarks');
+assert.deepEqual(JSON.parse(pageSave.fetches[0].options.body), { url: 'https://example.com/page' });
 
 const selectionMenu = runBackground();
 await selectionMenu.context.saveFromTab({ id: 1, url: 'https://example.com/menu', title: 'Menu capture' }, 'Selected from the menu');
@@ -110,3 +115,11 @@ await assert.rejects(
   /Session expired/,
 );
 assert.deepEqual(expiredSession.removedSessionKeys, ['accessToken', 'refreshToken']);
+
+const disconnected = runBackground();
+delete disconnected.session.accessToken;
+await assert.rejects(
+  () => disconnected.context.saveAnnotation({ url: '', quote: '' }),
+  /Open Arivu to reconnect/,
+);
+assert.equal(disconnected.fetches.length, 0);

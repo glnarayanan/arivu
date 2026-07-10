@@ -26,7 +26,7 @@ type Service struct {
 	db      *sql.DB
 	jobs    *jobs.Queue
 	fetcher *safefetch.Client
-	gemini  func(context.Context) providers.GeminiClient
+	ai      func(context.Context) providers.GeminiClient
 }
 
 type CountsResult struct {
@@ -36,21 +36,21 @@ type CountsResult struct {
 	Summaries   int
 }
 
-func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, gemini providers.GeminiClient) *Service {
-	return &Service{db: db, jobs: jobs, fetcher: fetcher, gemini: func(context.Context) providers.GeminiClient { return gemini }}
+func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, client providers.GeminiClient) *Service {
+	return &Service{db: db, jobs: jobs, fetcher: fetcher, ai: func(context.Context) providers.GeminiClient { return client }}
 }
 
-func (s *Service) SetGeminiProvider(fn func(context.Context) providers.GeminiClient) {
+func (s *Service) SetAIProvider(fn func(context.Context) providers.GeminiClient) {
 	if fn != nil {
-		s.gemini = fn
+		s.ai = fn
 	}
 }
 
-func (s *Service) geminiClient(ctx context.Context) providers.GeminiClient {
-	if s.gemini == nil {
+func (s *Service) aiClient(ctx context.Context) providers.GeminiClient {
+	if s.ai == nil {
 		return providers.GeminiClient{}
 	}
-	return s.gemini(ctx)
+	return s.ai(ctx)
 }
 
 func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -596,7 +596,7 @@ func (s *Service) analyticsInsights(ctx context.Context, userID string) []map[st
 	insights := s.localInsights(ctx, userID)
 	insightCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if generated, err := s.geminiClient(ctx).GenerateInsight(insightCtx, s.analyticsPrompt(ctx, userID)); err == nil && strings.TrimSpace(generated) != "" {
+	if generated, err := s.aiClient(ctx).GenerateInsight(insightCtx, s.analyticsPrompt(ctx, userID)); err == nil && strings.TrimSpace(generated) != "" {
 		insights = append(insights, map[string]any{"type": "ai", "message": strings.TrimSpace(generated), "severity": "info"})
 	}
 	return insights
@@ -760,7 +760,7 @@ func (s *Service) GraphSearch(w http.ResponseWriter, r *http.Request, user auth.
 		return
 	}
 	var queryEmbedding []float64
-	if embedding, err := s.geminiClient(r.Context()).GenerateEmbedding(r.Context(), query); err == nil {
+	if embedding, err := s.aiClient(r.Context()).GenerateEmbedding(r.Context(), query); err == nil {
 		queryEmbedding = embedding
 	}
 	results, threshold := rankGraphSearch(query, queryEmbedding, bookmarks)

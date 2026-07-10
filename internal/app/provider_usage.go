@@ -38,10 +38,6 @@ func (u *providerUsage) RecordAI(operation string, err error) {
 	u.ai[operation] = item
 }
 
-func (u *providerUsage) RecordGemini(operation string, err error) {
-	u.RecordAI(operation, err)
-}
-
 func (u *providerUsage) Snapshot() map[string]any {
 	if u == nil {
 		return map[string]any{}

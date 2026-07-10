@@ -63,7 +63,7 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 		"suggested_tags": []any{},
 	}
 	summaryStatus := "fallback"
-	if aiSummary, err := s.geminiClient(ctx).GenerateSummaryFields(ctx, result.Text); err == nil {
+	if aiSummary, err := s.aiClient(ctx).GenerateSummaryFields(ctx, result.Text); err == nil {
 		for key, value := range aiSummary {
 			summary[key] = value
 		}

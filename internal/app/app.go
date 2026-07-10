@@ -82,7 +82,7 @@ func New(cfg config.Config) (*App, error) {
 	a.fetcher = safefetch.NewWithUserAgent(cfg.FetchUserAgent)
 	initialAI := runtimeconfig.FromConfig(cfg)
 	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{Provider: initialAI.AIProvider, APIKey: initialAI.AIAPIKey, Model: initialAI.AIModel, BaseURL: initialAI.AIBaseURL})
-	a.bookmarks.SetGeminiProvider(a.geminiClient)
+	a.bookmarks.SetAIProvider(a.aiClient)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.startWorkers(ctx)
@@ -251,7 +251,7 @@ func (a *App) Handler() http.Handler {
 	return a.recoverPanic(a.securityHeaders(a.limitBody(a.requestLog(mux))))
 }
 
-func (a *App) geminiClient(ctx context.Context) providers.GeminiClient {
+func (a *App) aiClient(ctx context.Context) providers.GeminiClient {
 	effective := runtimeconfig.FromConfig(a.cfg)
 	if effective, err := a.runtime.Effective(ctx); err == nil {
 		return providers.GeminiClient{Provider: effective.AIProvider, APIKey: effective.AIAPIKey, Model: effective.AIModel, BaseURL: effective.AIBaseURL, Recorder: a.usage.RecordAI}

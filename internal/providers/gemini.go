@@ -20,6 +20,13 @@ const (
 	embeddingDimensions        = 768
 )
 
+var defaultHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
+
 type GeminiClient struct {
 	APIKey   string
 	BaseURL  string
@@ -27,14 +34,6 @@ type GeminiClient struct {
 	Provider string
 	HTTP     *http.Client
 	Recorder func(operation string, err error)
-}
-
-func (c GeminiClient) GenerateSummary(ctx context.Context, text string) (string, error) {
-	summary, err := c.GenerateSummaryFields(ctx, text)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(stringMapValue(summary, "one_sentence")), nil
 }
 
 func (c GeminiClient) GenerateSummaryFields(ctx context.Context, text string) (map[string]any, error) {
@@ -351,12 +350,7 @@ func (c GeminiClient) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{
-		Timeout: 30 * time.Second,
-		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	return defaultHTTPClient
 }
 
 func (c GeminiClient) provider() ModelProvider {
