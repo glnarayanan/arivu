@@ -382,11 +382,7 @@ func serveAsset(w http.ResponseWriter, r *http.Request, name string, data []byte
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	}
 	w.Header().Set("ETag", assetETag(data))
-	if name == "index.html" {
-		w.Header().Set("Cache-Control", "no-cache")
-	} else {
-		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
-	}
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, name, webAssetModTime, bytes.NewReader(data))
 }
 
