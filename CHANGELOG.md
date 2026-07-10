@@ -134,7 +134,7 @@ All notable changes to this project will be documented in this file.
   them after source or branch changes, while SQLite-backed runtime settings take
   effect without a restart; added the persistent local development health check.
 - Installer upgrades now download and checksum-verify both the Arivu app and
-  installer from the same release, replace them atomically, and roll both back
+  installer from the same release, replace them transactionally, and roll both back
   when service activation or health checks fail. The one-line bootstrap now
   detects an existing install and repairs older installers through an in-place
   upgrade instead of relaunching the setup wizard.
