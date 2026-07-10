@@ -146,7 +146,9 @@ restore success.
 same release and verifies both against `SHA256SUMS` before replacing anything.
 It preserves both previous executables until the new app has passed systemd and
 local HTTP health checks. Failed activation rolls both executables back and
-restarts the previous Arivu service.
+restarts the previous Arivu service. Embedded app-shell assets require browser
+cache revalidation, and service worker updates bypass the HTTP cache so the new
+frontend is visible as soon as the upgraded service is healthy.
 
 Installations created before installer self-updates were introduced need one
 bootstrap refresh after upgrading to a release that includes this behavior:
