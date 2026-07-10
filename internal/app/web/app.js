@@ -705,8 +705,8 @@ async function todayPage() {
       </form>
       <section class="panel">
         <span class="meta">Operating loop</span>
-        <h2>${Number((inbox.counts || {}).inbox || 0)} inbox · ${openActions.length + dueReminders.length} open now · ${(review.items || []).length} review</h2>
-        <p>Capture what arrived, decide what deserves attention, work the dated loops, then review one older signal.</p>
+        <h2>${Number((inbox.counts || {}).inbox || 0)} in Inbox · ${openActions.length + dueReminders.length} due now · ${(review.items || []).length} ready to review</h2>
+        <p>Capture what arrived, decide what deserves attention, finish due work, then revisit one useful older item.</p>
         <div class="chips">
           <a href="/dashboard">Capture</a>
           <a href="/inbox">Triage</a>
@@ -846,7 +846,7 @@ async function openCommandPalette() {
       <button type="submit">Save</button>
     </form>
     <form class="form" data-command-note>
-      <h3>Create Note</h3>
+      <h3>Create note</h3>
       <div class="field"><label for="command-note-title">Title</label><input id="command-note-title" type="text"></div>
       <div class="field"><label for="command-note-body">Body</label><textarea id="command-note-body" rows="3"></textarea></div>
       <button type="submit">Create note</button>
@@ -860,7 +860,7 @@ async function openCommandPalette() {
       </div>
     </form>
     <form class="form" data-command-current ${current ? "" : "hidden"}>
-      <h3>Current Item</h3>
+      <h3>Current item</h3>
       <p class="meta">${current ? `${escapeHTML(current.type)}:${escapeHTML(current.id)}` : "Open a bookmark or note first."}</p>
       <div class="field"><label for="command-task">Task</label><input id="command-task" type="text" placeholder="Next concrete action"></div>
       <div class="field"><label for="command-reminder">Reminder</label><input id="command-reminder" type="datetime-local"></div>
@@ -940,7 +940,7 @@ async function openCommandPalette() {
       return "Link created";
     });
   });
-  await ui.dialog({ title: "Command Palette", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
+  await ui.dialog({ title: "Quick actions", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
 }
 
 async function commandRun(button, busyLabel, action) {
@@ -964,7 +964,7 @@ async function dashboardPage() {
   const bookmarkList = bookmarks || [];
   const params = new URLSearchParams(location.search);
   const shared = sharedCaptureParams();
-  setRoot(shell("Dashboard", `
+  setRoot(shell("Capture", `
     <section class="split">
       <form class="panel form" id="save-form">
         <span class="meta">Capture</span>
@@ -991,7 +991,7 @@ async function dashboardPage() {
       <label class="sr-only" for="search">Search bookmarks</label>
       <input id="search" type="search" placeholder="Search saved pages" value="${escapeHTML(params.get("search") || "")}">
       <button id="search-button" class="secondary" type="submit">Search</button>
-      <button id="answer-button" class="secondary" type="button">Answer</button>
+      <button id="answer-button" class="secondary" type="button">Ask saved pages</button>
       <details>
         <summary>Filters</summary>
         <label class="sr-only" for="filter-tag">Filter by tag</label>
@@ -1402,8 +1402,8 @@ async function focusPage() {
     <section class="split">
       <section class="panel">
         <span class="meta">${escapeHTML(focusViewLabel(view))}</span>
-        <h2>${actionItems.length + reminderItems.length} open loops</h2>
-        <p>Work from concrete tasks first, then timed reminders. Everything here stays tied to the saved item it came from.</p>
+        <h2>${actionItems.length + reminderItems.length} tasks and reminders</h2>
+        <p>Start with concrete tasks, then check timed reminders. Every item links back to its source.</p>
       </section>
       <section class="panel">
         <h2>Queue</h2>
@@ -1452,8 +1452,8 @@ function focusActionItems(items, view) {
     <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.item_title || "")}</span></p>
     <p class="button-row">
       <a class="button secondary" href="${itemHref(item)}">Open item</a>
-      <button type="button" data-action-item-complete="${escapeHTML(item.id)}" aria-label="Complete action item ${escapeHTML(item.title || "")}">Done</button>
-      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}" aria-label="Delete action item ${escapeHTML(item.title || "")}">Delete</button>
+      <button type="button" data-action-item-complete="${escapeHTML(item.id)}" aria-label="Complete action item ${escapeHTML(item.title || "")}">Complete</button>
+      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}" aria-label="Delete action item ${escapeHTML(item.title || "")}">Delete task</button>
     </p>
   </article>`).join("")}</div>`;
 }
@@ -1467,8 +1467,8 @@ function focusReminders(items, view) {
       <a class="button secondary" href="${itemHref(item)}">Open item</a>
       <button type="button" class="secondary" data-reminder-snooze="${escapeHTML(item.id)}" data-minutes="30">30m</button>
       <button type="button" class="secondary" data-reminder-snooze="${escapeHTML(item.id)}" data-days="1">Tomorrow</button>
-      <button type="button" data-reminder-complete="${escapeHTML(item.id)}" aria-label="Complete reminder ${escapeHTML(item.note || item.item_title || "")}">Done</button>
-      <button type="button" class="danger" data-reminder-delete="${escapeHTML(item.id)}" aria-label="Delete reminder ${escapeHTML(item.note || item.item_title || "")}">Delete</button>
+      <button type="button" data-reminder-complete="${escapeHTML(item.id)}" aria-label="Complete reminder ${escapeHTML(item.note || item.item_title || "")}">Complete</button>
+      <button type="button" class="danger" data-reminder-delete="${escapeHTML(item.id)}" aria-label="Delete reminder ${escapeHTML(item.note || item.item_title || "")}">Delete reminder</button>
     </p>
   </article>`).join("")}</div>`;
 }
@@ -1500,11 +1500,12 @@ async function assistantPage() {
   const status = params.get("status") || "pending";
   const result = await api(`/assistant/actions?status=${encodeURIComponent(status)}`);
   const actions = result.actions || [];
-  setRoot(shell("Assistant actions", `
+  setRoot(shell("Assistant", `
     <section class="split">
       <form class="panel form" id="assistant-suggest-form">
         <span class="meta">Planner</span>
-        <h2>Generate reviewable drafts</h2>
+        <h2>Draft suggested actions</h2>
+        <p>Arivu prepares suggestions only. Nothing changes until you review and run a proposal.</p>
         <div class="field">
           <label for="assistant-suggest-mode">Context</label>
           <select id="assistant-suggest-mode" name="mode">
@@ -1514,7 +1515,7 @@ async function assistantPage() {
             <option value="item">Specific item</option>
           </select>
         </div>
-        <div class="field"><label for="assistant-suggest-stage">Stage</label><select id="assistant-suggest-stage" name="stage">${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}">${stage}</option>`).join("")}</select></div>
+        <div class="field"><label for="assistant-suggest-stage">Stage</label><select id="assistant-suggest-stage" name="stage">${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}">${escapeHTML(stageLabel(stage))}</option>`).join("")}</select></div>
         <div class="field"><label for="assistant-suggest-query">Search</label><input id="assistant-suggest-query" name="query" type="search" maxlength="2000" placeholder="recall, launch, research"></div>
         <div class="split compact-split">
           <div class="field"><label for="assistant-suggest-type">Item type</label><select id="assistant-suggest-type" name="item_type"><option value="bookmark">Bookmark</option><option value="note">Note</option></select></div>
@@ -1859,7 +1860,7 @@ function annotationList(items) {
     <p class="button-row">
       <button type="button" class="secondary" data-annotation-jump="${escapeHTML(item.id)}">Jump to source</button>
       <button type="button" data-annotation-save="${escapeHTML(item.id)}">Save changes</button>
-      <button type="button" class="danger" data-annotation-delete="${escapeHTML(item.id)}">Delete</button>
+      <button type="button" class="danger" data-annotation-delete="${escapeHTML(item.id)}">Delete annotation</button>
     </p>
   </article>`).join("")}</div>`;
 }
@@ -1980,7 +1981,7 @@ function standaloneNoteCard(note, notes, bookmarks = []) {
       ${note.bookmark_id ? `<a class="button secondary" href="/bookmark/${escapeHTML(note.bookmark_id)}">Open bookmark</a>` : ""}
       <a class="button secondary" href="/notes">All notes</a>
       <button type="button" data-note-save="${escapeHTML(note.id)}">Save changes</button>
-      <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete</button>
+      <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete note</button>
     </p>
     <section>
       <h3>Action items</h3>
@@ -2217,7 +2218,7 @@ async function bookmarkPage() {
       <p class="button-row">
         <a class="button" href="${escapeHTML(bookmark.url)}" target="_blank" rel="noreferrer noopener">Open original</a>
         <button type="button" class="secondary" id="toggle-read">${bookmark.read_status ? "Mark unread" : "Mark read"}</button>
-        <button type="button" class="danger" id="delete-bookmark">Delete</button>
+        <button type="button" class="danger" id="delete-bookmark">Delete bookmark</button>
       </p>
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
@@ -2459,8 +2460,8 @@ function reminderList(reminders) {
     ${reminder.note ? `<p>${escapeHTML(reminder.note)}</p>` : ""}
     <p class="button-row">
       ${reminder.status === "completed" ? "" : `<button type="button" class="secondary" data-reminder-snooze="${escapeHTML(reminder.id)}" data-minutes="30">30m</button><button type="button" class="secondary" data-reminder-snooze="${escapeHTML(reminder.id)}" data-days="1">Tomorrow</button>`}
-      ${reminder.status === "completed" ? "" : `<button type="button" data-reminder-complete="${escapeHTML(reminder.id)}">Done</button>`}
-      <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete</button>
+      ${reminder.status === "completed" ? "" : `<button type="button" data-reminder-complete="${escapeHTML(reminder.id)}">Complete</button>`}
+      <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete reminder</button>
     </p>
     ${reminder.status === "completed" ? "" : reminderEditForm(reminder)}
   </article>`).join("")}</div>`;
@@ -2540,8 +2541,8 @@ function actionItemsList(items) {
   return `<div class="stack">${items.map((item) => `<article class="annotation">
     <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.status || "pending")} · ${escapeHTML(item.item_title || "")}</span></p>
     <p class="button-row">
-      ${item.status === "completed" ? "" : `<button type="button" data-action-item-complete="${escapeHTML(item.id)}">Done</button>`}
-      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}">Delete</button>
+      ${item.status === "completed" ? "" : `<button type="button" data-action-item-complete="${escapeHTML(item.id)}">Complete</button>`}
+      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}">Delete task</button>
     </p>
   </article>`).join("")}</div>`;
 }
@@ -2990,7 +2991,7 @@ async function updateAnnotation(button) {
 }
 
 async function deleteAnnotation(button) {
-  const confirmed = await ui.confirmDestructive({ title: "Delete annotation", body: "This removes the saved quote and note from this bookmark.", confirm: "Delete", cancel: "Keep annotation" });
+  const confirmed = await ui.confirmDestructive({ title: "Delete annotation", body: "This removes the saved quote and note from this bookmark.", confirm: "Delete annotation", cancel: "Keep annotation" });
   if (!confirmed) return;
   const done = setButtonBusy(button, "Deleting");
   try {
@@ -3012,7 +3013,7 @@ async function settingsPage() {
     ["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."],
     ["tags", "Tags", "Keep tag names consistent and merge aliases into one tag."],
     ["connections", "Connections", "Connect provider accounts and sync saved items."],
-    ["api-keys", "API Keys", "Configure provider keys for enrichment and delivery."],
+    ["api-keys", "Provider settings", "Configure optional AI, email, and X connections."],
   ];
   const active = tabs.some(([id]) => id === section) ? section : "profile";
   setRoot(shell("Settings", `<section class="tabs" id="settings-tabs">
@@ -3313,7 +3314,7 @@ function apiKeysPanel() {
       <div class="field"><label for="x-redirect-uri">X redirect URI</label><input id="x-redirect-uri" type="url" autocomplete="off"></div>
       <label class="checkbox-row"><input id="x-integration-enabled" type="checkbox"> X integration enabled</label>
       <p class="form-message" id="api-keys-message" data-form-message hidden></p>
-      <button type="submit">Save keys</button>
+      <button type="submit">Save provider settings</button>
     </form>
   </section>`;
 }
@@ -3747,7 +3748,7 @@ function memoryCard(memory) {
     <p class="meta">${Number(context.days_since_accessed || 0)} days since last review</p>
     <p class="button-row">
       <a class="button secondary" href="/bookmark/${escapeHTML(item.id)}">Open</a>
-      <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
+      <button type="button" data-review-complete="${escapeHTML(id)}">Complete review</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
       <button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>
     </p>
@@ -3770,7 +3771,7 @@ function reviewCard(item) {
     ${nextAction || importance ? `<p class="meta">${nextAction ? `Next: ${escapeHTML(nextAction)}` : ""}${nextAction && importance ? " · " : ""}${importance ? `Priority ${importance}` : ""}</p>` : ""}
     <p class="button-row">
       <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
-      <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
+      <button type="button" data-review-complete="${escapeHTML(id)}">Complete review</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
       ${isNote ? "" : `<button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>`}
     </p>
@@ -4076,10 +4077,10 @@ function adminUserRow(user) {
     <td>${formatDate(user.last_bookmark_at)}</td>
     <td>${user.is_admin ? "Admin" : user.invite_pending ? "Invited" : user.banned ? "Banned" : "Active"}</td>
     <td><div class="button-row">
-      <button type="button" class="secondary" data-admin-user-detail="${escapeHTML(user.id)}">View</button>
-      <button type="button" class="secondary" data-admin-user-action="${action}" data-user-id="${escapeHTML(user.id)}">${action === "ban" ? "Ban" : "Unban"}</button>
-      <button type="button" class="secondary" data-admin-user-action="reset-password" data-user-id="${escapeHTML(user.id)}">Reset</button>
-      <button type="button" class="danger" data-admin-user-action="delete" data-user-id="${escapeHTML(user.id)}">Delete</button>
+      <button type="button" class="secondary" data-admin-user-detail="${escapeHTML(user.id)}">View details</button>
+      <button type="button" class="secondary" data-admin-user-action="${action}" data-user-id="${escapeHTML(user.id)}">${action === "ban" ? "Ban user" : "Unban user"}</button>
+      <button type="button" class="secondary" data-admin-user-action="reset-password" data-user-id="${escapeHTML(user.id)}">Reset password</button>
+      <button type="button" class="danger" data-admin-user-action="delete" data-user-id="${escapeHTML(user.id)}">Delete user</button>
     </div></td>
   </tr>`;
 }
@@ -4196,7 +4197,7 @@ async function requestAdminResetPassword() {
     title: "Reset password",
     body,
     actions: [
-      { label: "Cancel", value: false, kind: "secondary" },
+      { label: "Keep current password", value: false, kind: "secondary" },
       { label: "Reset password", value: true, kind: "danger", beforeClose: () => body.querySelector("#admin-reset-password").reportValidity() },
     ],
   });
