@@ -168,6 +168,27 @@ go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
 
 Open `http://127.0.0.1:8080/auth`.
 
+`go run` compiles a fixed binary snapshot. Stop and restart the process after
+changing Go or embedded frontend source, switching branches, or pulling commits;
+it does not hot reload the current checkout. SQLite-backed runtime settings are
+resolved per request, so provider setting changes take effect without a restart.
+
+For the repository's persistent local development database, load the ignored
+environment file before starting the server:
+
+```bash
+set -a
+source .env.local
+set +a
+GOCACHE=/private/tmp/arivu-build-cache go run ./cmd/arivu serve --addr 127.0.0.1:8080 --db "$ARIVU_DB"
+```
+
+In a second terminal, verify the restarted server before trying a capture:
+
+```bash
+curl -fsS http://127.0.0.1:8080/api/health
+```
+
 ## Container
 
 Docker remains an advanced/manual path.

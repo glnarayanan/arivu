@@ -116,6 +116,10 @@ All notable changes to this project will be documented in this file.
   attestations.
 
 ### Changed
+
+- Documented that local `go run` processes are fixed build snapshots: restart
+  them after source or branch changes, while SQLite-backed runtime settings take
+  effect without a restart; added the persistent local development health check.
 - Import jobs now recover expired leases after worker crashes and count each
   bookmark's terminal import outcome once, so retryable failures no longer
   inflate progress totals. Job completion and failure updates are now fenced to
