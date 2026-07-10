@@ -130,6 +130,13 @@ admins can override. Legacy `GEMINI_API_KEY`, `GEMINI_MODEL`,
 deployments. Remote model-provider base URLs must use HTTPS unless they point to
 localhost for development or tests.
 
+Changing providers replaces the active provider tuple rather than carrying the
+previous provider's credentials or model forward. Authenticated providers
+require a new API Key during the switch. LM Studio, Ollama/local, and Custom can
+run without a key; their requests omit the Authorization header unless a key is
+configured. Provider requests do not follow HTTP redirects, so credentials stay
+bound to the configured Base URL.
+
 Built-in text-generation presets currently include OpenAI, OpenRouter, xAI,
 Gemini, Anthropic, DeepSeek, Mistral, Groq, Together AI, Fireworks AI,
 Perplexity, Cerebras, Z.ai, Hugging Face, LM Studio, Ollama/local, MiniMax, and

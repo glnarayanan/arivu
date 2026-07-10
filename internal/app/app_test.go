@@ -2771,6 +2771,15 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
 	}
+	if !strings.Contains(source, `modelField.value = preset.defaultModel || "";`) {
+		t.Fatal("provider changes must replace the previous provider model")
+	}
+	for _, provider := range providers.ModelProviders() {
+		expected := fmt.Sprintf(`{ id: "%s", label: "%s", baseURL: "%s", defaultModel: "%s" }`, provider.ID, provider.Name, provider.BaseURL, provider.DefaultModel)
+		if !strings.Contains(source, expected) {
+			t.Fatalf("embedded frontend provider catalog missing %s", provider.ID)
+		}
+	}
 }
 
 func TestFrontendAssetsUseCacheValidation(t *testing.T) {
@@ -2880,6 +2889,16 @@ func TestAdminUserMutations(t *testing.T) {
 	if meBody["is_admin"] != true {
 		t.Fatalf("admin capability missing from /auth/me: %#v", meBody)
 	}
+	profileUpdate := adminRequest(t, handler, http.MethodPut, "/api/user/profile", `{"name":"Updated Admin"}`, accessCookie, csrfCookie)
+	if profileUpdate.StatusCode != http.StatusOK {
+		t.Fatalf("profile update status = %d body=%s", profileUpdate.StatusCode, readBody(profileUpdate))
+	}
+	var profileBody map[string]any
+	_ = json.NewDecoder(profileUpdate.Body).Decode(&profileBody)
+	profileUpdate.Body.Close()
+	if profileBody["is_admin"] != true {
+		t.Fatalf("admin capability missing after profile update: %#v", profileBody)
+	}
 
 	invite := adminRequest(t, handler, http.MethodPost, "/api/admin/users/invite", `{"email":"invitee@example.com","name":"Invitee"}`, accessCookie, csrfCookie)
 	if invite.StatusCode != http.StatusOK {
@@ -2942,6 +2961,69 @@ func TestAdminUserMutations(t *testing.T) {
 	}
 	if storedCipher != "" || storedPlain != "https://api.example.com/v1" {
 		t.Fatalf("ai base url was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
+	}
+	badProviderSwitch := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openrouter","ai_api_key":"router-key","ai_model":"model with spaces"}`, accessCookie, csrfCookie)
+	if badProviderSwitch.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad provider switch status = %d body=%s", badProviderSwitch.StatusCode, readBody(badProviderSwitch))
+	}
+	badProviderSwitch.Body.Close()
+	effective, err := a.runtime.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.AIProvider != providers.ProviderOpenAI || effective.AIAPIKey != "test-ai" || effective.AIModel != "openai/gpt-5.1:preview" {
+		t.Fatalf("rejected provider switch changed live settings: %#v", effective)
+	}
+	missingProviderKey := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openrouter"}`, accessCookie, csrfCookie)
+	if missingProviderKey.StatusCode != http.StatusBadRequest {
+		t.Fatalf("provider switch without key status = %d body=%s", missingProviderKey.StatusCode, readBody(missingProviderKey))
+	}
+	missingProviderKey.Body.Close()
+	ollamaSwitch := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"ollama","ai_model":"llama3.2","ai_base_url":"http://localhost:11434/v1"}`, accessCookie, csrfCookie)
+	if ollamaSwitch.StatusCode != http.StatusOK {
+		t.Fatalf("ollama switch status = %d body=%s", ollamaSwitch.StatusCode, readBody(ollamaSwitch))
+	}
+	ollamaSwitch.Body.Close()
+	effective, err = a.runtime.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.AIProvider != providers.ProviderOllama || effective.AIAPIKey != "" || effective.AIModel != "llama3.2" {
+		t.Fatalf("unexpected keyless local settings: %#v", effective)
+	}
+	usageStatus := adminRequest(t, handler, http.MethodGet, "/api/admin/api-usage", "", accessCookie, csrfCookie)
+	if usageStatus.StatusCode != http.StatusOK {
+		t.Fatalf("api usage status = %d body=%s", usageStatus.StatusCode, readBody(usageStatus))
+	}
+	var usageBody map[string]any
+	_ = json.NewDecoder(usageStatus.Body).Decode(&usageBody)
+	usageStatus.Body.Close()
+	if usageBody["ai_configured"] != true || usageBody["gemini_configured"] != false {
+		t.Fatalf("keyless local readiness was reported incorrectly: %#v", usageBody)
+	}
+	openRouterSwitch := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openrouter","ai_api_key":"router-key"}`, accessCookie, csrfCookie)
+	if openRouterSwitch.StatusCode != http.StatusOK {
+		t.Fatalf("openrouter switch status = %d body=%s", openRouterSwitch.StatusCode, readBody(openRouterSwitch))
+	}
+	openRouterSwitch.Body.Close()
+	effective, err = a.runtime.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.AIProvider != providers.ProviderOpenRouter || effective.AIAPIKey != "router-key" || effective.AIModel != "~openai/gpt-latest" || effective.AIBaseURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("provider defaults were not applied atomically: %#v", effective)
+	}
+	missingModel := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openai","ai_api_key":"new-openai-key"}`, accessCookie, csrfCookie)
+	if missingModel.StatusCode != http.StatusBadRequest {
+		t.Fatalf("provider switch without model status = %d body=%s", missingModel.StatusCode, readBody(missingModel))
+	}
+	missingModel.Body.Close()
+	effective, err = a.runtime.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.AIProvider != providers.ProviderOpenRouter || effective.AIAPIKey != "router-key" {
+		t.Fatalf("rejected model-less switch changed live settings: %#v", effective)
 	}
 	xEnabled := adminRequest(t, handler, http.MethodGet, "/api/auth/x/enabled", "", accessCookie, csrfCookie)
 	var xEnabledBody map[string]any

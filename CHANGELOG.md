@@ -47,7 +47,7 @@ All notable changes to this project will be documented in this file.
 - Added Markdown/Obsidian-style bookmark export and a real Settings import/export panel.
 - Added Settings tag management for canonical tags and aliases.
 - Added Settings profile and API key panels backed by the existing profile, password-change, and admin key routes.
-- Added model-provider settings for text generation with OpenAI-compatible, Anthropic, Gemini, local, and custom presets; non-admin users no longer see the API Keys settings tab.
+- Added model-provider settings for text generation with OpenAI-compatible, Anthropic, Gemini, local, and custom presets; non-admin users no longer see the API Keys settings tab, keyless local providers work without dummy secrets, and provider changes replace stale model and credential state atomically.
 - Added Settings connection controls for X status, connect, sync, and disconnect using the existing X routes.
 - Added an admin audit log API and Admin page panel for recent sensitive account, settings, and auth events.
 - Added a standalone Notes screen for creating, editing, and deleting freeform notes.

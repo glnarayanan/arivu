@@ -135,3 +135,8 @@ inspect audit events, and review system status from `/admin`.
 Provider integrations are optional. Without a configured model provider, Arivu
 still stores bookmarks, notes, tags, links, search, review, tasks, reminders,
 imports, and exports using local deterministic processing.
+
+When changing Model Provider, enter the model for providers without a preset
+default and provide a new API Key for authenticated services. LM Studio,
+Ollama/local, and Custom may be used without an API key. Arivu replaces the
+previous provider's model, Base URL, and credential state during the switch.

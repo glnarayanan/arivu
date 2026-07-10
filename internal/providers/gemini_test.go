@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -103,6 +104,49 @@ func TestOpenAICompatibleInsightUsesChatCompletions(t *testing.T) {
 	}
 	if gotPath != "/v1/chat/completions" || gotAuth != "Bearer secret" || gotModel != "test-model" || gotPrompt != "Summarize this." {
 		t.Fatalf("unexpected openai-compatible request path=%q auth=%q model=%q prompt=%q", gotPath, gotAuth, gotModel, gotPrompt)
+	}
+}
+
+func TestKeylessOllamaInsightUsesChatCompletions(t *testing.T) {
+	var gotAuth string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotAuth = r.Header.Get("Authorization")
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{"content": "local result"},
+			}},
+		})
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(&buf)}, nil
+	})}
+
+	ai := GeminiClient{Provider: ProviderOllama, Model: "llama3.2", HTTP: client}
+	result, err := ai.GenerateInsight(context.Background(), "Use the local model.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result != "local result" || gotAuth != "" {
+		t.Fatalf("unexpected keyless result=%q auth=%q", result, gotAuth)
+	}
+}
+
+func TestProviderClientRejectsRedirects(t *testing.T) {
+	client := GeminiClient{}.httpClient()
+	redirect, err := http.NewRequest(http.MethodGet, "https://redirected.example.test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.CheckRedirect(redirect, nil); !errors.Is(err, http.ErrUseLastResponse) {
+		t.Fatalf("redirect policy error = %v", err)
+	}
+
+	client.Transport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusTemporaryRedirect, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
+	})
+	ai := GeminiClient{Provider: ProviderAnthropic, APIKey: "do-not-forward", Model: "claude-test", BaseURL: "https://provider.example.test", HTTP: client}
+	_, err = ai.GenerateInsight(context.Background(), "Do not follow redirects.")
+	if err == nil || !strings.Contains(err.Error(), "status 307") {
+		t.Fatalf("redirect error = %v", err)
 	}
 }
 

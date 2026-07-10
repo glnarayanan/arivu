@@ -87,21 +87,17 @@ func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, dat
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return "", err
 	}
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), &buf)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("gemini ocr status %d", resp.StatusCode)
 	}
 	var decoded struct {
@@ -146,22 +142,18 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskTy
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return nil, err
 	}
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.embeddingEndpoint(), &buf)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", c.APIKey)
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("gemini embedding status %d", resp.StatusCode)
 	}
 	var decoded struct {
@@ -186,13 +178,14 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskTy
 
 func (c GeminiClient) generate(ctx context.Context, operation string, prompt string, promptLimit int) (result string, err error) {
 	defer func() { c.record(operation, err) }()
-	if c.APIKey == "" {
+	provider := c.provider()
+	if c.APIKey == "" && !provider.APIKeyOptional {
 		return "", ErrNotConfigured
 	}
 	if promptLimit > 0 && len(prompt) > promptLimit {
 		prompt = prompt[:promptLimit]
 	}
-	switch c.provider().Style {
+	switch provider.Style {
 	case ProviderStyleAnthropic:
 		return c.generateAnthropic(ctx, prompt)
 	case ProviderStyleOpenAI:
@@ -212,21 +205,17 @@ func (c GeminiClient) generateGemini(ctx context.Context, prompt string) (string
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return "", err
 	}
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), &buf)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("gemini status %d", resp.StatusCode)
 	}
 	var decoded struct {
@@ -271,14 +260,16 @@ func (c GeminiClient) generateOpenAICompatible(ctx context.Context, prompt strin
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("ai provider status %d", resp.StatusCode)
 	}
 	var decoded struct {
@@ -330,7 +321,7 @@ func (c GeminiClient) generateAnthropic(ctx context.Context, prompt string) (str
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("anthropic status %d", resp.StatusCode)
 	}
 	var decoded struct {
@@ -360,7 +351,12 @@ func (c GeminiClient) httpClient() *http.Client {
 	if c.HTTP != nil {
 		return c.HTTP
 	}
-	return &http.Client{Timeout: 30 * time.Second}
+	return &http.Client{
+		Timeout: 30 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 }
 
 func (c GeminiClient) provider() ModelProvider {

@@ -28,11 +28,12 @@ const (
 )
 
 type ModelProvider struct {
-	ID           string
-	Name         string
-	BaseURL      string
-	DefaultModel string
-	Style        string
+	ID             string
+	Name           string
+	BaseURL        string
+	DefaultModel   string
+	Style          string
+	APIKeyOptional bool
 }
 
 var modelProviders = []ModelProvider{
@@ -50,10 +51,10 @@ var modelProviders = []ModelProvider{
 	{ID: ProviderCerebras, Name: "Cerebras", BaseURL: "https://api.cerebras.ai/v1", Style: ProviderStyleOpenAI},
 	{ID: ProviderZAI, Name: "Z.ai", BaseURL: "https://api.z.ai/api/paas/v4", DefaultModel: "glm-4.5", Style: ProviderStyleOpenAI},
 	{ID: ProviderHuggingFace, Name: "Hugging Face", BaseURL: "https://router.huggingface.co/v1", Style: ProviderStyleOpenAI},
-	{ID: ProviderLMStudio, Name: "LM Studio", BaseURL: "http://localhost:1234/v1", Style: ProviderStyleOpenAI},
-	{ID: ProviderOllama, Name: "Ollama/local", BaseURL: "http://localhost:11434/v1", Style: ProviderStyleOpenAI},
+	{ID: ProviderLMStudio, Name: "LM Studio", BaseURL: "http://localhost:1234/v1", Style: ProviderStyleOpenAI, APIKeyOptional: true},
+	{ID: ProviderOllama, Name: "Ollama/local", BaseURL: "http://localhost:11434/v1", Style: ProviderStyleOpenAI, APIKeyOptional: true},
 	{ID: ProviderMiniMax, Name: "MiniMax", BaseURL: "https://api.minimax.io/v1", Style: ProviderStyleOpenAI},
-	{ID: ProviderCustom, Name: "Custom", Style: ProviderStyleOpenAI},
+	{ID: ProviderCustom, Name: "Custom", Style: ProviderStyleOpenAI, APIKeyOptional: true},
 }
 
 func ModelProviders() []ModelProvider {

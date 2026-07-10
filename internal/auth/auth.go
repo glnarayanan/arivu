@@ -333,7 +333,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, email string, password str
 }
 
 func (s *Service) Profile(w http.ResponseWriter, r *http.Request, user User) {
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, s.publicUser(user))
 }
 
 func (s *Service) UpdateProfile(w http.ResponseWriter, r *http.Request, user User) {
@@ -347,7 +347,7 @@ func (s *Service) UpdateProfile(w http.ResponseWriter, r *http.Request, user Use
 	name := strings.TrimSpace(body.Name)
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE users SET name=?, updated_at=? WHERE id=?`, name, time.Now().UTC().Format(time.RFC3339), user.ID)
 	user.Name = name
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, s.publicUser(user))
 }
 
 func (s *Service) AuthenticateSession(r *http.Request) (Session, error) {

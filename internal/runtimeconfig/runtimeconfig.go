@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -109,6 +110,15 @@ type resolvedValue struct {
 	source    string
 	keyID     string
 	updatedAt string
+}
+
+type settingExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+type settingWrite struct {
+	key string
+	raw string
 }
 
 func New(db *sql.DB, cfg config.Config) *Service {
@@ -452,8 +462,60 @@ func (s *Service) Set(ctx context.Context, key string, value any, updatedBy stri
 	if key == KeyXRedirectURI && raw == "" {
 		return s.Delete(ctx, key)
 	}
+	return s.writeSetting(ctx, s.db, key, raw, updatedBy, keyID)
+}
+
+// Apply validates a settings mutation before committing every write together.
+func (s *Service) Apply(ctx context.Context, values map[string]any, updatedBy string, keyID string) error {
+	writes := make([]settingWrite, 0, len(values))
+	deleteSet := map[string]bool{}
+	for key, value := range values {
+		if !Allowed(key) {
+			return fmt.Errorf("unknown setting key %s", key)
+		}
+		raw, err := normalizeValue(key, value)
+		if err != nil {
+			return err
+		}
+		if key == KeyXRedirectURI && raw == "" {
+			deleteSet[key] = true
+			continue
+		}
+		delete(deleteSet, key)
+		writes = append(writes, settingWrite{key: key, raw: raw})
+	}
+	sort.Slice(writes, func(i, j int) bool { return writes[i].key < writes[j].key })
+	deleteKeys := make([]string, 0, len(deleteSet))
+	for key := range deleteSet {
+		deleteKeys = append(deleteKeys, key)
+	}
+	sort.Strings(deleteKeys)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, write := range writes {
+		if err := s.writeSetting(ctx, tx, write.key, write.raw, updatedBy, keyID); err != nil {
+			return err
+		}
+	}
+	for _, key := range deleteKeys {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key=?`, key); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Service) writeSetting(ctx context.Context, executor settingExecer, key string, raw string, updatedBy string, keyID string) error {
 	now := nowRFC3339()
 	if IsSecret(key) {
+		if raw == "" {
+			_, err := executor.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=NULL,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, nil, nil, updatedBy, now)
+			return err
+		}
 		ciphertext, err := secrets.Seal(s.cfg.SecretKey, raw)
 		if err != nil {
 			return err
@@ -461,10 +523,10 @@ func (s *Service) Set(ctx context.Context, key string, value any, updatedBy stri
 		if keyID == "" {
 			keyID = "primary"
 		}
-		_, err = s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,value_plain=NULL,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, nil, keyID, updatedBy, now)
+		_, err = executor.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,value_plain=NULL,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, nil, keyID, updatedBy, now)
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, updatedBy, now)
+	_, err := executor.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, updatedBy, now)
 	return err
 }
 

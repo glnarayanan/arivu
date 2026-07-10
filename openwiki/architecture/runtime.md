@@ -58,7 +58,10 @@ Text generation uses `ai_provider`, encrypted `ai_api_key`, `ai_model`, and
 the older `gemini_*` SQLite keys remain fallbacks when the selected provider is
 Gemini so current installs keep working. Remote model-provider endpoints must
 use HTTPS; plain HTTP is accepted only for localhost development/test endpoints
-such as LM Studio or Ollama.
+such as LM Studio or Ollama. Provider changes validate and commit the provider,
+model, key, and Base URL together. LM Studio, Ollama/local, and Custom may run
+without an API key; other provider changes require a replacement key so a
+credential is never silently reused across providers.
 
 ---
 

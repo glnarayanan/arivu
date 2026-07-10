@@ -3350,22 +3350,28 @@ function updateModelProviderHints(form, prefix) {
 function setModelProviderFields(form, prefix, settings) {
   const providerField = form.querySelector(`#${prefix}ai-provider`);
   const modelField = form.querySelector(`#${prefix}ai-model`);
+  const apiKeyField = form.querySelector(`#${prefix}ai-api-key`);
   const baseURLField = form.querySelector(`#${prefix}ai-base-url`);
-  if (!providerField || !modelField || !baseURLField) return;
+  if (!providerField || !modelField || !apiKeyField || !baseURLField) return;
   const providerID = settings.ai_provider?.value || providerField.value || "gemini";
   const preset = modelProviderPreset(providerID);
   providerField.value = preset.id;
   modelField.value = settings.ai_model?.value || "";
+  apiKeyField.placeholder = "Leave blank to keep current value";
   baseURLField.value = settings.ai_base_url?.value || preset.baseURL || "";
   updateModelProviderHints(form, prefix);
 }
 
 function bindModelProviderDefaults(form, prefix) {
   const providerField = form.querySelector(`#${prefix}ai-provider`);
+  const modelField = form.querySelector(`#${prefix}ai-model`);
+  const apiKeyField = form.querySelector(`#${prefix}ai-api-key`);
   const baseURLField = form.querySelector(`#${prefix}ai-base-url`);
-  if (!providerField || !baseURLField) return;
+  if (!providerField || !modelField || !apiKeyField || !baseURLField) return;
   providerField.addEventListener("change", () => {
     const preset = modelProviderPreset(providerField.value);
+    modelField.value = preset.defaultModel || "";
+    apiKeyField.placeholder = "Enter a new key, or leave blank for keyless local use";
     baseURLField.value = preset.baseURL || "";
     updateModelProviderHints(form, prefix);
   });

@@ -14,6 +14,7 @@ import (
 
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/ids"
+	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/runtimeconfig"
 )
 
@@ -212,7 +213,14 @@ func (a *App) adminUpdateSettings(w http.ResponseWriter, r *http.Request, user a
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	changed := []string{}
+	updates := map[string]any{}
+	submitted := func(key string) string {
+		value, ok := body[key]
+		if !ok || value == nil {
+			return ""
+		}
+		return strings.TrimSpace(requestSettingString(value))
+	}
 	for key, value := range body {
 		if !runtimeconfig.Allowed(key) {
 			writeError(w, http.StatusBadRequest, "Unknown setting")
@@ -221,15 +229,65 @@ func (a *App) adminUpdateSettings(w http.ResponseWriter, r *http.Request, user a
 		if runtimeconfig.IsSecret(key) && strings.TrimSpace(requestSettingString(value)) == "" {
 			continue
 		}
-		if err := a.runtime.Set(r.Context(), key, value, user.Email, "primary"); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+		updates[key] = value
+	}
+
+	if rawProvider, ok := body[runtimeconfig.KeyAIProvider]; ok {
+		effective, err := a.runtime.Effective(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not load settings")
 			return
 		}
+		targetProvider := providers.NormalizeModelProvider(requestSettingString(rawProvider))
+		if targetProvider != effective.AIProvider {
+			definition := providers.ModelProviderDefinition(targetProvider)
+			if submitted(runtimeconfig.KeyAIModel) == "" {
+				if definition.DefaultModel == "" {
+					writeError(w, http.StatusBadRequest, "Model is required when changing model providers")
+					return
+				}
+				updates[runtimeconfig.KeyAIModel] = definition.DefaultModel
+			}
+			if submitted(runtimeconfig.KeyAIBaseURL) == "" {
+				if definition.BaseURL == "" {
+					writeError(w, http.StatusBadRequest, "Base URL is required when changing model providers")
+					return
+				}
+				updates[runtimeconfig.KeyAIBaseURL] = definition.BaseURL
+			}
+			if submitted(runtimeconfig.KeyAIAPIKey) == "" {
+				if targetProvider == providers.ProviderGemini {
+					legacy, err := a.runtime.StatusValue(r.Context(), runtimeconfig.KeyGeminiAPIKey)
+					if err != nil {
+						writeError(w, http.StatusInternalServerError, "Could not load settings")
+						return
+					}
+					if !legacy.Configured {
+						writeError(w, http.StatusBadRequest, "API Key is required when changing model providers")
+						return
+					}
+					updates[runtimeconfig.KeyAIAPIKey] = ""
+				} else if definition.APIKeyOptional {
+					updates[runtimeconfig.KeyAIAPIKey] = ""
+				} else {
+					writeError(w, http.StatusBadRequest, "API Key is required when changing model providers")
+					return
+				}
+			}
+		}
+	}
+
+	changed := make([]string, 0, len(updates))
+	for key := range updates {
 		changed = append(changed, key)
 	}
 	sort.Strings(changed)
 	if len(changed) == 0 {
 		writeError(w, http.StatusBadRequest, "No fields to update")
+		return
+	}
+	if err := a.runtime.Apply(r.Context(), updates, user.Email, "primary"); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	a.auditEvent(r.Context(), user.ID, "admin.settings.update", "settings", "", map[string]any{"keys": changed})
@@ -256,7 +314,10 @@ func (a *App) adminDeleteSetting(w http.ResponseWriter, r *http.Request, user au
 }
 
 func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.User) {
-	ai, _ := a.runtime.StatusValue(r.Context(), runtimeconfig.KeyAIAPIKey)
+	effective, _ := a.runtime.Effective(r.Context())
+	definition := providers.ModelProviderDefinition(effective.AIProvider)
+	aiConfigured := effective.AIModel != "" && effective.AIBaseURL != "" && (effective.AIAPIKey != "" || definition.APIKeyOptional)
+	geminiConfigured := effective.AIProvider == providers.ProviderGemini && effective.AIAPIKey != ""
 	usage := a.usage.Snapshot()
 	writeJSON(w, http.StatusOK, map[string]any{
 		"requests_today":          usage["requests_total"],
@@ -269,8 +330,8 @@ func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.Us
 		"limits":                  map[string]any{"max_rpm": 0, "max_tpm": 0, "max_daily": 0},
 		"current_date":            time.Now().UTC().Format("2006-01-02"),
 		"provider_usage":          usage,
-		"ai_configured":           ai.Configured,
-		"gemini_configured":       ai.Configured,
+		"ai_configured":           aiConfigured,
+		"gemini_configured":       geminiConfigured,
 		"summaries_completed":     countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='completed'`),
 		"summaries_pending":       countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='pending'`),
 		"summaries_failed":        countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='failed'`),
