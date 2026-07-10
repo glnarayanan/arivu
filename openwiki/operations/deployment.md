@@ -15,10 +15,11 @@ Pin a release when you need reproducible installs:
 curl -fsSL https://install.arivu.app | sudo ARIVU_VERSION=v1.2.3 bash
 ```
 
-The bootstrap script only downloads `arivu-installer`, verifies it against the
-release `SHA256SUMS`, installs it under `/usr/local/bin`, and starts the
-interactive installer. No GitHub CLI login or token is required on the target
-host.
+The bootstrap script downloads `arivu-installer`, verifies it against the
+release `SHA256SUMS`, and installs it under `/usr/local/bin`. On a fresh host it
+starts the interactive installer. When `/etc/arivu/arivu.env` already exists,
+the same command runs an upgrade instead, preserving the existing setup. No
+GitHub CLI login or token is required on the target host.
 
 The installer asks for:
 
@@ -84,12 +85,18 @@ Operational commands:
 
 ```bash
 arivu-installer status --domain arivu.example.com
+arivu --version
+arivu-installer --version
 sudo arivu-installer backup
 sudo arivu-installer restore --backup /var/backups/arivu/20260708T010203Z
 sudo arivu-installer upgrade
 sudo arivu-installer reconfigure
 sudo arivu-installer uninstall
 ```
+
+Release builds inject the Git tag into both binaries. A packaged release should
+report the same tag for the application and installer; `devel` is reserved for
+untagged local builds.
 
 `--tls-email` is rendered into Arivu-managed Caddy site blocks. Nginx and
 Apache snippets still leave certificate ownership to the existing proxy.
@@ -120,13 +127,30 @@ listen address, SQLite path, public URL, secure-cookie default, signup default,
 admin emails, and `SECRET_KEY`.
 
 Routine settings should be changed in Admin > Settings. Runtime-editable values
-include public URL, signup policy, secure-cookie status, Gemini, Resend, and X
-settings. Secret provider values are encrypted in SQLite. Gemini deployments can
-override the generation model with `GEMINI_MODEL` or the `gemini_model` runtime
-setting, and can override the provider endpoint with `GEMINI_BASE_URL` or
-`gemini_base_url`. When unset, Arivu uses Google's documented Gemini API base
-URL, `https://generativelanguage.googleapis.com`. Gemini base URLs must use
-HTTPS unless they point to localhost for development or tests.
+include public URL, signup policy, secure-cookie status, model-provider, Resend,
+and X settings. Secret provider values are encrypted in SQLite. Text generation
+uses `AI_PROVIDER`, `AI_API_KEY`, `AI_MODEL`, and `AI_BASE_URL` or the matching
+SQLite runtime settings `ai_provider`, `ai_api_key`, `ai_model`, and
+`ai_base_url`. The selected provider supplies a sensible default Base URL that
+admins can override. Legacy `GEMINI_API_KEY`, `GEMINI_MODEL`,
+`GEMINI_BASE_URL`, and `gemini_*` runtime settings still backfill Gemini
+deployments. Remote model-provider base URLs must use HTTPS unless they point to
+localhost for development or tests.
+
+Changing providers replaces the active provider tuple rather than carrying the
+previous provider's credentials or model forward. Authenticated providers
+require a new API Key during the switch. LM Studio, Ollama/local, and Custom can
+run without a key; their requests omit the Authorization header unless a key is
+configured. Provider requests do not follow HTTP redirects, so credentials stay
+bound to the configured Base URL.
+
+Built-in text-generation presets currently include OpenAI, OpenRouter, xAI,
+Gemini, Anthropic, DeepSeek, Mistral, Groq, Together AI, Fireworks AI,
+Perplexity, Cerebras, Z.ai, Hugging Face, LM Studio, Ollama/local, MiniMax, and
+Custom. OpenAI-compatible providers use `/chat/completions`; Anthropic uses the
+Messages API; Gemini uses the native Gemini generation endpoint. Provider-specific
+embeddings and image OCR are intentionally deferred except for the existing
+Gemini-backed paths. OpenCode-style client or proxy setups should use Custom.
 
 ## Backup, Restore, And Upgrade Safety
 
@@ -139,9 +163,24 @@ through a temporary file, repairs ownership, starts Arivu again, and checks the
 local `/api/health` endpoint before restarting the backup timer or reporting
 restore success.
 
-`arivu-installer upgrade` keeps the previous binary until the replacement has
-passed systemd and local HTTP health checks. Failed health checks roll the
-binary back and restart the Arivu service.
+`arivu-installer upgrade` downloads the app and installer artifacts from the
+same release and verifies both against `SHA256SUMS` before replacing anything.
+It preserves both previous executables until the new app has passed systemd and
+local HTTP health checks. Failed activation rolls both executables back and
+restarts the previous Arivu service. Embedded app-shell assets require browser
+cache revalidation, and service worker updates bypass the HTTP cache so the new
+frontend is visible as soon as the upgraded service is healthy.
+
+Installations created before installer self-updates were introduced need one
+bootstrap refresh after upgrading to a release that includes this behavior:
+
+```bash
+curl -fsSL https://install.arivu.app | sudo bash
+```
+
+Because the existing env file is detected, this refresh upgrades in place and
+does not rerun the setup wizard. Subsequent updates use
+`sudo arivu-installer upgrade` directly.
 
 ## Manual Development Run
 
@@ -150,6 +189,27 @@ go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
 ```
 
 Open `http://127.0.0.1:8080/auth`.
+
+`go run` compiles a fixed binary snapshot. Stop and restart the process after
+changing Go or embedded frontend source, switching branches, or pulling commits;
+it does not hot reload the current checkout. SQLite-backed runtime settings are
+resolved per request, so provider setting changes take effect without a restart.
+
+For the repository's persistent local development database, load the ignored
+environment file before starting the server:
+
+```bash
+set -a
+source .env.local
+set +a
+GOCACHE=/private/tmp/arivu-build-cache go run ./cmd/arivu serve --addr 127.0.0.1:8080 --db "$ARIVU_DB"
+```
+
+In a second terminal, verify the restarted server before trying a capture:
+
+```bash
+curl -fsS http://127.0.0.1:8080/api/health
+```
 
 ## Container
 

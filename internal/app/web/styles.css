@@ -672,6 +672,35 @@ input::placeholder, textarea::placeholder {
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
+.reader-annotation-composer {
+  position: fixed;
+  z-index: var(--z-dialog);
+  width: min(22rem, calc(100vw - 2 * var(--space-4)));
+  max-height: min(32rem, calc(100vh - 2 * var(--space-4)));
+  overflow: auto;
+  border: 2px solid var(--ink);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+  padding: var(--space-4);
+}
+.reader-annotation-composer form {
+  display: grid;
+  gap: var(--space-3);
+}
+.reader-annotation-composer .meta,
+.reader-annotation-composer .button-row {
+  margin: 0;
+}
+.reader-annotation-quote {
+  margin: 0;
+  max-height: 9rem;
+  overflow: auto;
+  border: 2px solid var(--line-soft);
+  background: #fffbeb;
+  padding: var(--space-3);
+  font-size: 1rem;
+  line-height: 1.45;
+}
 
 .tabs {
   display: grid;
@@ -869,6 +898,13 @@ input::placeholder, textarea::placeholder {
   }
   .task-form { grid-template-columns: 1fr; }
   .menu { left: 0; right: auto; width: min(100%, 20rem); }
+  .reader-annotation-composer {
+    top: auto !important;
+    right: max(var(--space-4), env(safe-area-inset-right));
+    bottom: max(var(--space-4), env(safe-area-inset-bottom));
+    left: max(var(--space-4), env(safe-area-inset-left)) !important;
+    width: auto;
+  }
 }
 
 @media (max-width: 460px) {

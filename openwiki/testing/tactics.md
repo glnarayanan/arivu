@@ -36,6 +36,14 @@ desktop and mobile screenshots for `/dashboard`, `/inbox`, `/focus`, `/review`,
 `/analytics`, and keep console errors empty. Theme checks should include
 primary buttons, cards, form controls, nav active state, and reader content.
 
+Annotation changes additionally need the reader selection composer checked for
+pointer and keyboard selection, quote-only save, Save failure retry,
+Escape/Cancel, source jump, and the unchanged manual disclosure fallback. At
+390x844, the composer must anchor above the bottom safe area. The first-party
+`extension/background.test.mjs` covers the external capture request, opt-in
+registration, permission-off state, source-page context-menu behavior, and
+expired-token cleanup; browser smoke validates the visible page surfaces.
+
 ---
 
 ## Checklist for Future AI Agents
@@ -50,8 +58,11 @@ When submitting modifications or adding enhancements to the Arivu codebase, you 
    node --check internal/app/web/sw.js
    node --check extension/background.js
    node --check extension/content.js
+   node --check extension/popup.js
+   node --check extension/selection-overlay.js
    node extension/url-utils.test.mjs
    node extension/content.test.mjs
+   node extension/background.test.mjs
    ```
 2. **Standard Library Over Custom Dependencies**:
    Do not introduce third-party HTTP routers, custom caching packages, or framework abstractions. Maintain Go `net/http` standard libraries.

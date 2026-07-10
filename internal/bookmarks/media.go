@@ -349,7 +349,7 @@ func (s *Service) extractImageText(ctx context.Context, input mediaImportInput) 
 	if contentType == "" {
 		contentType = http.DetectContentType(input.Data)
 	}
-	text, err := s.geminiClient(ctx).ExtractImageText(ctx, contentType, input.Data)
+	text, err := s.aiClient(ctx).ExtractImageText(ctx, contentType, input.Data)
 	if err != nil {
 		return ""
 	}

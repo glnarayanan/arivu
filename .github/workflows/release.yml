@@ -31,10 +31,12 @@ jobs:
       - run: go mod verify
       - run: go test ./...
       - name: Build native Linux artifacts
+        env:
+          RELEASE_LDFLAGS: -s -w -X github.com/glnarayanan/arivu/internal/buildinfo.releaseVersion=${{ github.ref_name }}
         run: |
           mkdir -p dist
-          go build -trimpath -ldflags="-s -w" -o "dist/arivu-linux-${{ matrix.arch }}" ./cmd/arivu
-          go build -trimpath -ldflags="-s -w" -o "dist/arivu-installer-linux-${{ matrix.arch }}" ./cmd/arivu-installer
+          go build -trimpath -ldflags="$RELEASE_LDFLAGS" -o "dist/arivu-linux-${{ matrix.arch }}" ./cmd/arivu
+          go build -trimpath -ldflags="$RELEASE_LDFLAGS" -o "dist/arivu-installer-linux-${{ matrix.arch }}" ./cmd/arivu-installer
           go version -m "dist/arivu-linux-${{ matrix.arch }}" > "dist/buildinfo-arivu-linux-${{ matrix.arch }}.txt"
           go version -m "dist/arivu-installer-linux-${{ matrix.arch }}" > "dist/buildinfo-installer-linux-${{ matrix.arch }}.txt"
       - uses: actions/attest-build-provenance@v3

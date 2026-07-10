@@ -54,7 +54,28 @@ else
 fi
 
 install -m 0755 "$tmp/$asset" "$install_dir/arivu-installer"
+
+case "${1:-}" in
+	install|plan|status|backup|restore|upgrade|reconfigure|uninstall|version|--version)
+		exec "$install_dir/arivu-installer" "$@"
+		;;
+esac
+
+if [ "$#" -gt 0 ]; then
+	if [ "$version" != "latest" ]; then
+		exec "$install_dir/arivu-installer" install --version "$version" "$@"
+	fi
+	exec "$install_dir/arivu-installer" install "$@"
+fi
+
+if [ -f /etc/arivu/arivu.env ]; then
+	if [ "$version" != "latest" ]; then
+		exec "$install_dir/arivu-installer" upgrade --version "$version" "$@"
+	fi
+	exec "$install_dir/arivu-installer" upgrade "$@"
+fi
+
 if [ "$version" != "latest" ]; then
-  exec "$install_dir/arivu-installer" install --version "$version" "$@"
+	exec "$install_dir/arivu-installer" install --version "$version" "$@"
 fi
 exec "$install_dir/arivu-installer" install "$@"

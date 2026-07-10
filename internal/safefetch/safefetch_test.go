@@ -100,3 +100,19 @@ func TestExtractArticlePrefersReadableContent(t *testing.T) {
 		t.Fatalf("article html not preserved safely: %q", articleHTML)
 	}
 }
+
+func TestTrimLeadingChromeUsesTheArticleTitle(t *testing.T) {
+	title := "Useful & Specific Article"
+	text := "Skip to content Privacy preferences and tracking options. " + title + " The article starts here."
+	if got := trimLeadingChrome(text, title); got != title+" The article starts here." {
+		t.Fatalf("trimLeadingChrome() = %q", got)
+	}
+}
+
+func TestTrimLeadingChromeKeepsOrdinaryArticleIntroductions(t *testing.T) {
+	title := "Useful & Specific Article"
+	text := "In this introduction, the author foreshadows " + title + ". The article continues."
+	if got := trimLeadingChrome(text, title); got != text {
+		t.Fatalf("trimLeadingChrome() = %q", got)
+	}
+}

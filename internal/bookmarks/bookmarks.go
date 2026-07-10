@@ -26,7 +26,7 @@ type Service struct {
 	db      *sql.DB
 	jobs    *jobs.Queue
 	fetcher *safefetch.Client
-	gemini  func(context.Context) providers.GeminiClient
+	ai      func(context.Context) providers.GeminiClient
 }
 
 type CountsResult struct {
@@ -36,21 +36,21 @@ type CountsResult struct {
 	Summaries   int
 }
 
-func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, gemini providers.GeminiClient) *Service {
-	return &Service{db: db, jobs: jobs, fetcher: fetcher, gemini: func(context.Context) providers.GeminiClient { return gemini }}
+func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, client providers.GeminiClient) *Service {
+	return &Service{db: db, jobs: jobs, fetcher: fetcher, ai: func(context.Context) providers.GeminiClient { return client }}
 }
 
-func (s *Service) SetGeminiProvider(fn func(context.Context) providers.GeminiClient) {
+func (s *Service) SetAIProvider(fn func(context.Context) providers.GeminiClient) {
 	if fn != nil {
-		s.gemini = fn
+		s.ai = fn
 	}
 }
 
-func (s *Service) geminiClient(ctx context.Context) providers.GeminiClient {
-	if s.gemini == nil {
+func (s *Service) aiClient(ctx context.Context) providers.GeminiClient {
+	if s.ai == nil {
 		return providers.GeminiClient{}
 	}
-	return s.gemini(ctx)
+	return s.ai(ctx)
 }
 
 func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -103,6 +103,102 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
 	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
+}
+
+// CreateExtensionAnnotation captures a selected external passage against an
+// existing bookmark, or creates the bookmark and its first annotation together.
+func (s *Service) CreateExtensionAnnotation(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		URL   string `json:"url"`
+		Title string `json:"title"`
+		Quote string `json:"quote"`
+		Note  string `json:"note"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	body.URL = strings.TrimSpace(body.URL)
+	body.Quote = strings.TrimSpace(body.Quote)
+	body.Note = strings.TrimSpace(body.Note)
+	if body.URL == "" {
+		writeError(w, http.StatusBadRequest, "URL is required")
+		return
+	}
+	if body.Quote == "" {
+		writeError(w, http.StatusBadRequest, "Quote is required")
+		return
+	}
+	if len(body.Quote) > maxAnnotationLen || len(body.Note) > maxAnnotationLen {
+		writeError(w, http.StatusBadRequest, "Annotation is too large")
+		return
+	}
+	if err := safefetch.ValidateURL(body.URL); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	parsed, _ := url.Parse(body.URL)
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not save annotation")
+		return
+	}
+	defer tx.Rollback()
+
+	var bookmarkID string
+	err = tx.QueryRowContext(r.Context(), `SELECT id FROM bookmarks WHERE user_id=? AND url=?`, user.ID, body.URL).Scan(&bookmarkID)
+	createdBookmark := false
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "Could not save annotation")
+		return
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		bookmarkID = ids.New()
+		result, insertErr := tx.ExecContext(r.Context(), `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, body.URL, fallback(strings.TrimSpace(body.Title), parsed.Hostname()), parsed.Hostname(), now, now)
+		if insertErr != nil {
+			writeError(w, http.StatusInternalServerError, "Could not save annotation")
+			return
+		}
+		rows, _ := result.RowsAffected()
+		createdBookmark = rows > 0
+		if !createdBookmark {
+			if err := tx.QueryRowContext(r.Context(), `SELECT id FROM bookmarks WHERE user_id=? AND url=?`, user.ID, body.URL).Scan(&bookmarkID); err != nil {
+				writeError(w, http.StatusInternalServerError, "Could not save annotation")
+				return
+			}
+		} else {
+			if _, err := tx.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now); err != nil {
+				writeError(w, http.StatusInternalServerError, "Could not save annotation")
+				return
+			}
+			if _, err := tx.ExecContext(r.Context(), `INSERT INTO item_states(user_id,item_type,item_id,stage,importance,next_action,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, user.ID, "bookmark", bookmarkID, "inbox", 0, "", now, now); err != nil {
+				writeError(w, http.StatusInternalServerError, "Could not save annotation")
+				return
+			}
+		}
+	}
+
+	annotationID := ids.New()
+	if _, err := tx.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, annotationID, user.ID, bookmarkID, body.Quote, body.Note, "{}", "[]", now, now); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not save annotation")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not save annotation")
+		return
+	}
+
+	jobID := ""
+	if createdBookmark {
+		payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": body.URL})
+		jobID, _ = s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", string(payload))
+	}
+	bookmark, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
+	annotation, _ := s.annotation(r.Context(), user.ID, annotationID)
+	s.refreshSearchIndex(r.Context(), user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bookmark, "annotation": annotation, "created_bookmark": createdBookmark, "job_id": jobID})
 }
 
 func (s *Service) Preview(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -500,7 +596,7 @@ func (s *Service) analyticsInsights(ctx context.Context, userID string) []map[st
 	insights := s.localInsights(ctx, userID)
 	insightCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if generated, err := s.geminiClient(ctx).GenerateInsight(insightCtx, s.analyticsPrompt(ctx, userID)); err == nil && strings.TrimSpace(generated) != "" {
+	if generated, err := s.aiClient(ctx).GenerateInsight(insightCtx, s.analyticsPrompt(ctx, userID)); err == nil && strings.TrimSpace(generated) != "" {
 		insights = append(insights, map[string]any{"type": "ai", "message": strings.TrimSpace(generated), "severity": "info"})
 	}
 	return insights
@@ -664,7 +760,7 @@ func (s *Service) GraphSearch(w http.ResponseWriter, r *http.Request, user auth.
 		return
 	}
 	var queryEmbedding []float64
-	if embedding, err := s.geminiClient(r.Context()).GenerateEmbedding(r.Context(), query, "retrieval_query"); err == nil {
+	if embedding, err := s.aiClient(r.Context()).GenerateEmbedding(r.Context(), query); err == nil {
 		queryEmbedding = embedding
 	}
 	results, threshold := rankGraphSearch(query, queryEmbedding, bookmarks)

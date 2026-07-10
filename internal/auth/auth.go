@@ -152,7 +152,16 @@ func (s *Service) loginWithAudience(w http.ResponseWriter, r *http.Request, audi
 }
 
 func (s *Service) Me(w http.ResponseWriter, r *http.Request, user User) {
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, s.publicUser(user))
+}
+
+func (s *Service) publicUser(user User) map[string]any {
+	return map[string]any{
+		"id":       user.ID,
+		"email":    user.Email,
+		"name":     user.Name,
+		"is_admin": s.cfg.AdminEmails[strings.ToLower(user.Email)],
+	}
 }
 
 func (s *Service) Logout(w http.ResponseWriter, r *http.Request, user User) {
@@ -324,7 +333,7 @@ func (s *Service) BootstrapAdmin(ctx context.Context, email string, password str
 }
 
 func (s *Service) Profile(w http.ResponseWriter, r *http.Request, user User) {
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, s.publicUser(user))
 }
 
 func (s *Service) UpdateProfile(w http.ResponseWriter, r *http.Request, user User) {
@@ -338,7 +347,7 @@ func (s *Service) UpdateProfile(w http.ResponseWriter, r *http.Request, user Use
 	name := strings.TrimSpace(body.Name)
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE users SET name=?, updated_at=? WHERE id=?`, name, time.Now().UTC().Format(time.RFC3339), user.ID)
 	user.Name = name
-	writeJSON(w, http.StatusOK, user)
+	writeJSON(w, http.StatusOK, s.publicUser(user))
 }
 
 func (s *Service) AuthenticateSession(r *http.Request) (Session, error) {
@@ -402,7 +411,7 @@ func (s *Service) issueBodySession(w http.ResponseWriter, r *http.Request, user 
 		"token_type":                    "bearer",
 		"access_token_expires_at":       time.Now().UTC().Add(s.cfg.SessionTTL).Format(time.RFC3339),
 		"refresh_token_expires_at":      time.Now().UTC().Add(ttl).Format(time.RFC3339),
-		"user":                          user,
+		"user":                          s.publicUser(user),
 		"reauth_required_after_migrate": false,
 	})
 }

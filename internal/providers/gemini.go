@@ -16,32 +16,35 @@ import (
 const (
 	defaultGeneratePromptLimit = 12000
 	summaryGeneratePromptLimit = 50000
+	GeminiEmbeddingModel       = "gemini-embedding-2"
+	embeddingDimensions        = 768
 )
+
+var defaultHTTPClient = &http.Client{
+	Timeout: 30 * time.Second,
+	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 type GeminiClient struct {
 	APIKey   string
 	BaseURL  string
 	Model    string
+	Provider string
 	HTTP     *http.Client
 	Recorder func(operation string, err error)
 }
 
-func (c GeminiClient) GenerateSummary(ctx context.Context, text string) (string, error) {
-	summary, err := c.GenerateSummaryFields(ctx, text)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(stringMapValue(summary, "one_sentence")), nil
-}
-
 func (c GeminiClient) GenerateSummaryFields(ctx context.Context, text string) (map[string]any, error) {
 	prompt := `You are an expert content analyst. Return only valid JSON with these keys:
-- one_sentence: one precise sentence, maximum 25 words
-- long_form: two concise paragraphs with the core argument, evidence, and takeaway
-- highlights: array of 4 to 6 standalone insights
-- suggested_tags: array of 4 to 6 lowercase hyphenated tags
+	- one_sentence: one precise sentence, maximum 25 words
+	- long_form: a 100-150 word executive briefing in two concise paragraphs: the core argument first, then evidence and the practical takeaway
+	- bullet_points: array of 3 to 5 concise, evidence-based takeaways
+	- highlights: array of 4 to 6 standalone insights
+	- suggested_tags: array of 4 to 6 lowercase hyphenated tags
 
-Avoid generic phrases like "this article discusses". Use article-specific names, numbers, and claims when present.
+Use article-specific names, numbers, and claims only when they appear in the article. Avoid generic phrases such as "this article discusses" or "paradigm shift", boilerplate, and promotional navigation text.
 
 ARTICLE:
 ` + text
@@ -58,7 +61,7 @@ func (c GeminiClient) GenerateInsight(ctx context.Context, prompt string) (strin
 
 func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, data []byte) (result string, err error) {
 	defer func() { c.record("ocr", err) }()
-	if c.APIKey == "" {
+	if c.APIKey == "" || !c.usesGeminiNative() {
 		return "", ErrNotConfigured
 	}
 	mimeType = strings.TrimSpace(strings.Split(mimeType, ";")[0])
@@ -86,21 +89,17 @@ func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, dat
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return "", err
 	}
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), &buf)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("gemini ocr status %d", resp.StatusCode)
 	}
 	var decoded struct {
@@ -121,9 +120,9 @@ func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, dat
 	return decoded.Candidates[0].Content.Parts[0].Text, nil
 }
 
-func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskType string) (values []float64, err error) {
+func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string) (values []float64, err error) {
 	defer func() { c.record("embedding", err) }()
-	if c.APIKey == "" {
+	if c.APIKey == "" || !c.usesGeminiNative() {
 		return nil, ErrNotConfigured
 	}
 	if strings.TrimSpace(text) == "" {
@@ -133,21 +132,14 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskTy
 		text = text[:12000]
 	}
 	body := map[string]any{
-		"model": "models/text-embedding-004",
 		"content": map[string]any{
 			"parts": []map[string]string{{"text": text}},
 		},
-	}
-	if taskType != "" {
-		body["taskType"] = normalizeEmbeddingTaskType(taskType)
+		"output_dimensionality": embeddingDimensions,
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return nil, err
-	}
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.embeddingEndpoint(), &buf)
 	if err != nil {
@@ -155,12 +147,12 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskTy
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("x-goog-api-key", c.APIKey)
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return nil, fmt.Errorf("gemini embedding status %d", resp.StatusCode)
 	}
 	var decoded struct {
@@ -185,12 +177,24 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskTy
 
 func (c GeminiClient) generate(ctx context.Context, operation string, prompt string, promptLimit int) (result string, err error) {
 	defer func() { c.record(operation, err) }()
-	if c.APIKey == "" {
+	provider := c.provider()
+	if c.APIKey == "" && !provider.APIKeyOptional {
 		return "", ErrNotConfigured
 	}
 	if promptLimit > 0 && len(prompt) > promptLimit {
 		prompt = prompt[:promptLimit]
 	}
+	switch provider.Style {
+	case ProviderStyleAnthropic:
+		return c.generateAnthropic(ctx, prompt)
+	case ProviderStyleOpenAI:
+		return c.generateOpenAICompatible(ctx, prompt)
+	default:
+		return c.generateGemini(ctx, prompt)
+	}
+}
+
+func (c GeminiClient) generateGemini(ctx context.Context, prompt string) (string, error) {
 	body := map[string]any{
 		"contents": []map[string]any{{
 			"parts": []map[string]string{{"text": prompt}},
@@ -200,21 +204,17 @@ func (c GeminiClient) generate(ctx context.Context, operation string, prompt str
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
 		return "", err
 	}
-	client := c.HTTP
-	if client == nil {
-		client = &http.Client{Timeout: 30 * time.Second}
-	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint(), &buf)
 	if err != nil {
 		return "", err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
+	resp, err := c.httpClient().Do(req)
 	if err != nil {
 		return "", err
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode >= 400 {
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("gemini status %d", resp.StatusCode)
 	}
 	var decoded struct {
@@ -235,18 +235,154 @@ func (c GeminiClient) generate(ctx context.Context, operation string, prompt str
 	return decoded.Candidates[0].Content.Parts[0].Text, nil
 }
 
+func (c GeminiClient) generateOpenAICompatible(ctx context.Context, prompt string) (string, error) {
+	model := c.model()
+	if model == "" {
+		return "", fmt.Errorf("ai model is required")
+	}
+	baseURL := c.baseURL()
+	if baseURL == "" {
+		return "", fmt.Errorf("ai base url is required")
+	}
+	body := map[string]any{
+		"model": model,
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": prompt,
+		}},
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/chat/completions", &buf)
+	if err != nil {
+		return "", err
+	}
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("ai provider status %d", resp.StatusCode)
+	}
+	var decoded struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+		} `json:"choices"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return "", err
+	}
+	if len(decoded.Choices) == 0 || strings.TrimSpace(decoded.Choices[0].Message.Content) == "" {
+		return "", fmt.Errorf("ai provider returned no content")
+	}
+	return decoded.Choices[0].Message.Content, nil
+}
+
+func (c GeminiClient) generateAnthropic(ctx context.Context, prompt string) (string, error) {
+	model := c.model()
+	if model == "" {
+		return "", fmt.Errorf("ai model is required")
+	}
+	baseURL := c.baseURL()
+	if baseURL == "" {
+		return "", fmt.Errorf("ai base url is required")
+	}
+	body := map[string]any{
+		"model":      model,
+		"max_tokens": 4096,
+		"messages": []map[string]string{{
+			"role":    "user",
+			"content": prompt,
+		}},
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(baseURL, "/")+"/v1/messages", &buf)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("x-api-key", c.APIKey)
+	req.Header.Set("anthropic-version", "2023-06-01")
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := c.httpClient().Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("anthropic status %d", resp.StatusCode)
+	}
+	var decoded struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return "", err
+	}
+	for _, part := range decoded.Content {
+		if strings.TrimSpace(part.Text) != "" {
+			return part.Text, nil
+		}
+	}
+	return "", fmt.Errorf("anthropic returned no content")
+}
+
 func (c GeminiClient) record(operation string, err error) {
 	if c.Recorder != nil {
 		c.Recorder(operation, err)
 	}
 }
 
+func (c GeminiClient) httpClient() *http.Client {
+	if c.HTTP != nil {
+		return c.HTTP
+	}
+	return defaultHTTPClient
+}
+
+func (c GeminiClient) provider() ModelProvider {
+	return ModelProviderDefinition(c.Provider)
+}
+
+func (c GeminiClient) usesGeminiNative() bool {
+	return c.provider().Style == ProviderStyleGemini
+}
+
+func (c GeminiClient) baseURL() string {
+	base := strings.TrimSpace(c.BaseURL)
+	if base != "" {
+		return strings.TrimRight(base, "/")
+	}
+	return strings.TrimRight(c.provider().BaseURL, "/")
+}
+
+func (c GeminiClient) model() string {
+	model := strings.TrimSpace(c.Model)
+	if model != "" {
+		return model
+	}
+	return strings.TrimSpace(c.provider().DefaultModel)
+}
+
 func (c GeminiClient) endpoint() string {
-	base := c.BaseURL
+	base := c.baseURL()
 	if base == "" {
 		base = config.DefaultGeminiBaseURL
 	}
-	model := strings.TrimSpace(c.Model)
+	model := c.model()
 	if model == "" {
 		model = config.DefaultGeminiModel
 	}
@@ -254,15 +390,11 @@ func (c GeminiClient) endpoint() string {
 }
 
 func (c GeminiClient) embeddingEndpoint() string {
-	base := c.BaseURL
+	base := c.baseURL()
 	if base == "" {
 		base = config.DefaultGeminiBaseURL
 	}
-	return strings.TrimRight(base, "/") + "/v1beta/models/text-embedding-004:embedContent?key=" + c.APIKey
-}
-
-func normalizeEmbeddingTaskType(taskType string) string {
-	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(taskType), "-", "_"))
+	return strings.TrimRight(base, "/") + "/v1beta/models/" + GeminiEmbeddingModel + ":embedContent?key=" + c.APIKey
 }
 
 func parseSummaryFields(raw string) (map[string]any, error) {
@@ -283,6 +415,7 @@ func parseSummaryFields(raw string) (map[string]any, error) {
 	}
 	decoded["one_sentence"] = strings.TrimSpace(stringMapValue(decoded, "one_sentence"))
 	decoded["long_form"] = strings.TrimSpace(stringMapValue(decoded, "long_form"))
+	decoded["bullet_points"] = stringSlice(decoded["bullet_points"])
 	decoded["highlights"] = stringSlice(decoded["highlights"])
 	decoded["suggested_tags"] = stringSlice(decoded["suggested_tags"])
 	return decoded, nil

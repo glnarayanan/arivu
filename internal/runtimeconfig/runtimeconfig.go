@@ -9,11 +9,13 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/glnarayanan/arivu/internal/config"
+	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/secrets"
 )
 
@@ -21,6 +23,10 @@ const (
 	KeyAppURL             = "app_url"
 	KeySignupEnabled      = "signups_enabled"
 	KeyCookieSecure       = "cookie_secure"
+	KeyAIProvider         = "ai_provider"
+	KeyAIAPIKey           = "ai_api_key"
+	KeyAIModel            = "ai_model"
+	KeyAIBaseURL          = "ai_base_url"
 	KeyGeminiAPIKey       = "gemini_api_key"
 	KeyGeminiModel        = "gemini_model"
 	KeyGeminiBaseURL      = "gemini_base_url"
@@ -36,6 +42,10 @@ var Keys = []string{
 	KeyAppURL,
 	KeySignupEnabled,
 	KeyCookieSecure,
+	KeyAIProvider,
+	KeyAIAPIKey,
+	KeyAIModel,
+	KeyAIBaseURL,
 	KeyGeminiAPIKey,
 	KeyGeminiModel,
 	KeyGeminiBaseURL,
@@ -48,6 +58,7 @@ var Keys = []string{
 }
 
 var SecretKeys = map[string]bool{
+	KeyAIAPIKey:      true,
 	KeyGeminiAPIKey:  true,
 	KeyResendAPIKey:  true,
 	KeyXClientID:     true,
@@ -69,6 +80,10 @@ type Effective struct {
 	AppURL              string
 	SignupEnabled       bool
 	CookieSecure        bool
+	AIProvider          string
+	AIAPIKey            string
+	AIModel             string
+	AIBaseURL           string
 	GeminiAPIKey        string
 	GeminiModel         string
 	GeminiBaseURL       string
@@ -97,18 +112,53 @@ type resolvedValue struct {
 	updatedAt string
 }
 
+type settingExecer interface {
+	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+type settingWrite struct {
+	key string
+	raw string
+}
+
 func New(db *sql.DB, cfg config.Config) *Service {
 	return &Service{db: db, cfg: cfg}
 }
 
 func FromConfig(cfg config.Config) Effective {
+	aiProvider := providers.NormalizeModelProvider(cfg.AIProvider)
+	aiDefinition := providers.ModelProviderDefinition(aiProvider)
+	aiAPIKey := strings.TrimSpace(cfg.AIAPIKey)
+	if aiAPIKey == "" && aiProvider == providers.ProviderGemini {
+		aiAPIKey = strings.TrimSpace(cfg.GeminiAPIKey)
+	}
+	aiModel := strings.TrimSpace(cfg.AIModel)
+	if aiModel == "" {
+		if aiProvider == providers.ProviderGemini {
+			aiModel = fallbackString(cfg.GeminiModel, aiDefinition.DefaultModel)
+		} else {
+			aiModel = aiDefinition.DefaultModel
+		}
+	}
+	aiBaseURL := strings.TrimSpace(cfg.AIBaseURL)
+	if aiBaseURL == "" {
+		if aiProvider == providers.ProviderGemini {
+			aiBaseURL = fallbackString(cfg.GeminiBaseURL, aiDefinition.BaseURL)
+		} else {
+			aiBaseURL = aiDefinition.BaseURL
+		}
+	}
 	return Effective{
 		AppURL:              cfg.AppURL,
 		SignupEnabled:       cfg.SignupEnabled,
 		CookieSecure:        cfg.CookieSecure,
+		AIProvider:          aiProvider,
+		AIAPIKey:            aiAPIKey,
+		AIModel:             aiModel,
+		AIBaseURL:           aiBaseURL,
 		GeminiAPIKey:        cfg.GeminiAPIKey,
 		GeminiModel:         fallbackString(cfg.GeminiModel, config.DefaultGeminiModel),
-		GeminiBaseURL:       cfg.GeminiBaseURL,
+		GeminiBaseURL:       fallbackString(cfg.GeminiBaseURL, config.DefaultGeminiBaseURL),
 		ResendAPIKey:        cfg.ResendAPIKey,
 		ResendFromEmail:     cfg.ResendFrom,
 		XClientID:           cfg.XClientID,
@@ -148,6 +198,22 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 	if err != nil {
 		return Effective{}, err
 	}
+	aiProvider, err := s.resolveAIProvider(ctx)
+	if err != nil {
+		return Effective{}, err
+	}
+	aiAPIKey, err := s.resolveAISecret(ctx, aiProvider.value)
+	if err != nil {
+		return Effective{}, err
+	}
+	aiModel, err := s.resolveAIModel(ctx, aiProvider.value)
+	if err != nil {
+		return Effective{}, err
+	}
+	aiBaseURL, err := s.resolveAIBaseURL(ctx, aiProvider.value)
+	if err != nil {
+		return Effective{}, err
+	}
 	gemini, err := s.resolve(ctx, KeyGeminiAPIKey)
 	if err != nil {
 		return Effective{}, err
@@ -159,6 +225,17 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 	geminiBaseURL, err := s.resolve(ctx, KeyGeminiBaseURL)
 	if err != nil {
 		return Effective{}, err
+	}
+	if aiProvider.value == providers.ProviderGemini {
+		if gemini.value == "" {
+			gemini.value = aiAPIKey.value
+		}
+		if geminiModel.value == "" {
+			geminiModel.value = aiModel.value
+		}
+		if geminiBaseURL.value == "" {
+			geminiBaseURL.value = aiBaseURL.value
+		}
 	}
 	resendKey, err := s.resolve(ctx, KeyResendAPIKey)
 	if err != nil {
@@ -191,6 +268,10 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 		AppURL:              appURL.value,
 		SignupEnabled:       parseBool(signups.value),
 		CookieSecure:        parseBool(cookieSecure.value),
+		AIProvider:          aiProvider.value,
+		AIAPIKey:            aiAPIKey.value,
+		AIModel:             aiModel.value,
+		AIBaseURL:           aiBaseURL.value,
 		GeminiAPIKey:        gemini.value,
 		GeminiModel:         geminiModel.value,
 		GeminiBaseURL:       geminiBaseURL.value,
@@ -213,7 +294,7 @@ func (s *Service) Status(ctx context.Context) (map[string]Value, error) {
 		value := appURL
 		if key != KeyAppURL {
 			var err error
-			value, err = s.resolve(ctx, key)
+			value, err = s.resolveStatus(ctx, key)
 			if err != nil {
 				return nil, err
 			}
@@ -227,7 +308,7 @@ func (s *Service) Status(ctx context.Context) (map[string]Value, error) {
 }
 
 func (s *Service) StatusValue(ctx context.Context, key string) (Value, error) {
-	value, err := s.resolve(ctx, key)
+	value, err := s.resolveStatus(ctx, key)
 	if err != nil {
 		return Value{}, err
 	}
@@ -239,6 +320,120 @@ func (s *Service) StatusValue(ctx context.Context, key string) (Value, error) {
 		value.value = defaultXRedirectURI(appURL.value)
 	}
 	return statusValue(value), nil
+}
+
+func (s *Service) resolveStatus(ctx context.Context, key string) (resolvedValue, error) {
+	switch key {
+	case KeyAIProvider:
+		return s.resolveAIProvider(ctx)
+	case KeyAIAPIKey:
+		provider, err := s.resolveAIProvider(ctx)
+		if err != nil {
+			return resolvedValue{}, err
+		}
+		return s.resolveAISecret(ctx, provider.value)
+	case KeyAIModel:
+		provider, err := s.resolveAIProvider(ctx)
+		if err != nil {
+			return resolvedValue{}, err
+		}
+		return s.resolveAIModel(ctx, provider.value)
+	case KeyAIBaseURL:
+		provider, err := s.resolveAIProvider(ctx)
+		if err != nil {
+			return resolvedValue{}, err
+		}
+		return s.resolveAIBaseURL(ctx, provider.value)
+	default:
+		return s.resolve(ctx, key)
+	}
+}
+
+func (s *Service) resolveAIProvider(ctx context.Context) (resolvedValue, error) {
+	value, err := s.resolve(ctx, KeyAIProvider)
+	if err != nil {
+		return resolvedValue{}, err
+	}
+	if value.value == "" {
+		value.value = providers.ProviderGemini
+		value.source = "default"
+	}
+	value.value = providers.NormalizeModelProvider(value.value)
+	return value, nil
+}
+
+func (s *Service) resolveAISecret(ctx context.Context, providerID string) (resolvedValue, error) {
+	value, err := s.resolve(ctx, KeyAIAPIKey)
+	if err != nil {
+		return resolvedValue{}, err
+	}
+	if value.value != "" || providerID != providers.ProviderGemini {
+		return value, nil
+	}
+	legacy, err := s.resolve(ctx, KeyGeminiAPIKey)
+	if err != nil {
+		return resolvedValue{}, err
+	}
+	if legacy.value == "" {
+		return value, nil
+	}
+	return legacyResolved(legacy, KeyAIAPIKey), nil
+}
+
+func (s *Service) resolveAIModel(ctx context.Context, providerID string) (resolvedValue, error) {
+	value, err := s.resolve(ctx, KeyAIModel)
+	if err != nil {
+		return resolvedValue{}, err
+	}
+	if value.value != "" {
+		return value, nil
+	}
+	definition := providers.ModelProviderDefinition(providerID)
+	if providerID == providers.ProviderGemini {
+		legacy, err := s.resolve(ctx, KeyGeminiModel)
+		if err != nil {
+			return resolvedValue{}, err
+		}
+		if legacy.value != "" {
+			return legacyResolved(legacy, KeyAIModel), nil
+		}
+	}
+	if definition.DefaultModel != "" {
+		return resolvedValue{key: KeyAIModel, value: definition.DefaultModel, source: "default"}, nil
+	}
+	return value, nil
+}
+
+func (s *Service) resolveAIBaseURL(ctx context.Context, providerID string) (resolvedValue, error) {
+	value, err := s.resolve(ctx, KeyAIBaseURL)
+	if err != nil {
+		return resolvedValue{}, err
+	}
+	if value.value != "" {
+		return value, nil
+	}
+	definition := providers.ModelProviderDefinition(providerID)
+	if providerID == providers.ProviderGemini {
+		legacy, err := s.resolve(ctx, KeyGeminiBaseURL)
+		if err != nil {
+			return resolvedValue{}, err
+		}
+		if legacy.value != "" {
+			return legacyResolved(legacy, KeyAIBaseURL), nil
+		}
+	}
+	if definition.BaseURL != "" {
+		return resolvedValue{key: KeyAIBaseURL, value: definition.BaseURL, source: "default"}, nil
+	}
+	return value, nil
+}
+
+func legacyResolved(value resolvedValue, key string) resolvedValue {
+	value.key = key
+	if value.source != "default" {
+		value.source = "legacy_" + value.source
+	}
+	return value
 }
 
 func statusValue(value resolvedValue) Value {
@@ -267,8 +462,60 @@ func (s *Service) Set(ctx context.Context, key string, value any, updatedBy stri
 	if key == KeyXRedirectURI && raw == "" {
 		return s.Delete(ctx, key)
 	}
+	return s.writeSetting(ctx, s.db, key, raw, updatedBy, keyID)
+}
+
+// Apply validates a settings mutation before committing every write together.
+func (s *Service) Apply(ctx context.Context, values map[string]any, updatedBy string, keyID string) error {
+	writes := make([]settingWrite, 0, len(values))
+	deleteSet := map[string]bool{}
+	for key, value := range values {
+		if !Allowed(key) {
+			return fmt.Errorf("unknown setting key %s", key)
+		}
+		raw, err := normalizeValue(key, value)
+		if err != nil {
+			return err
+		}
+		if key == KeyXRedirectURI && raw == "" {
+			deleteSet[key] = true
+			continue
+		}
+		delete(deleteSet, key)
+		writes = append(writes, settingWrite{key: key, raw: raw})
+	}
+	sort.Slice(writes, func(i, j int) bool { return writes[i].key < writes[j].key })
+	deleteKeys := make([]string, 0, len(deleteSet))
+	for key := range deleteSet {
+		deleteKeys = append(deleteKeys, key)
+	}
+	sort.Strings(deleteKeys)
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for _, write := range writes {
+		if err := s.writeSetting(ctx, tx, write.key, write.raw, updatedBy, keyID); err != nil {
+			return err
+		}
+	}
+	for _, key := range deleteKeys {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM settings WHERE key=?`, key); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
+}
+
+func (s *Service) writeSetting(ctx context.Context, executor settingExecer, key string, raw string, updatedBy string, keyID string) error {
 	now := nowRFC3339()
 	if IsSecret(key) {
+		if raw == "" {
+			_, err := executor.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=NULL,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, nil, nil, updatedBy, now)
+			return err
+		}
 		ciphertext, err := secrets.Seal(s.cfg.SecretKey, raw)
 		if err != nil {
 			return err
@@ -276,10 +523,10 @@ func (s *Service) Set(ctx context.Context, key string, value any, updatedBy stri
 		if keyID == "" {
 			keyID = "primary"
 		}
-		_, err = s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,value_plain=NULL,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, nil, keyID, updatedBy, now)
+		_, err = executor.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=excluded.value_cipher,value_plain=NULL,key_id=excluded.key_id,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, ciphertext, nil, keyID, updatedBy, now)
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, updatedBy, now)
+	_, err := executor.ExecContext(ctx, `INSERT INTO settings(key,value_cipher,value_plain,key_id,updated_by,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(key) DO UPDATE SET value_cipher=NULL,value_plain=excluded.value_plain,key_id=NULL,updated_by=excluded.updated_by,updated_at=excluded.updated_at`, key, nil, raw, nil, updatedBy, now)
 	return err
 }
 
@@ -318,10 +565,20 @@ func (s *Service) resolve(ctx context.Context, key string) (resolvedValue, error
 }
 
 func validateResolved(value resolvedValue) (resolvedValue, error) {
+	if value.key == KeyAIProvider {
+		if value.value == "" {
+			value.value = providers.ProviderGemini
+			if value.source == "unset" {
+				value.source = "default"
+			}
+		}
+		value.value = providers.NormalizeModelProvider(value.value)
+		return value, nil
+	}
 	if value.source == "default" || value.value == "" {
 		return value, nil
 	}
-	if value.key != KeyXRedirectURI && value.key != KeyGeminiModel && value.key != KeyGeminiBaseURL {
+	if value.key != KeyXRedirectURI && value.key != KeyAIModel && value.key != KeyAIBaseURL && value.key != KeyGeminiModel && value.key != KeyGeminiBaseURL {
 		return value, nil
 	}
 	normalized, err := normalizeValue(value.key, value.value)
@@ -350,10 +607,25 @@ func (s *Service) fallback(key string) resolvedValue {
 		} else {
 			value, source = "false", "default"
 		}
+	case KeyAIProvider:
+		value, source = envFallback("AI_PROVIDER", s.cfg.AIProvider)
+		if value == "" {
+			value, source = providers.ProviderGemini, "default"
+		}
+	case KeyAIAPIKey:
+		value, source = envFallback("AI_API_KEY", s.cfg.AIAPIKey)
+	case KeyAIModel:
+		value, source = envFallback("AI_MODEL", s.cfg.AIModel)
+	case KeyAIBaseURL:
+		value, source = envFallback("AI_BASE_URL", s.cfg.AIBaseURL)
 	case KeyGeminiAPIKey:
 		value, source = envFallback("GEMINI_API_KEY", s.cfg.GeminiAPIKey)
 	case KeyGeminiModel:
-		value, source = envFallback("GEMINI_MODEL", fallbackString(s.cfg.GeminiModel, config.DefaultGeminiModel))
+		if _, ok := os.LookupEnv("GEMINI_MODEL"); ok || (strings.TrimSpace(s.cfg.GeminiModel) != "" && strings.TrimSpace(s.cfg.GeminiModel) != config.DefaultGeminiModel) {
+			value, source = fallbackString(s.cfg.GeminiModel, config.DefaultGeminiModel), "environment"
+		} else {
+			value, source = config.DefaultGeminiModel, "default"
+		}
 	case KeyGeminiBaseURL:
 		if _, ok := os.LookupEnv("GEMINI_BASE_URL"); ok || strings.TrimSpace(s.cfg.GeminiBaseURL) != "" {
 			value, source = strings.TrimSpace(s.cfg.GeminiBaseURL), "environment"
@@ -406,7 +678,10 @@ func normalizeValue(key string, value any) (string, error) {
 		}
 		return strings.TrimRight(raw, "/"), nil
 	}
-	if key == KeyXRedirectURI || key == KeyGeminiBaseURL {
+	if key == KeyAIProvider {
+		return providers.NormalizeModelProvider(raw), nil
+	}
+	if key == KeyXRedirectURI || key == KeyAIBaseURL || key == KeyGeminiBaseURL {
 		if raw == "" {
 			return "", nil
 		}
@@ -420,11 +695,20 @@ func normalizeValue(key string, value any) (string, error) {
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
 			return "", fmt.Errorf("%s must use http or https", key)
 		}
-		if key == KeyGeminiBaseURL && parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
-			return "", fmt.Errorf("gemini_base_url must use https unless it points to localhost")
+		if (key == KeyAIBaseURL || key == KeyGeminiBaseURL) && parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+			return "", fmt.Errorf("%s must use https unless it points to localhost", key)
 		}
-		if key == KeyGeminiBaseURL {
+		if key == KeyAIBaseURL || key == KeyGeminiBaseURL {
 			return strings.TrimRight(raw, "/"), nil
+		}
+		return raw, nil
+	}
+	if key == KeyAIModel {
+		if raw == "" {
+			return "", fmt.Errorf("ai_model is required")
+		}
+		if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return "", fmt.Errorf("ai_model must not contain whitespace or control characters")
 		}
 		return raw, nil
 	}

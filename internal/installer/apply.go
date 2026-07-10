@@ -22,18 +22,20 @@ import (
 )
 
 type ApplyOptions struct {
-	Root              string
-	AdminPassword     string
-	AdminPasswordFile string
-	DryRun            bool
-	ArtifactURL       string
-	ChecksumsURL      string
-	InstallBinary     bool
+	Root                 string
+	AdminPassword        string
+	AdminPasswordFile    string
+	DryRun               bool
+	ArtifactURL          string
+	InstallerArtifactURL string
+	ChecksumsURL         string
+	InstallBinary        bool
 }
 
 var (
 	runCommand      = run
 	healthCheckFunc = healthCheck
+	downloadFunc    = download
 )
 
 func Apply(ctx context.Context, plan Plan, opts ApplyOptions) error {
@@ -177,7 +179,7 @@ func installArivuBinary(ctx context.Context, opts ApplyOptions, plan Plan) error
 	url := opts.ArtifactURL
 	sumsURL := opts.ChecksumsURL
 	if url == "" || sumsURL == "" {
-		defaultURL, defaultSums := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", plan.Options.Version, plan.Facts.Arch)
+		defaultURL, _, defaultSums := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", plan.Options.Version, plan.Facts.Arch)
 		if url == "" {
 			url = defaultURL
 		}
@@ -191,11 +193,11 @@ func installArivuBinary(ctx context.Context, opts ApplyOptions, plan Plan) error
 	if err := validateDownloadURL(sumsURL); err != nil {
 		return err
 	}
-	binary, err := download(ctx, url)
+	binary, err := downloadFunc(ctx, url)
 	if err != nil {
 		return err
 	}
-	sums, err := download(ctx, sumsURL)
+	sums, err := downloadFunc(ctx, sumsURL)
 	if err != nil {
 		return err
 	}
@@ -399,32 +401,179 @@ func restore(root string, backupDir string, rootInstall bool) error {
 }
 
 func Upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version string) error {
+	return upgrade(ctx, facts, opts, version, "/", activateUpgrade)
+}
+
+func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, root string, activate func(context.Context, string) error) error {
 	plan := Plan{Facts: facts, Options: Options{Version: strings.TrimSpace(version)}}
-	previous := "/usr/local/bin/arivu.previous"
-	if err := copyIfExists("/usr/local/bin/arivu", previous); err != nil {
+	appURL := opts.ArtifactURL
+	installerURL := opts.InstallerArtifactURL
+	sumsURL := opts.ChecksumsURL
+	defaultAppURL, defaultInstallerURL, defaultSumsURL := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", plan.Options.Version, facts.Arch)
+	customAppArtifact := appURL != ""
+	if appURL == "" {
+		appURL = defaultAppURL
+	}
+	if installerURL == "" && !customAppArtifact {
+		installerURL = defaultInstallerURL
+	}
+	if sumsURL == "" {
+		sumsURL = defaultSumsURL
+	}
+	targets := []string{appURL, sumsURL}
+	if installerURL != "" {
+		targets = append(targets, installerURL)
+	}
+	for _, target := range targets {
+		if err := validateDownloadURL(target); err != nil {
+			return err
+		}
+	}
+	sums, err := downloadFunc(ctx, sumsURL)
+	if err != nil {
 		return err
 	}
-	if err := installArivuBinary(ctx, opts, plan); err != nil {
+	app, err := downloadVerifiedArtifact(ctx, appURL, sums)
+	if err != nil {
 		return err
 	}
+	replacements := []*binaryReplacement{
+		{path: rootPath(root, "/usr/local/bin/arivu"), data: app},
+	}
+	if installerURL != "" {
+		installerBinary, err := downloadVerifiedArtifact(ctx, installerURL, sums)
+		if err != nil {
+			return err
+		}
+		replacements = append(replacements, &binaryReplacement{path: rootPath(root, "/usr/local/bin/arivu-installer"), data: installerBinary})
+	}
+	for _, replacement := range replacements {
+		if err := replacement.prepare(); err != nil {
+			for _, item := range replacements {
+				item.cleanup()
+			}
+			return err
+		}
+	}
+	defer func() {
+		for _, replacement := range replacements {
+			replacement.cleanup()
+		}
+	}()
+	for index, replacement := range replacements {
+		if err := replacement.commit(); err != nil {
+			for rollbackIndex := index - 1; rollbackIndex >= 0; rollbackIndex-- {
+				_ = replacements[rollbackIndex].rollback()
+			}
+			return err
+		}
+	}
+	if err := activate(ctx, root); err != nil {
+		var rollbackErr error
+		for index := len(replacements) - 1; index >= 0; index-- {
+			rollbackErr = errors.Join(rollbackErr, replacements[index].rollback())
+		}
+		rollbackErr = errors.Join(rollbackErr, activate(ctx, root))
+		if rollbackErr != nil {
+			return fmt.Errorf("activate upgraded Arivu: %w (rollback: %v)", err, rollbackErr)
+		}
+		return fmt.Errorf("activate upgraded Arivu: %w", err)
+	}
+	return nil
+}
+
+func activateUpgrade(ctx context.Context, root string) error {
 	if err := runCommand(ctx, "systemctl", "restart", "arivu.service"); err != nil {
-		_ = rollbackBinary(ctx, previous)
 		return err
 	}
 	if err := runCommand(ctx, "systemctl", "is-active", "--quiet", "arivu.service"); err != nil {
-		_ = rollbackBinary(ctx, previous)
 		return err
 	}
 	port := 8080
-	if opts, err := OptionsFromEnvFile("/etc/arivu/arivu.env"); err == nil && opts.BindPort != 0 {
+	if opts, err := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env")); err == nil && opts.BindPort != 0 {
 		port = opts.BindPort
 	}
-	if err := healthCheckFunc(ctx, port); err != nil {
-		_ = rollbackBinary(ctx, previous)
+	return healthCheckFunc(ctx, port)
+}
+
+func downloadVerifiedArtifact(ctx context.Context, target string, sums []byte) ([]byte, error) {
+	data, err := downloadFunc(ctx, target)
+	if err != nil {
+		return nil, err
+	}
+	if err := VerifyChecksum(data, sums, pathBase(target)); err != nil {
+		return nil, err
+	}
+	return data, nil
+}
+
+type binaryReplacement struct {
+	path        string
+	data        []byte
+	tmp         string
+	previous    string
+	hadOriginal bool
+	applied     bool
+}
+
+func (r *binaryReplacement) prepare() error {
+	r.tmp = r.path + ".tmp"
+	r.previous = r.path + ".previous"
+	if _, err := os.Stat(r.path); errors.Is(err, os.ErrNotExist) {
+		if _, previousErr := os.Stat(r.previous); previousErr == nil {
+			if err := os.Rename(r.previous, r.path); err != nil {
+				return err
+			}
+		}
+	} else if err != nil {
 		return err
 	}
-	_ = os.Remove(previous)
+	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
+		return err
+	}
+	_ = os.Remove(r.tmp)
+	return os.WriteFile(r.tmp, r.data, 0o755)
+}
+
+func (r *binaryReplacement) commit() error {
+	if _, err := os.Stat(r.path); err == nil {
+		_ = os.Remove(r.previous)
+		if err := os.Rename(r.path, r.previous); err != nil {
+			return err
+		}
+		r.hadOriginal = true
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(r.tmp, r.path); err != nil {
+		if r.hadOriginal {
+			return errors.Join(err, os.Rename(r.previous, r.path))
+		}
+		return err
+	}
+	r.applied = true
 	return nil
+}
+
+func (r *binaryReplacement) rollback() error {
+	if !r.applied {
+		return nil
+	}
+	r.applied = false
+	if err := os.Remove(r.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if r.hadOriginal {
+		return os.Rename(r.previous, r.path)
+	}
+	return nil
+}
+
+func (r *binaryReplacement) cleanup() {
+	_ = os.Remove(r.tmp)
+	if r.applied {
+		_ = os.Remove(r.previous)
+	}
 }
 
 func Uninstall(ctx context.Context, purge bool) error {
@@ -503,16 +652,6 @@ func copyRequired(source string, target string) error {
 	defer out.Close()
 	_, err = io.Copy(out, in)
 	return err
-}
-
-func rollbackBinary(ctx context.Context, previous string) error {
-	if _, err := os.Stat(previous); err != nil {
-		return err
-	}
-	if err := os.Rename(previous, "/usr/local/bin/arivu"); err != nil {
-		return err
-	}
-	return runCommand(ctx, "systemctl", "restart", "arivu.service")
 }
 
 func healthCheck(ctx context.Context, port int) error {

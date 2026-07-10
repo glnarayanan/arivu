@@ -40,13 +40,32 @@ Dashboard captures a URL with optional quick note and tags. Arivu archives the
 page through the server, sanitizes readable HTML, creates a visible processing
 job, and opens the saved bookmark.
 
-Bookmark pages are reader-first. The top surface is for reading, tags,
-summary/enrichment state, and source controls. The next-step panel captures the
+Bookmark pages are reader-first. The top surface is for reading, tags, a concise
+one-sentence summary, a longer plain-language explanation when available, and
+the supporting bullets/highlights. The next-step panel captures the
 one thing the item should become. Annotations, linked notes, explicit links,
 tasks, reminders, and related items stay in collapsed workbench groups until
-needed. When you select text inside the reader, the annotation form can copy it
-as a quote, store a text-quote selector, and later jump the saved annotation
-back to the matching source text.
+needed. Selecting non-empty archived reader text opens a compact inline
+composer with an optional note; Save records either a highlight or annotation
+without leaving the passage. Escape and Cancel dismiss it. Reader captures store
+a text-quote selector, so a saved annotation can later jump back to matching
+archived text. The disclosure form remains available for tags, editing, and
+manual quote entry.
+
+## Browser Extension Annotations
+
+The extension can also capture a selected passage on an external page. In the
+extension settings, turn on **Enable inline annotations on sites**; Arivu then
+asks the browser for optional HTTP(S) page access and shows the selection tool
+only on pages outside your Arivu origin. Save is always explicit and notes are
+optional.
+
+External captures attach to your existing bookmark for that exact page URL, or
+create the bookmark and queue its normal enrichment on the first capture. They
+store the quote and note, but do not create an external-page source selector in
+this release. A source jump is therefore available only after the archived
+bookmark contains a matching passage. Page and link saves retain their normal
+extension behavior; selected-text context-menu saves use this annotation flow.
 
 ## Notes, Links, Tasks, And Reminders
 
@@ -111,8 +130,8 @@ The same Settings import tab can also turn documents and media transcripts into
 searchable notes. Upload an EPUB, PDF, plain text, Markdown, HTML file, or image,
 or paste a YouTube/video transcript or OCR text. Arivu stores the result as a
 normal note with a `media:*` source so it appears in Inbox, search, export, and
-review. Image uploads use pasted OCR text when provided; if Gemini is configured,
-Arivu can attempt image text extraction automatically.
+review. Image uploads use pasted OCR text when provided; if the configured model
+provider is Gemini, Arivu can attempt image text extraction automatically.
 
 Calendar imports accept pasted ICS text and create meeting objects with UID,
 start, end, location, description, and source fields. Full JSON backups include
@@ -132,6 +151,11 @@ Legacy Arivu migrations use the JSON export path documented in
 Admins are listed in `ADMIN_EMAILS`. Admin users can manage provider settings,
 inspect audit events, and review system status from `/admin`.
 
-Provider integrations are optional. Without Gemini, Arivu still stores
-bookmarks, notes, tags, links, search, review, tasks, reminders, imports, and
-exports using local deterministic processing.
+Provider integrations are optional. Without a configured model provider, Arivu
+still stores bookmarks, notes, tags, links, search, review, tasks, reminders,
+imports, and exports using local deterministic processing.
+
+When changing Model Provider, enter the model for providers without a preset
+default and provide a new API Key for authenticated services. LM Studio,
+Ollama/local, and Custom may be used without an API key. Arivu replaces the
+previous provider's model, Base URL, and credential state during the switch.

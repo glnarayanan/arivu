@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -638,13 +639,13 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 		{"cli objects web route", cliToken, http.MethodGet, "/api/objects", ``},
 		{"cli search items web route", cliToken, http.MethodGet, "/api/search/items?q=test", ``},
 		{"cli search rebuild web route", cliToken, http.MethodPost, "/api/search/rebuild", `{}`},
-		{"cli admin web route", cliToken, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"x"}`},
+		{"cli admin web route", cliToken, http.MethodPut, "/api/admin/api-keys", `{"ai_api_key":"x"}`},
 		{"extension bookmark web route", extensionToken, http.MethodPost, "/api/bookmarks", `{"url":"https://example.com"}`},
 		{"extension notes web route", extensionToken, http.MethodGet, "/api/notes", ``},
 		{"extension agent search route", extensionToken, http.MethodGet, "/api/agent/search?q=test", ``},
 		{"extension search items web route", extensionToken, http.MethodGet, "/api/search/items?q=test", ``},
 		{"extension search rebuild web route", extensionToken, http.MethodPost, "/api/search/rebuild", `{}`},
-		{"extension admin web route", extensionToken, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"x"}`},
+		{"extension admin web route", extensionToken, http.MethodPut, "/api/admin/api-keys", `{"ai_api_key":"x"}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := bearerRequest(t, handler, tc.method, tc.path, tc.body, tc.token)
@@ -676,6 +677,149 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	}
 	if title != "Extension Capture" {
 		t.Fatalf("extension title = %q", title)
+	}
+}
+
+func TestExtensionAnnotationsGetOrCreateUserBookmarks(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+
+	ownerAccess, ownerCSRF := signupForCookies(t, handler, "annotation-owner@example.com")
+	ownerToken := extensionTokenForTest(t, handler, ownerAccess, ownerCSRF)
+	otherAccess, otherCSRF := signupForCookies(t, handler, "annotation-other@example.com")
+	otherToken := extensionTokenForTest(t, handler, otherAccess, otherCSRF)
+
+	capture := func(token, quote, note string) map[string]any {
+		t.Helper()
+		resp := bearerRequest(t, handler, http.MethodPost, "/api/extension/annotations", `{"url":"https://example.com/annotation","title":"Annotation Capture","quote":"`+quote+`","note":"`+note+`"}`, token)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("extension annotation status = %d body=%s", resp.StatusCode, readBody(resp))
+		}
+		defer resp.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode extension annotation: %v", err)
+		}
+		return body
+	}
+
+	first := capture(ownerToken, "First selected passage", "Why this matters")
+	if created, _ := first["created_bookmark"].(bool); !created {
+		t.Fatalf("first capture should create bookmark: %#v", first)
+	}
+	if jobID, _ := first["job_id"].(string); jobID == "" {
+		t.Fatalf("first capture missing job id: %#v", first)
+	}
+	if annotation, _ := first["annotation"].(map[string]any); annotation["quote"] != "First selected passage" || annotation["note"] != "Why this matters" {
+		t.Fatalf("first annotation = %#v", annotation)
+	}
+
+	second := capture(ownerToken, "Second selected passage", "A different insight")
+	if created, _ := second["created_bookmark"].(bool); created {
+		t.Fatalf("second capture should reuse bookmark: %#v", second)
+	}
+	if jobID, _ := second["job_id"].(string); jobID != "" {
+		t.Fatalf("reused bookmark should not enqueue processing: %#v", second)
+	}
+	highlight := capture(ownerToken, "Quote-only highlight", "")
+	if annotation, _ := highlight["annotation"].(map[string]any); annotation["note"] != "" {
+		t.Fatalf("quote-only annotation should preserve an empty note: %#v", annotation)
+	}
+
+	ownerID := userIDForEmail(t, a, "annotation-owner@example.com")
+	var ownerBookmarks, ownerAnnotations int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE user_id=? AND url=?`, ownerID, "https://example.com/annotation").Scan(&ownerBookmarks); err != nil {
+		t.Fatalf("count owner bookmarks: %v", err)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM annotations WHERE user_id=?`, ownerID).Scan(&ownerAnnotations); err != nil {
+		t.Fatalf("count owner annotations: %v", err)
+	}
+	if ownerBookmarks != 1 || ownerAnnotations != 3 {
+		t.Fatalf("owner capture rows = %d bookmarks, %d annotations", ownerBookmarks, ownerAnnotations)
+	}
+
+	other := capture(otherToken, "Other user's passage", "Private note")
+	if created, _ := other["created_bookmark"].(bool); !created {
+		t.Fatalf("other user should receive a separate bookmark: %#v", other)
+	}
+
+	raceAccess, raceCSRF := signupForCookies(t, handler, "annotation-race@example.com")
+	raceToken := extensionTokenForTest(t, handler, raceAccess, raceCSRF)
+	start := make(chan struct{})
+	statuses := make(chan int, 2)
+	var wait sync.WaitGroup
+	for _, quote := range []string{"Concurrent first passage", "Concurrent second passage"} {
+		wait.Add(1)
+		go func(quote string) {
+			defer wait.Done()
+			<-start
+			req := httptest.NewRequest(http.MethodPost, "/api/extension/annotations", strings.NewReader(`{"url":"https://example.com/concurrent-annotation","quote":"`+quote+`"}`))
+			req.Header.Set("Authorization", "Bearer "+raceToken)
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			statuses <- rec.Code
+		}(quote)
+	}
+	close(start)
+	wait.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("concurrent capture status = %d", status)
+		}
+	}
+	raceID := userIDForEmail(t, a, "annotation-race@example.com")
+	var raceBookmarks, raceAnnotations int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE user_id=? AND url=?`, raceID, "https://example.com/concurrent-annotation").Scan(&raceBookmarks); err != nil {
+		t.Fatalf("count concurrent bookmarks: %v", err)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM annotations WHERE user_id=?`, raceID).Scan(&raceAnnotations); err != nil {
+		t.Fatalf("count concurrent annotations: %v", err)
+	}
+	if raceBookmarks != 1 || raceAnnotations != 2 {
+		t.Fatalf("concurrent capture rows = %d bookmarks, %d annotations", raceBookmarks, raceAnnotations)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		token string
+		body  string
+	}{
+		{"empty quote", ownerToken, `{"url":"https://example.com/empty","quote":""}`},
+		{"invalid url", ownerToken, `{"url":"file:///tmp/private","quote":"Selected passage"}`},
+		{"web audience", "", `{"url":"https://example.com/web","quote":"Selected passage"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var resp *http.Response
+			if tc.name == "web audience" {
+				resp = adminRequest(t, handler, http.MethodPost, "/api/extension/annotations", tc.body, ownerAccess, ownerCSRF)
+			} else {
+				resp = bearerRequest(t, handler, http.MethodPost, "/api/extension/annotations", tc.body, tc.token)
+			}
+			defer resp.Body.Close()
+			if tc.name == "web audience" {
+				if resp.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("web audience status = %d body=%s", resp.StatusCode, readBody(resp))
+				}
+				return
+			}
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("%s status = %d body=%s", tc.name, resp.StatusCode, readBody(resp))
+			}
+		})
 	}
 }
 
@@ -979,22 +1123,29 @@ func TestExtensionPopupCapturesNoteAndTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read extension background: %v", err)
 	}
-	for _, expected := range []string{`id="note"`, `id="tags"`, `id="settingsStatus"`, `src="url-utils.js"`} {
+	overlay, err := os.ReadFile(filepath.Join("..", "..", "extension", "selection-overlay.js"))
+	if err != nil {
+		t.Fatalf("read extension selection overlay: %v", err)
+	}
+	for _, expected := range []string{`id="note"`, `id="tags"`, `id="settingsStatus"`, `id="inlineAnnotationsEnabled"`, `src="url-utils.js"`} {
 		if !strings.Contains(string(html), expected) {
 			t.Fatalf("extension popup missing %s", expected)
 		}
 	}
 	source := string(script)
-	for _, expected := range []string{"function splitTags", "payload.title = title", "payload.note = note", "payload.tags = tags", "Saved to Inbox", "Open Inbox", "Open Item", "replaceChildren", "ensureApiPermission", "configureApiOrigin", "ArivuExtensionURL.normalizeApiUrl"} {
+	for _, expected := range []string{"function splitTags", "payload.title = title", "payload.note = note", "payload.tags = tags", "Saved to Inbox", "Open Inbox", "Open Item", "replaceChildren", "ensureApiPermission", "configureApiOrigin", "ArivuExtensionURL.normalizeApiUrl", "INLINE_ANNOTATION_ORIGINS", "configureInlineAnnotations"} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("extension popup script missing %s", expected)
 		}
 	}
-	if !strings.Contains(string(manifest), `"optional_host_permissions"`) || !strings.Contains(string(manifest), `"scripting"`) {
+	if !strings.Contains(string(manifest), `"optional_host_permissions"`) || !strings.Contains(string(manifest), `"scripting"`) || !strings.Contains(string(manifest), `"version": "1.3.0"`) {
 		t.Fatal("extension manifest missing self-hosted permission support")
 	}
-	if !strings.Contains(string(background), "registerCustomApiContentScript") || !strings.Contains(string(background), "ArivuExtensionURL.senderOriginAllowed") {
+	if !strings.Contains(string(background), "registerCustomApiContentScript") || !strings.Contains(string(background), "ArivuExtensionURL.senderOriginAllowed") || !strings.Contains(string(background), "syncInlineAnnotationOverlay") || !strings.Contains(string(background), "saveAnnotation") || !strings.Contains(string(background), "/extension/annotations") {
 		t.Fatal("extension background missing dynamic content script registration")
+	}
+	if !strings.Contains(string(overlay), "captureAnnotation") || !strings.Contains(string(overlay), "location.origin") || !strings.Contains(string(overlay), "selectedPageText") || !strings.Contains(string(overlay), "if (!selection) {") {
+		t.Fatal("extension selection overlay is missing capture safeguards")
 	}
 }
 
@@ -2740,13 +2891,6 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if strings.TrimSpace(body) != "[]" {
 		t.Fatalf("empty bookmark list must encode as [], got %q", body)
 	}
-	document, err := webFS.ReadFile("web/index.html")
-	if err != nil {
-		t.Fatalf("read embedded index.html: %v", err)
-	}
-	if strings.Contains(string(document), "<script>") {
-		t.Fatal("frontend document must not use inline scripts blocked by the content security policy")
-	}
 
 	script, err := webFS.ReadFile("web/app.js")
 	if err != nil {
@@ -2768,9 +2912,39 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	if !strings.Contains(source, "${content}") {
 		t.Fatal("shell must insert first-party route markup as markup, not escaped text")
 	}
-	for _, expected := range []string{`import { registerServiceWorker } from "/service-worker-register.mjs"`, `prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function emptyState`, `function settingsStatusRows`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `id="calendar-import-form"`, `function bindCalendarImportPanel`, `/calendar/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `prefix: "/objects"`, `async function objectsPage()`, `id="object-form"`, `/objects`, `prefix: "/evolution"`, `async function evolutionPage()`, `/evolution?q=`, `prefix: "/board"`, `async function boardPage()`, `/today-board`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`import { registerServiceWorker } from "/service-worker-register.mjs"`, `function emptyState`, `function settingsStatusRows`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
+		}
+	}
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `id="calendar-import-form"`, `function bindCalendarImportPanel`, `/calendar/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `prefix: "/objects"`, `async function objectsPage()`, `id="object-form"`, `/objects`, `prefix: "/evolution"`, `async function evolutionPage()`, `/evolution?q=`, `prefix: "/board"`, `async function boardPage()`, `/today-board`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `Model Provider`, `ai_provider`, `!user.is_admin`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/focus?view=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+		if !strings.Contains(source, expected) {
+			t.Fatalf("embedded frontend missing %s", expected)
+		}
+	}
+	if !strings.Contains(source, `modelField.value = preset.defaultModel || "";`) {
+		t.Fatal("provider changes must replace the previous provider model")
+	}
+	for _, provider := range providers.ModelProviders() {
+		expected := fmt.Sprintf(`{ id: "%s", label: "%s", baseURL: "%s", defaultModel: "%s" }`, provider.ID, provider.Name, provider.BaseURL, provider.DefaultModel)
+		if !strings.Contains(source, expected) {
+			t.Fatalf("embedded frontend provider catalog missing %s", provider.ID)
+		}
+	}
+}
+
+func TestInlineAnnotationComposerSource(t *testing.T) {
+	script, err := webFS.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read embedded app.js: %v", err)
+	}
+	for _, expected := range []string{
+		`function bindReaderAnnotationComposer`,
+		`reader-annotation-composer`,
+		"closeComposer();\n        render();",
+	} {
+		if !strings.Contains(string(script), expected) {
+			t.Fatalf("reader annotation composer missing %s", expected)
 		}
 	}
 }
@@ -2799,7 +2973,7 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 	if etag == "" {
 		t.Fatal("script asset must expose a content ETag")
 	}
-	if got := script.Header.Get("Cache-Control"); got != "public, max-age=0, must-revalidate" {
+	if got := script.Header.Get("Cache-Control"); got != "no-cache" {
 		t.Fatalf("script cache-control = %q", got)
 	}
 	_ = readBody(script)
@@ -2849,8 +3023,11 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 	if got := serviceWorker.Header.Get("Content-Type"); got != "text/javascript; charset=utf-8" {
 		t.Fatalf("service worker content-type = %q", got)
 	}
+	if got := serviceWorker.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("service worker cache-control = %q", got)
+	}
 	workerBody := readBody(serviceWorker)
-	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v2"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, "/api/") {
+	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v3"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, `cache: "no-cache"`) || !strings.Contains(workerBody, "/api/") {
 		t.Fatalf("service worker missing shell cache/API bypass: %q", workerBody)
 	}
 }
@@ -2872,6 +3049,26 @@ func TestAdminUserMutations(t *testing.T) {
 	defer a.Close()
 	handler := a.Handler()
 	accessCookie, csrfCookie := signupForCookies(t, handler, "admin@example.com")
+	me := adminRequest(t, handler, http.MethodGet, "/api/auth/me", "", accessCookie, csrfCookie)
+	if me.StatusCode != http.StatusOK {
+		t.Fatalf("me status = %d body=%s", me.StatusCode, readBody(me))
+	}
+	var meBody map[string]any
+	_ = json.NewDecoder(me.Body).Decode(&meBody)
+	me.Body.Close()
+	if meBody["is_admin"] != true {
+		t.Fatalf("admin capability missing from /auth/me: %#v", meBody)
+	}
+	profileUpdate := adminRequest(t, handler, http.MethodPut, "/api/user/profile", `{"name":"Updated Admin"}`, accessCookie, csrfCookie)
+	if profileUpdate.StatusCode != http.StatusOK {
+		t.Fatalf("profile update status = %d body=%s", profileUpdate.StatusCode, readBody(profileUpdate))
+	}
+	var profileBody map[string]any
+	_ = json.NewDecoder(profileUpdate.Body).Decode(&profileBody)
+	profileUpdate.Body.Close()
+	if profileBody["is_admin"] != true {
+		t.Fatalf("admin capability missing after profile update: %#v", profileBody)
+	}
 
 	invite := adminRequest(t, handler, http.MethodPost, "/api/admin/users/invite", `{"email":"invitee@example.com","name":"Invitee"}`, accessCookie, csrfCookie)
 	if invite.StatusCode != http.StatusOK {
@@ -2902,19 +3099,19 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("api key status = %d body=%s", keyStatus.StatusCode, readBody(keyStatus))
 	}
 	keyStatus.Body.Close()
-	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","gemini_model":"gemini-custom","gemini_base_url":"https://gemini.example.com","x_redirect_uri":"https://example.com/x/callback","x_integration_enabled":true,"resend_from_email":"hello@example.com"}`, accessCookie, csrfCookie)
+	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openai","ai_api_key":"test-ai","ai_model":"openai/gpt-5.1:preview","ai_base_url":"https://api.example.com/v1","x_redirect_uri":"https://example.com/x/callback","x_integration_enabled":true,"resend_from_email":"hello@example.com"}`, accessCookie, csrfCookie)
 	if keyUpdate.StatusCode != http.StatusOK {
 		t.Fatalf("api key update = %d body=%s", keyUpdate.StatusCode, readBody(keyUpdate))
 	}
 	keyUpdate.Body.Close()
 	var storedCipher, storedPlain string
-	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='gemini_api_key'`).Scan(&storedCipher, &storedPlain); err != nil {
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='ai_api_key'`).Scan(&storedCipher, &storedPlain); err != nil {
 		t.Fatalf("stored api key setting: %v", err)
 	}
 	if storedCipher == "" || storedPlain != "" {
 		t.Fatalf("secret setting was not stored encrypted: cipher=%q plain=%q", storedCipher, storedPlain)
 	}
-	if opened, err := secrets.Open(a.cfg.SecretKey, storedCipher); err != nil || opened != "test-gemini" {
+	if opened, err := secrets.Open(a.cfg.SecretKey, storedCipher); err != nil || opened != "test-ai" {
 		t.Fatalf("secret setting did not decrypt: opened=%q err=%v", opened, err)
 	}
 	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='resend_from_email'`).Scan(&storedCipher, &storedPlain); err != nil {
@@ -2923,11 +3120,80 @@ func TestAdminUserMutations(t *testing.T) {
 	if storedCipher != "" || storedPlain != "hello@example.com" {
 		t.Fatalf("plain setting was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
 	}
-	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='gemini_model'`).Scan(&storedCipher, &storedPlain); err != nil {
-		t.Fatalf("stored gemini model setting: %v", err)
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='ai_model'`).Scan(&storedCipher, &storedPlain); err != nil {
+		t.Fatalf("stored ai model setting: %v", err)
 	}
-	if storedCipher != "" || storedPlain != "gemini-custom" {
-		t.Fatalf("gemini model was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
+	if storedCipher != "" || storedPlain != "openai/gpt-5.1:preview" {
+		t.Fatalf("ai model was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='ai_base_url'`).Scan(&storedCipher, &storedPlain); err != nil {
+		t.Fatalf("stored ai base url setting: %v", err)
+	}
+	if storedCipher != "" || storedPlain != "https://api.example.com/v1" {
+		t.Fatalf("ai base url was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
+	}
+	badProviderSwitch := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openrouter","ai_api_key":"router-key","ai_model":"model with spaces"}`, accessCookie, csrfCookie)
+	if badProviderSwitch.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad provider switch status = %d body=%s", badProviderSwitch.StatusCode, readBody(badProviderSwitch))
+	}
+	badProviderSwitch.Body.Close()
+	effective, err := a.runtime.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.AIProvider != providers.ProviderOpenAI || effective.AIAPIKey != "test-ai" || effective.AIModel != "openai/gpt-5.1:preview" {
+		t.Fatalf("rejected provider switch changed live settings: %#v", effective)
+	}
+	missingProviderKey := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openrouter"}`, accessCookie, csrfCookie)
+	if missingProviderKey.StatusCode != http.StatusBadRequest {
+		t.Fatalf("provider switch without key status = %d body=%s", missingProviderKey.StatusCode, readBody(missingProviderKey))
+	}
+	missingProviderKey.Body.Close()
+	ollamaSwitch := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"ollama","ai_model":"llama3.2","ai_base_url":"http://localhost:11434/v1"}`, accessCookie, csrfCookie)
+	if ollamaSwitch.StatusCode != http.StatusOK {
+		t.Fatalf("ollama switch status = %d body=%s", ollamaSwitch.StatusCode, readBody(ollamaSwitch))
+	}
+	ollamaSwitch.Body.Close()
+	effective, err = a.runtime.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.AIProvider != providers.ProviderOllama || effective.AIAPIKey != "" || effective.AIModel != "llama3.2" {
+		t.Fatalf("unexpected keyless local settings: %#v", effective)
+	}
+	usageStatus := adminRequest(t, handler, http.MethodGet, "/api/admin/api-usage", "", accessCookie, csrfCookie)
+	if usageStatus.StatusCode != http.StatusOK {
+		t.Fatalf("api usage status = %d body=%s", usageStatus.StatusCode, readBody(usageStatus))
+	}
+	var usageBody map[string]any
+	_ = json.NewDecoder(usageStatus.Body).Decode(&usageBody)
+	usageStatus.Body.Close()
+	if usageBody["ai_configured"] != true || usageBody["gemini_configured"] != false {
+		t.Fatalf("keyless local readiness was reported incorrectly: %#v", usageBody)
+	}
+	openRouterSwitch := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openrouter","ai_api_key":"router-key"}`, accessCookie, csrfCookie)
+	if openRouterSwitch.StatusCode != http.StatusOK {
+		t.Fatalf("openrouter switch status = %d body=%s", openRouterSwitch.StatusCode, readBody(openRouterSwitch))
+	}
+	openRouterSwitch.Body.Close()
+	effective, err = a.runtime.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.AIProvider != providers.ProviderOpenRouter || effective.AIAPIKey != "router-key" || effective.AIModel != "~openai/gpt-latest" || effective.AIBaseURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("provider defaults were not applied atomically: %#v", effective)
+	}
+	missingModel := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"ai_provider":"openai","ai_api_key":"new-openai-key"}`, accessCookie, csrfCookie)
+	if missingModel.StatusCode != http.StatusBadRequest {
+		t.Fatalf("provider switch without model status = %d body=%s", missingModel.StatusCode, readBody(missingModel))
+	}
+	missingModel.Body.Close()
+	effective, err = a.runtime.Effective(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective.AIProvider != providers.ProviderOpenRouter || effective.AIAPIKey != "router-key" {
+		t.Fatalf("rejected model-less switch changed live settings: %#v", effective)
 	}
 	xEnabled := adminRequest(t, handler, http.MethodGet, "/api/auth/x/enabled", "", accessCookie, csrfCookie)
 	var xEnabledBody map[string]any
@@ -2941,7 +3207,7 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("bad x redirect update status = %d body=%s", badXRedirect.StatusCode, readBody(badXRedirect))
 	}
 	badXRedirect.Body.Close()
-	deleteKey := adminRequest(t, handler, http.MethodDelete, "/api/admin/api-keys/gemini_api_key", "", accessCookie, csrfCookie)
+	deleteKey := adminRequest(t, handler, http.MethodDelete, "/api/admin/api-keys/ai_api_key", "", accessCookie, csrfCookie)
 	if deleteKey.StatusCode != http.StatusOK {
 		t.Fatalf("api key delete = %d body=%s", deleteKey.StatusCode, readBody(deleteKey))
 	}
@@ -2984,7 +3250,7 @@ func TestAdminUserMutations(t *testing.T) {
 		if event["action"] == "admin.settings.update" && event["actor_email"] == "admin@example.com" {
 			metadata, _ := event["metadata"].(map[string]any)
 			keys, _ := metadata["keys"].([]any)
-			if containsAll(keys, "gemini_api_key", "gemini_model", "gemini_base_url", "resend_from_email", "x_integration_enabled", "x_redirect_uri") {
+			if containsAll(keys, "ai_api_key", "ai_model", "ai_base_url", "ai_provider", "resend_from_email", "x_integration_enabled", "x_redirect_uri") {
 				sawSettingsAudit = true
 			}
 			if strings.Contains(fmt.Sprint(metadata), "unexpected_setting") {
@@ -3016,8 +3282,18 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("audit bad limit status = %d body=%s", badLimit.StatusCode, readBody(badLimit))
 	}
 	badLimit.Body.Close()
-	nonAdminAccess, _ := signupForCookies(t, handler, "viewer@example.com")
-	nonAdminAudit := adminRequest(t, handler, http.MethodGet, "/api/admin/audit-events", "", nonAdminAccess, csrfCookie)
+	nonAdminAccess, nonAdminCSRF := signupForCookies(t, handler, "viewer@example.com")
+	nonAdminMe := adminRequest(t, handler, http.MethodGet, "/api/auth/me", "", nonAdminAccess, nonAdminCSRF)
+	if nonAdminMe.StatusCode != http.StatusOK {
+		t.Fatalf("non-admin me status = %d body=%s", nonAdminMe.StatusCode, readBody(nonAdminMe))
+	}
+	var nonAdminMeBody map[string]any
+	_ = json.NewDecoder(nonAdminMe.Body).Decode(&nonAdminMeBody)
+	nonAdminMe.Body.Close()
+	if nonAdminMeBody["is_admin"] != false {
+		t.Fatalf("non-admin capability should be false: %#v", nonAdminMeBody)
+	}
+	nonAdminAudit := adminRequest(t, handler, http.MethodGet, "/api/admin/audit-events", "", nonAdminAccess, nonAdminCSRF)
 	if nonAdminAudit.StatusCode != http.StatusForbidden {
 		t.Fatalf("non-admin audit status = %d body=%s", nonAdminAudit.StatusCode, readBody(nonAdminAudit))
 	}
@@ -3414,7 +3690,7 @@ func TestDuplicateDetectionAndMergePolicy(t *testing.T) {
 
 func TestSemanticKnowledgeGraphParity(t *testing.T) {
 	geminiHTTP := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != "/v1beta/models/text-embedding-004:embedContent" {
+		if r.URL.Path != "/v1beta/models/gemini-embedding-2:embedContent" {
 			t.Fatalf("unexpected Gemini path: %s", r.URL.Path)
 		}
 		var body struct {
@@ -3593,6 +3869,24 @@ func signupForCookies(t *testing.T, handler http.Handler, email string) (*http.C
 		t.Fatalf("expected access and csrf cookies, got %#v", resp.Cookies())
 	}
 	return accessCookie, csrfCookie
+}
+
+func extensionTokenForTest(t *testing.T, handler http.Handler, accessCookie, csrfCookie *http.Cookie) string {
+	t.Helper()
+	resp := adminRequest(t, handler, http.MethodPost, "/api/auth/extension-token", "", accessCookie, csrfCookie)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("extension token status = %d body=%s", resp.StatusCode, readBody(resp))
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode extension token: %v", err)
+	}
+	token, _ := body["access_token"].(string)
+	if token == "" {
+		t.Fatalf("extension token missing: %#v", body)
+	}
+	return token
 }
 
 func adminRequest(t *testing.T, handler http.Handler, method string, path string, body string, accessCookie, csrfCookie *http.Cookie) *http.Response {

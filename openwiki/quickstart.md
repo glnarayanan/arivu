@@ -91,7 +91,7 @@ The `arivu` command suite acts as both a web server and a local CLI manager:
 |   |-- installer/              # Host preflight, install plans, and backup helpers
 |   |-- jobs/                   # Durable SQLite background queue and worker loops
 |   |-- migrate/                # Legacy Fernet-decryption and data ingesters
-|   |-- providers/              # Direct API wrappers for Gemini, Resend, and X
+|   |-- providers/              # Direct API wrappers for model providers, Resend, and X
 |   |-- runtimeconfig/          # Runtime provider settings from SQLite/env
 |   |-- safefetch/              # SSRF-shielded outbound HTTP client
 |   |-- sanitize/               # Restrictive HTML sanitizer

@@ -32,6 +32,15 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Added inline reader annotation capture with optional notes, selection-derived
+  text-quote selectors, retryable errors, Escape/Cancel behavior, and a
+  narrow-screen bottom composer while preserving the manual annotation form.
+- Added opt-in browser-extension inline annotations for external page text,
+  including dynamic optional-host registration, Arivu-origin exclusion,
+  exact-URL bookmark get-or-create, and extension-audience capture tests.
+- Added `arivu version`, `arivu --version`, `arivu-installer version`, and
+  `arivu-installer --version`; tagged release builds inject the exact Git tag
+  into both binaries so installed versions remain authoritative.
 - Created the standalone low-dependency Go repository for Arivu.
 - Included the embedded frontend, SQLite persistence, auth/session subsystem, safe fetcher, sanitizer, job queue, provider clients, browser extension, deployment assets, and legacy migration tooling.
 - Added contribution guidelines, code of conduct, GitHub sponsorship metadata, and expanded security reporting policy.
@@ -47,6 +56,7 @@ All notable changes to this project will be documented in this file.
 - Added Markdown/Obsidian-style bookmark export and a real Settings import/export panel.
 - Added Settings tag management for canonical tags and aliases.
 - Added Settings profile and API key panels backed by the existing profile, password-change, and admin key routes.
+- Added model-provider settings for text generation with OpenAI-compatible, Anthropic, Gemini, local, and custom presets; non-admin users no longer see the API Keys settings tab, keyless local providers work without dummy secrets, and provider changes replace stale model and credential state atomically.
 - Added Settings connection controls for X status, connect, sync, and disconnect using the existing X routes.
 - Added an admin audit log API and Admin page panel for recent sensitive account, settings, and auth events.
 - Added a standalone Notes screen for creating, editing, and deleting freeform notes.
@@ -115,6 +125,23 @@ All notable changes to this project will be documented in this file.
   attestations.
 
 ### Changed
+- Bookmark enrichment now preserves successful model-generated bullets,
+  highlights, and suggested tags instead of overwriting them with local fallback
+  text; bookmark pages render the associated long-form explanation, leading
+  capture banner text is trimmed before analysis, and Gemini semantic search
+  uses `gemini-embedding-2` after `text-embedding-004` retirement.
+- Documented that local `go run` processes are fixed build snapshots: restart
+  them after source or branch changes, while SQLite-backed runtime settings take
+  effect without a restart; added the persistent local development health check.
+- Installer upgrades now download and checksum-verify both the Arivu app and
+  installer from the same release, replace them transactionally, and roll both back
+  when service activation or health checks fail. The one-line bootstrap now
+  detects an existing install and repairs older installers through an in-place
+  upgrade instead of relaunching the setup wizard.
+- Mutable embedded frontend assets now require cache revalidation. Service
+  worker update checks bypass stale HTTP cache entries, online shell requests
+  revalidate, and the offline shell cache advances to v3 so a successful binary
+  upgrade cannot leave the previous interface active for hours.
 - Import jobs now recover expired leases after worker crashes and count each
   bookmark's terminal import outcome once, so retryable failures no longer
   inflate progress totals. Job completion and failure updates are now fenced to
@@ -153,7 +180,7 @@ All notable changes to this project will be documented in this file.
 - Runtime app settings now cover public URL, signup policy, and secure-cookie
   behavior through the same SQLite override path used by provider settings.
 - The Admin page now includes a Settings tab for public URL, signup policy,
-  secure-cookie state, Gemini, Resend, and X configuration.
+  secure-cookie state, model-provider, Resend, and X configuration.
 - The Admin page now exposes overview, API usage, users, system, activity,
   collections, and audit sections backed by SQLite-native admin endpoints.
 - Admin password reset now uses the same Argon2id password storage as user
