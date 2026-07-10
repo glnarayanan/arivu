@@ -165,10 +165,16 @@ restore success.
 
 `arivu-installer upgrade` downloads the app and installer artifacts from the
 same release and verifies both against `SHA256SUMS` before replacing anything.
-It preserves both previous executables until the new app has passed systemd and
-local HTTP health checks. Failed activation rolls both executables back and
-restarts the previous Arivu service. Embedded app-shell assets require browser
-cache revalidation, and service worker updates bypass the HTTP cache so the new
+If a custom application artifact is provided via `--artifact-url`, the upgrade
+retains compatibility by skipping the companion installer binary download while
+preserving atomic dual-binary safety properties. The upgrade mechanism runs as a
+fully transactional process: both the `arivu` and `arivu-installer` destination
+executables are prepared, tested, and atomically swapped. It preserves both previous
+executables until the new app has passed systemd and local HTTP health checks.
+Failed activation or health verification triggers an automatic rollback of both
+executables to their previous states and restarts the previous Arivu service.
+Embedded app-shell assets require browser cache revalidation, and service worker
+registration/assets are revalidated while bypassing stale HTTP caching so the new
 frontend is visible as soon as the upgraded service is healthy.
 
 Installations created before installer self-updates were introduced need one
