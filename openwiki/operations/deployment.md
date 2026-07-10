@@ -15,10 +15,11 @@ Pin a release when you need reproducible installs:
 curl -fsSL https://install.arivu.app | sudo ARIVU_VERSION=v1.2.3 bash
 ```
 
-The bootstrap script only downloads `arivu-installer`, verifies it against the
-release `SHA256SUMS`, installs it under `/usr/local/bin`, and starts the
-interactive installer. No GitHub CLI login or token is required on the target
-host.
+The bootstrap script downloads `arivu-installer`, verifies it against the
+release `SHA256SUMS`, and installs it under `/usr/local/bin`. On a fresh host it
+starts the interactive installer. When `/etc/arivu/arivu.env` already exists,
+the same command runs an upgrade instead, preserving the existing setup. No
+GitHub CLI login or token is required on the target host.
 
 The installer asks for:
 
@@ -84,6 +85,8 @@ Operational commands:
 
 ```bash
 arivu-installer status --domain arivu.example.com
+arivu --version
+arivu-installer --version
 sudo arivu-installer backup
 sudo arivu-installer restore --backup /var/backups/arivu/20260708T010203Z
 sudo arivu-installer upgrade
@@ -139,9 +142,22 @@ through a temporary file, repairs ownership, starts Arivu again, and checks the
 local `/api/health` endpoint before restarting the backup timer or reporting
 restore success.
 
-`arivu-installer upgrade` keeps the previous binary until the replacement has
-passed systemd and local HTTP health checks. Failed health checks roll the
-binary back and restart the Arivu service.
+`arivu-installer upgrade` downloads the app and installer artifacts from the
+same release and verifies both against `SHA256SUMS` before replacing anything.
+It preserves both previous executables until the new app has passed systemd and
+local HTTP health checks. Failed activation rolls both executables back and
+restarts the previous Arivu service.
+
+Installations created before installer self-updates were introduced need one
+bootstrap refresh after upgrading to a release that includes this behavior:
+
+```bash
+curl -fsSL https://install.arivu.app | sudo bash
+```
+
+Because the existing env file is detected, this refresh upgrades in place and
+does not rerun the setup wizard. Subsequent updates use
+`sudo arivu-installer upgrade` directly.
 
 ## Manual Development Run
 

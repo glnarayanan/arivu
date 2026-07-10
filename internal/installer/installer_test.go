@@ -210,16 +210,22 @@ func TestVerifyChecksumRejectsTamperedArtifact(t *testing.T) {
 }
 
 func TestReleaseArtifactURLsSupportPinnedVersions(t *testing.T) {
-	appURL, sumsURL := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", "v1.2.3", "arm64")
+	appURL, installerURL, sumsURL := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", "v1.2.3", "arm64")
 	if appURL != "https://github.com/glnarayanan/arivu/releases/download/v1.2.3/arivu-linux-arm64" {
 		t.Fatalf("versioned app URL = %s", appURL)
+	}
+	if installerURL != "https://github.com/glnarayanan/arivu/releases/download/v1.2.3/arivu-installer-linux-arm64" {
+		t.Fatalf("versioned installer URL = %s", installerURL)
 	}
 	if sumsURL != "https://github.com/glnarayanan/arivu/releases/download/v1.2.3/SHA256SUMS" {
 		t.Fatalf("versioned sums URL = %s", sumsURL)
 	}
-	latestURL, _ := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", "", "amd64")
+	latestURL, latestInstallerURL, _ := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", "", "amd64")
 	if latestURL != "https://github.com/glnarayanan/arivu/releases/latest/download/arivu-linux-amd64" {
 		t.Fatalf("latest app URL = %s", latestURL)
+	}
+	if latestInstallerURL != "https://github.com/glnarayanan/arivu/releases/latest/download/arivu-installer-linux-amd64" {
+		t.Fatalf("latest installer URL = %s", latestInstallerURL)
 	}
 }
 
