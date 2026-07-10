@@ -90,6 +90,19 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Bookmark cards now describe missing source metadata neutrally instead of
+  implying that every blank description is waiting for enrichment; reader and
+  import views remain the source of truth for processing status.
+- Clarified core navigation, workflow counts, Assistant safeguards,
+  destructive actions, provider settings, and admin controls with specific,
+  outcome-focused interface copy.
+- Reworked the embedded frontend palette into accessible semantic OKLCH roles,
+  then reduced supporting borders, shadows, typography weight, and motion while
+  preserving primary brutalist work surfaces.
+- Consolidated repeated empty states, runtime-setting rows, and shared visual
+  dimensions; moved service-worker registration into the CSP-approved app
+  module, added lifecycle regression coverage, refreshed the offline shell
+  cache, and contained mobile navigation within narrow viewports.
 - Restored legacy parity for key Go-port surfaces: X OAuth now completes from
   the Settings redirect callback, Analytics returns the combined legacy summary
   envelope with immediate first paint and resilient page rendering, bookmark extraction uses readable

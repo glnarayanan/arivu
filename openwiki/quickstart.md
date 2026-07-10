@@ -43,6 +43,7 @@ go test ./...
 # Check embedded frontend and extension scripts
 node --check internal/app/web/app.js
 node --check internal/app/web/sw.js
+node --test internal/app/webtest/service-worker-register.test.mjs
 node extension/url-utils.test.mjs
 node extension/content.test.mjs
 

@@ -1,3 +1,5 @@
+import { registerServiceWorker } from "/service-worker-register.mjs";
+
 const state = {
   user: null,
   cleanup: [],
@@ -705,8 +707,8 @@ async function todayPage() {
       </form>
       <section class="panel">
         <span class="meta">Operating loop</span>
-        <h2>${Number((inbox.counts || {}).inbox || 0)} inbox · ${openActions.length + dueReminders.length} open now · ${(review.items || []).length} review</h2>
-        <p>Capture what arrived, decide what deserves attention, work the dated loops, then review one older signal.</p>
+        <h2>${Number((inbox.counts || {}).inbox || 0)} in Inbox · ${openActions.length + dueReminders.length} due now · ${(review.items || []).length} ready to review</h2>
+        <p>Capture what arrived, decide what deserves attention, finish due work, then revisit one useful older item.</p>
         <div class="chips">
           <a href="/dashboard">Capture</a>
           <a href="/inbox">Triage</a>
@@ -846,7 +848,7 @@ async function openCommandPalette() {
       <button type="submit">Save</button>
     </form>
     <form class="form" data-command-note>
-      <h3>Create Note</h3>
+      <h3>Create note</h3>
       <div class="field"><label for="command-note-title">Title</label><input id="command-note-title" type="text"></div>
       <div class="field"><label for="command-note-body">Body</label><textarea id="command-note-body" rows="3"></textarea></div>
       <button type="submit">Create note</button>
@@ -860,7 +862,7 @@ async function openCommandPalette() {
       </div>
     </form>
     <form class="form" data-command-current ${current ? "" : "hidden"}>
-      <h3>Current Item</h3>
+      <h3>Current item</h3>
       <p class="meta">${current ? `${escapeHTML(current.type)}:${escapeHTML(current.id)}` : "Open a bookmark or note first."}</p>
       <div class="field"><label for="command-task">Task</label><input id="command-task" type="text" placeholder="Next concrete action"></div>
       <div class="field"><label for="command-reminder">Reminder</label><input id="command-reminder" type="datetime-local"></div>
@@ -940,7 +942,7 @@ async function openCommandPalette() {
       return "Link created";
     });
   });
-  await ui.dialog({ title: "Command Palette", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
+  await ui.dialog({ title: "Quick actions", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
 }
 
 async function commandRun(button, busyLabel, action) {
@@ -964,7 +966,7 @@ async function dashboardPage() {
   const bookmarkList = bookmarks || [];
   const params = new URLSearchParams(location.search);
   const shared = sharedCaptureParams();
-  setRoot(shell("Dashboard", `
+  setRoot(shell("Capture", `
     <section class="split">
       <form class="panel form" id="save-form">
         <span class="meta">Capture</span>
@@ -991,7 +993,7 @@ async function dashboardPage() {
       <label class="sr-only" for="search">Search bookmarks</label>
       <input id="search" type="search" placeholder="Search saved pages" value="${escapeHTML(params.get("search") || "")}">
       <button id="search-button" class="secondary" type="submit">Search</button>
-      <button id="answer-button" class="secondary" type="button">Answer</button>
+      <button id="answer-button" class="secondary" type="button">Ask saved pages</button>
       <details>
         <summary>Filters</summary>
         <label class="sr-only" for="filter-tag">Filter by tag</label>
@@ -1127,6 +1129,16 @@ function workflowEmptyState() {
   </div>`;
 }
 
+function emptyState({ eyebrow, title, body, tag = "div", panel = true, headingLevel = 2 }) {
+  const safeTag = tag === "article" || tag === "section" ? tag : "div";
+  const safeHeadingLevel = headingLevel === 3 ? 3 : 2;
+  return `<${safeTag} class="${panel ? "panel " : ""}empty-state">
+    <span class="meta">${escapeHTML(eyebrow)}</span>
+    <h${safeHeadingLevel}>${escapeHTML(title)}</h${safeHeadingLevel}>
+    <p>${escapeHTML(body)}</p>
+  </${safeTag}>`;
+}
+
 function dashboardFilters() {
   return {
     tag: document.querySelector("#filter-tag")?.value.trim() || "",
@@ -1195,7 +1207,7 @@ function bookmarkCard(b) {
   return `<a class="panel bookmark" href="/bookmark/${bookmarkID}">
     <span class="meta">${escapeHTML(b.domain || "web")} · ${Number(b.reading_time || 0)} min</span>
     <h2>${escapeHTML(b.title || b.url)}</h2>
-    <p>${escapeHTML(b.description || "Queued for enrichment")}</p>
+    <p>${escapeHTML(b.description || "No description available.")}</p>
   </a>`;
 }
 
@@ -1252,7 +1264,7 @@ async function inboxPage() {
       </div>
     </section>
     <section class="stack">
-      ${items.map(inboxCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No ${escapeHTML(stageLabel(stage))} items</h2><p>New captures and notes appear in Inbox until you decide what to do with them.</p></div>`}
+      ${items.map(inboxCard).join("") || emptyState({ eyebrow: "Clear", title: `No ${stageLabel(stage)} items`, body: "New captures and notes appear in Inbox until you decide what to do with them." })}
     </section>
   `));
   document.querySelectorAll("[data-inbox-select]").forEach((checkbox) => {
@@ -1402,8 +1414,8 @@ async function focusPage() {
     <section class="split">
       <section class="panel">
         <span class="meta">${escapeHTML(focusViewLabel(view))}</span>
-        <h2>${actionItems.length + reminderItems.length} open loops</h2>
-        <p>Work from concrete tasks first, then timed reminders. Everything here stays tied to the saved item it came from.</p>
+        <h2>${actionItems.length + reminderItems.length} tasks and reminders</h2>
+        <p>Start with concrete tasks, then check timed reminders. Every item links back to its source.</p>
       </section>
       <section class="panel">
         <h2>Queue</h2>
@@ -1452,8 +1464,8 @@ function focusActionItems(items, view) {
     <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.item_title || "")}</span></p>
     <p class="button-row">
       <a class="button secondary" href="${itemHref(item)}">Open item</a>
-      <button type="button" data-action-item-complete="${escapeHTML(item.id)}" aria-label="Complete action item ${escapeHTML(item.title || "")}">Done</button>
-      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}" aria-label="Delete action item ${escapeHTML(item.title || "")}">Delete</button>
+      <button type="button" data-action-item-complete="${escapeHTML(item.id)}" aria-label="Complete action item ${escapeHTML(item.title || "")}">Complete</button>
+      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}" aria-label="Delete action item ${escapeHTML(item.title || "")}">Delete task</button>
     </p>
   </article>`).join("")}</div>`;
 }
@@ -1467,8 +1479,8 @@ function focusReminders(items, view) {
       <a class="button secondary" href="${itemHref(item)}">Open item</a>
       <button type="button" class="secondary" data-reminder-snooze="${escapeHTML(item.id)}" data-minutes="30">30m</button>
       <button type="button" class="secondary" data-reminder-snooze="${escapeHTML(item.id)}" data-days="1">Tomorrow</button>
-      <button type="button" data-reminder-complete="${escapeHTML(item.id)}" aria-label="Complete reminder ${escapeHTML(item.note || item.item_title || "")}">Done</button>
-      <button type="button" class="danger" data-reminder-delete="${escapeHTML(item.id)}" aria-label="Delete reminder ${escapeHTML(item.note || item.item_title || "")}">Delete</button>
+      <button type="button" data-reminder-complete="${escapeHTML(item.id)}" aria-label="Complete reminder ${escapeHTML(item.note || item.item_title || "")}">Complete</button>
+      <button type="button" class="danger" data-reminder-delete="${escapeHTML(item.id)}" aria-label="Delete reminder ${escapeHTML(item.note || item.item_title || "")}">Delete reminder</button>
     </p>
   </article>`).join("")}</div>`;
 }
@@ -1482,11 +1494,11 @@ function focusEmptyState(type, view) {
     completed: "completed",
   }[view] || view;
   if (type === "action" && view !== "pending" && view !== "completed") {
-    return `<div class="empty-state"><span class="meta">Clear</span><h3>No ${escapeHTML(label)} action items</h3><p>Action items stay in pending or completed. Timed work appears under reminders.</p></div>`;
+    return emptyState({ eyebrow: "Clear", title: `No ${label} action items`, body: "Action items stay in pending or completed. Timed work appears under reminders.", panel: false, headingLevel: 3 });
   }
   const noun = type === "action" ? "action items" : "reminders";
   const body = type === "action" ? "Tasks added from Inbox or a saved item appear here." : "Timed nudges from saved items appear here.";
-  return `<div class="empty-state"><span class="meta">Clear</span><h3>No ${escapeHTML(label)} ${noun}</h3><p>${body}</p></div>`;
+  return emptyState({ eyebrow: "Clear", title: `No ${label} ${noun}`, body, panel: false, headingLevel: 3 });
 }
 
 function itemHref(item) {
@@ -1500,11 +1512,12 @@ async function assistantPage() {
   const status = params.get("status") || "pending";
   const result = await api(`/assistant/actions?status=${encodeURIComponent(status)}`);
   const actions = result.actions || [];
-  setRoot(shell("Assistant actions", `
+  setRoot(shell("Assistant", `
     <section class="split">
       <form class="panel form" id="assistant-suggest-form">
         <span class="meta">Planner</span>
-        <h2>Generate reviewable drafts</h2>
+        <h2>Draft suggested actions</h2>
+        <p>Arivu prepares suggestions only. Nothing changes until you review and run a proposal.</p>
         <div class="field">
           <label for="assistant-suggest-mode">Context</label>
           <select id="assistant-suggest-mode" name="mode">
@@ -1514,7 +1527,7 @@ async function assistantPage() {
             <option value="item">Specific item</option>
           </select>
         </div>
-        <div class="field"><label for="assistant-suggest-stage">Stage</label><select id="assistant-suggest-stage" name="stage">${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}">${stage}</option>`).join("")}</select></div>
+        <div class="field"><label for="assistant-suggest-stage">Stage</label><select id="assistant-suggest-stage" name="stage">${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}">${escapeHTML(stageLabel(stage))}</option>`).join("")}</select></div>
         <div class="field"><label for="assistant-suggest-query">Search</label><input id="assistant-suggest-query" name="query" type="search" maxlength="2000" placeholder="recall, launch, research"></div>
         <div class="split compact-split">
           <div class="field"><label for="assistant-suggest-type">Item type</label><select id="assistant-suggest-type" name="item_type"><option value="bookmark">Bookmark</option><option value="note">Note</option></select></div>
@@ -1558,7 +1571,7 @@ async function assistantPage() {
       </div>
     </section>
     <section class="stack">
-      ${actions.map(assistantActionCard).join("") || `<div class="panel empty-state"><span class="meta">No proposals</span><h2>Nothing waiting</h2><p>Queued assistant proposals appear here for review.</p></div>`}
+      ${actions.map(assistantActionCard).join("") || emptyState({ eyebrow: "No proposals", title: "Nothing waiting", body: "Queued assistant proposals appear here for review." })}
     </section>
   `));
   document.querySelector("#assistant-suggest-form").addEventListener("submit", submitAssistantSuggestions);
@@ -1626,7 +1639,7 @@ async function submitAssistantSuggestions(event) {
 
 function renderAssistantDrafts(drafts) {
   const target = document.querySelector("#assistant-drafts");
-  target.innerHTML = drafts.map(assistantDraftCard).join("") || `<div class="panel empty-state"><span class="meta">No drafts</span><h2>No reviewable draft found</h2><p>Try a different source or create a manual proposal.</p></div>`;
+  target.innerHTML = drafts.map(assistantDraftCard).join("") || emptyState({ eyebrow: "No drafts", title: "No reviewable draft found", body: "Try a different source or create a manual proposal." });
   target.querySelectorAll("[data-assistant-draft]").forEach((button) => {
     button.addEventListener("click", () => queueAssistantDraft(button));
   });
@@ -1859,7 +1872,7 @@ function annotationList(items) {
     <p class="button-row">
       <button type="button" class="secondary" data-annotation-jump="${escapeHTML(item.id)}">Jump to source</button>
       <button type="button" data-annotation-save="${escapeHTML(item.id)}">Save changes</button>
-      <button type="button" class="danger" data-annotation-delete="${escapeHTML(item.id)}">Delete</button>
+      <button type="button" class="danger" data-annotation-delete="${escapeHTML(item.id)}">Delete annotation</button>
     </p>
   </article>`).join("")}</div>`;
 }
@@ -1911,7 +1924,7 @@ async function notesPage() {
       </section>
     </section>
     <section class="stack">
-      ${notes.map(noteListItem).join("") || `<div class="panel empty-state"><span class="meta">No notes</span><h2>Start with one thought</h2><p>Standalone notes can be linked to bookmarks later through the reader workflow.</p></div>`}
+      ${notes.map(noteListItem).join("") || emptyState({ eyebrow: "No notes", title: "Start with one thought", body: "Standalone notes can be linked to bookmarks later through the reader workflow." })}
     </section>
   `));
   const form = document.querySelector("#standalone-note-form");
@@ -1980,7 +1993,7 @@ function standaloneNoteCard(note, notes, bookmarks = []) {
       ${note.bookmark_id ? `<a class="button secondary" href="/bookmark/${escapeHTML(note.bookmark_id)}">Open bookmark</a>` : ""}
       <a class="button secondary" href="/notes">All notes</a>
       <button type="button" data-note-save="${escapeHTML(note.id)}">Save changes</button>
-      <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete</button>
+      <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete note</button>
     </p>
     <section>
       <h3>Action items</h3>
@@ -2065,7 +2078,7 @@ async function objectsPage() {
       </form>
     </section>
     <section class="grid compact-grid">
-      ${objects.map(objectCard).join("") || `<article class="panel empty-state"><span class="meta">No objects</span><h2>Create the first object</h2><p>Use objects when a note needs to become a project, person, book, meeting, decision, or research thread.</p></article>`}
+      ${objects.map(objectCard).join("") || emptyState({ eyebrow: "No objects", title: "Create the first object", body: "Use objects when a note needs to become a project, person, book, meeting, decision, or research thread.", tag: "article" })}
     </section>
   `));
   bindObjectForms();
@@ -2154,7 +2167,7 @@ async function evolutionPage() {
       <button type="submit">Trace topic</button>
     </form>
     <section class="stack">
-      ${(result.timeline || []).map(evolutionItem).join("") || `<article class="panel empty-state"><span class="meta">No timeline yet</span><h2>Search a topic</h2><p>Arivu will line up matching daily notes, saved pages, notes, decisions, meetings, and projects.</p></article>`}
+      ${(result.timeline || []).map(evolutionItem).join("") || emptyState({ eyebrow: "No timeline yet", title: "Search a topic", body: "Arivu will line up matching daily notes, saved pages, notes, decisions, meetings, and projects.", tag: "article" })}
     </section>
   `));
   document.querySelector("#evolution-form").addEventListener("submit", (event) => {
@@ -2217,7 +2230,7 @@ async function bookmarkPage() {
       <p class="button-row">
         <a class="button" href="${escapeHTML(bookmark.url)}" target="_blank" rel="noreferrer noopener">Open original</a>
         <button type="button" class="secondary" id="toggle-read">${bookmark.read_status ? "Mark unread" : "Mark read"}</button>
-        <button type="button" class="danger" id="delete-bookmark">Delete</button>
+        <button type="button" class="danger" id="delete-bookmark">Delete bookmark</button>
       </p>
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
@@ -2459,8 +2472,8 @@ function reminderList(reminders) {
     ${reminder.note ? `<p>${escapeHTML(reminder.note)}</p>` : ""}
     <p class="button-row">
       ${reminder.status === "completed" ? "" : `<button type="button" class="secondary" data-reminder-snooze="${escapeHTML(reminder.id)}" data-minutes="30">30m</button><button type="button" class="secondary" data-reminder-snooze="${escapeHTML(reminder.id)}" data-days="1">Tomorrow</button>`}
-      ${reminder.status === "completed" ? "" : `<button type="button" data-reminder-complete="${escapeHTML(reminder.id)}">Done</button>`}
-      <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete</button>
+      ${reminder.status === "completed" ? "" : `<button type="button" data-reminder-complete="${escapeHTML(reminder.id)}">Complete</button>`}
+      <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete reminder</button>
     </p>
     ${reminder.status === "completed" ? "" : reminderEditForm(reminder)}
   </article>`).join("")}</div>`;
@@ -2540,8 +2553,8 @@ function actionItemsList(items) {
   return `<div class="stack">${items.map((item) => `<article class="annotation">
     <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.status || "pending")} · ${escapeHTML(item.item_title || "")}</span></p>
     <p class="button-row">
-      ${item.status === "completed" ? "" : `<button type="button" data-action-item-complete="${escapeHTML(item.id)}">Done</button>`}
-      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}">Delete</button>
+      ${item.status === "completed" ? "" : `<button type="button" data-action-item-complete="${escapeHTML(item.id)}">Complete</button>`}
+      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}">Delete task</button>
     </p>
   </article>`).join("")}</div>`;
 }
@@ -2990,7 +3003,7 @@ async function updateAnnotation(button) {
 }
 
 async function deleteAnnotation(button) {
-  const confirmed = await ui.confirmDestructive({ title: "Delete annotation", body: "This removes the saved quote and note from this bookmark.", confirm: "Delete", cancel: "Keep annotation" });
+  const confirmed = await ui.confirmDestructive({ title: "Delete annotation", body: "This removes the saved quote and note from this bookmark.", confirm: "Delete annotation", cancel: "Keep annotation" });
   if (!confirmed) return;
   const done = setButtonBusy(button, "Deleting");
   try {
@@ -3012,7 +3025,7 @@ async function settingsPage() {
     ["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."],
     ["tags", "Tags", "Keep tag names consistent and merge aliases into one tag."],
     ["connections", "Connections", "Connect provider accounts and sync saved items."],
-    ["api-keys", "API Keys", "Configure provider keys for enrichment and delivery."],
+    ["api-keys", "Provider settings", "Configure optional AI, email, and X connections."],
   ];
   const active = tabs.some(([id]) => id === section) ? section : "profile";
   setRoot(shell("Settings", `<section class="tabs" id="settings-tabs">
@@ -3313,7 +3326,7 @@ function apiKeysPanel() {
       <div class="field"><label for="x-redirect-uri">X redirect URI</label><input id="x-redirect-uri" type="url" autocomplete="off"></div>
       <label class="checkbox-row"><input id="x-integration-enabled" type="checkbox"> X integration enabled</label>
       <p class="form-message" id="api-keys-message" data-form-message hidden></p>
-      <button type="submit">Save keys</button>
+      <button type="submit">Save provider settings</button>
     </form>
   </section>`;
 }
@@ -3395,17 +3408,19 @@ function apiKeyStatus(keys) {
     x_redirect_uri: "X redirect URI",
     x_integration_enabled: "X enabled",
   };
-  return ["gemini_api_key", "gemini_model", "gemini_base_url", "resend_api_key", "resend_from_email", "x_client_id", "x_client_secret", "x_redirect_uri", "x_integration_enabled"]
-    .map((key) => {
-      const item = keys[key] || {};
-      const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
-      const configured = item.configured || value;
-      return `<article class="annotation">
-        <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
-        ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-api-key-revert="${escapeHTML(key)}">Remove override</button></p>` : ""}
-      </article>`;
-    })
-    .join("");
+  return settingsStatusRows(keys, labels, "api-key-revert");
+}
+
+function settingsStatusRows(settings, labels, revertAttribute) {
+  return Object.keys(labels).map((key) => {
+    const item = settings[key] || {};
+    const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
+    const configured = item.configured || value;
+    return `<article class="annotation">
+      <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
+      ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-${revertAttribute}="${escapeHTML(key)}">Remove override</button></p>` : ""}
+    </article>`;
+  }).join("");
 }
 
 function adminSettingsPanel(settings) {
@@ -3450,15 +3465,7 @@ function settingsStatus(settings) {
     x_redirect_uri: "X redirect URI",
     x_integration_enabled: "X enabled",
   };
-  return Object.keys(labels).map((key) => {
-    const item = settings[key] || {};
-    const value = item.masked_value || (item.value === undefined || item.value === null ? "" : String(item.value));
-    const configured = item.configured || value;
-    return `<article class="annotation">
-      <p><strong>${escapeHTML(labels[key])}</strong> <span class="meta">${configured ? "configured" : "not configured"} · ${escapeHTML(item.source || "unset")}${value ? ` · ${escapeHTML(value)}` : ""}</span></p>
-      ${item.source === "database" ? `<p class="button-row"><button type="button" class="secondary" data-admin-setting-revert="${escapeHTML(key)}">Remove override</button></p>` : ""}
-    </article>`;
-  }).join("");
+  return settingsStatusRows(settings, labels, "admin-setting-revert");
 }
 
 function bindAdminSettingsPanel() {
@@ -3716,7 +3723,7 @@ async function reviewPage() {
       </section>
     </section>
     <section class="grid" aria-label="Review queue">
-      ${(queue.items || []).map(reviewCard).join("") || `<div class="panel empty-state"><span class="meta">Clear</span><h2>No review items due</h2><p>Arivu will bring older or high-signal saves back when they are ready.</p></div>`}
+      ${(queue.items || []).map(reviewCard).join("") || emptyState({ eyebrow: "Clear", title: "No review items due", body: "Arivu will bring older or high-signal saves back when they are ready." })}
     </section>
   `));
   document.querySelectorAll("[data-review-complete]").forEach((button) => {
@@ -3735,7 +3742,7 @@ async function reviewPage() {
 
 function memoryCard(memory) {
   if (!memory.has_memory || !memory.bookmark) {
-    return `<section class="panel empty-state"><span class="meta">Daily memory</span><h2>No memory due</h2><p>${escapeHTML(memory.message || "Older, high-signal saves will appear here.")}</p></section>`;
+    return emptyState({ eyebrow: "Daily memory", title: "No memory due", body: memory.message || "Older, high-signal saves will appear here.", tag: "section" });
   }
   const item = memory.bookmark;
   const context = memory.context || {};
@@ -3747,7 +3754,7 @@ function memoryCard(memory) {
     <p class="meta">${Number(context.days_since_accessed || 0)} days since last review</p>
     <p class="button-row">
       <a class="button secondary" href="/bookmark/${escapeHTML(item.id)}">Open</a>
-      <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
+      <button type="button" data-review-complete="${escapeHTML(id)}">Complete review</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
       <button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>
     </p>
@@ -3770,7 +3777,7 @@ function reviewCard(item) {
     ${nextAction || importance ? `<p class="meta">${nextAction ? `Next: ${escapeHTML(nextAction)}` : ""}${nextAction && importance ? " · " : ""}${importance ? `Priority ${importance}` : ""}</p>` : ""}
     <p class="button-row">
       <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
-      <button type="button" data-review-complete="${escapeHTML(id)}">Done</button>
+      <button type="button" data-review-complete="${escapeHTML(id)}">Complete review</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
       ${isNote ? "" : `<button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>`}
     </p>
@@ -3858,7 +3865,7 @@ async function duplicatesPage() {
       <p>Merge repeated saves without losing collection links, summaries, or reading history.</p>
     </section>
     <section class="stack">
-      ${groups.map(duplicateGroup).join("") || `<div class="panel empty-state"><span class="meta">Clean</span><h2>No duplicates found</h2><p>Exact URL and high-similarity matches will appear here.</p></div>`}
+      ${groups.map(duplicateGroup).join("") || emptyState({ eyebrow: "Clean", title: "No duplicates found", body: "Exact URL and high-similarity matches will appear here." })}
     </section>
   `));
   document.querySelectorAll("[data-merge]").forEach((button) => {
@@ -4076,10 +4083,10 @@ function adminUserRow(user) {
     <td>${formatDate(user.last_bookmark_at)}</td>
     <td>${user.is_admin ? "Admin" : user.invite_pending ? "Invited" : user.banned ? "Banned" : "Active"}</td>
     <td><div class="button-row">
-      <button type="button" class="secondary" data-admin-user-detail="${escapeHTML(user.id)}">View</button>
-      <button type="button" class="secondary" data-admin-user-action="${action}" data-user-id="${escapeHTML(user.id)}">${action === "ban" ? "Ban" : "Unban"}</button>
-      <button type="button" class="secondary" data-admin-user-action="reset-password" data-user-id="${escapeHTML(user.id)}">Reset</button>
-      <button type="button" class="danger" data-admin-user-action="delete" data-user-id="${escapeHTML(user.id)}">Delete</button>
+      <button type="button" class="secondary" data-admin-user-detail="${escapeHTML(user.id)}">View details</button>
+      <button type="button" class="secondary" data-admin-user-action="${action}" data-user-id="${escapeHTML(user.id)}">${action === "ban" ? "Ban user" : "Unban user"}</button>
+      <button type="button" class="secondary" data-admin-user-action="reset-password" data-user-id="${escapeHTML(user.id)}">Reset password</button>
+      <button type="button" class="danger" data-admin-user-action="delete" data-user-id="${escapeHTML(user.id)}">Delete user</button>
     </div></td>
   </tr>`;
 }
@@ -4196,7 +4203,7 @@ async function requestAdminResetPassword() {
     title: "Reset password",
     body,
     actions: [
-      { label: "Cancel", value: false, kind: "secondary" },
+      { label: "Keep current password", value: false, kind: "secondary" },
       { label: "Reset password", value: true, kind: "danger", beforeClose: () => body.querySelector("#admin-reset-password").reportValidity() },
     ],
   });
@@ -4311,4 +4318,5 @@ addEventListener("popstate", () => {
   render();
 });
 addEventListener("online", () => flushOfflineBookmarks());
+registerServiceWorker();
 render();
