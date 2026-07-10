@@ -204,6 +204,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/agent/decisions", a.withAudienceQuota("cli", quotaNotesWrite, a.bookmarks.AgentRecordDecision))
 	mux.HandleFunc("GET /api/extension/collections", a.withAudience("extension", a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/extension/bookmarks", a.withAudienceQuota("extension", quotaBookmarkCreate, a.bookmarks.Create))
+	mux.HandleFunc("POST /api/extension/annotations", a.withAudienceQuota("extension", quotaBookmarkCreate, a.bookmarks.CreateExtensionAnnotation))
 	mux.HandleFunc("GET /api/analytics/summary", a.withUser(a.bookmarks.AnalyticsSummary))
 	mux.HandleFunc("GET /api/analytics/reading-stats", a.withUser(a.bookmarks.AnalyticsReadingStats))
 	mux.HandleFunc("GET /api/analytics/topics", a.withUser(a.bookmarks.AnalyticsTopics))

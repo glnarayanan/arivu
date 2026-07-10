@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -676,6 +677,145 @@ func TestAudienceScopedTokensCannotReachWebOrAdminRoutes(t *testing.T) {
 	}
 	if title != "Extension Capture" {
 		t.Fatalf("extension title = %q", title)
+	}
+}
+
+func TestExtensionAnnotationsGetOrCreateUserBookmarks(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+
+	ownerAccess, ownerCSRF := signupForCookies(t, handler, "annotation-owner@example.com")
+	ownerToken := extensionTokenForTest(t, handler, ownerAccess, ownerCSRF)
+	otherAccess, otherCSRF := signupForCookies(t, handler, "annotation-other@example.com")
+	otherToken := extensionTokenForTest(t, handler, otherAccess, otherCSRF)
+
+	capture := func(token, quote, note string) map[string]any {
+		t.Helper()
+		resp := bearerRequest(t, handler, http.MethodPost, "/api/extension/annotations", `{"url":"https://example.com/annotation","title":"Annotation Capture","quote":"`+quote+`","note":"`+note+`"}`, token)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("extension annotation status = %d body=%s", resp.StatusCode, readBody(resp))
+		}
+		defer resp.Body.Close()
+		var body map[string]any
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode extension annotation: %v", err)
+		}
+		return body
+	}
+
+	first := capture(ownerToken, "First selected passage", "Why this matters")
+	if created, _ := first["created_bookmark"].(bool); !created {
+		t.Fatalf("first capture should create bookmark: %#v", first)
+	}
+	if jobID, _ := first["job_id"].(string); jobID == "" {
+		t.Fatalf("first capture missing job id: %#v", first)
+	}
+	if annotation, _ := first["annotation"].(map[string]any); annotation["quote"] != "First selected passage" || annotation["note"] != "Why this matters" {
+		t.Fatalf("first annotation = %#v", annotation)
+	}
+
+	second := capture(ownerToken, "Second selected passage", "A different insight")
+	if created, _ := second["created_bookmark"].(bool); created {
+		t.Fatalf("second capture should reuse bookmark: %#v", second)
+	}
+	if jobID, _ := second["job_id"].(string); jobID != "" {
+		t.Fatalf("reused bookmark should not enqueue processing: %#v", second)
+	}
+
+	ownerID := userIDForEmail(t, a, "annotation-owner@example.com")
+	var ownerBookmarks, ownerAnnotations int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE user_id=? AND url=?`, ownerID, "https://example.com/annotation").Scan(&ownerBookmarks); err != nil {
+		t.Fatalf("count owner bookmarks: %v", err)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM annotations WHERE user_id=?`, ownerID).Scan(&ownerAnnotations); err != nil {
+		t.Fatalf("count owner annotations: %v", err)
+	}
+	if ownerBookmarks != 1 || ownerAnnotations != 2 {
+		t.Fatalf("owner capture rows = %d bookmarks, %d annotations", ownerBookmarks, ownerAnnotations)
+	}
+
+	other := capture(otherToken, "Other user's passage", "Private note")
+	if created, _ := other["created_bookmark"].(bool); !created {
+		t.Fatalf("other user should receive a separate bookmark: %#v", other)
+	}
+
+	raceAccess, raceCSRF := signupForCookies(t, handler, "annotation-race@example.com")
+	raceToken := extensionTokenForTest(t, handler, raceAccess, raceCSRF)
+	start := make(chan struct{})
+	statuses := make(chan int, 2)
+	var wait sync.WaitGroup
+	for _, quote := range []string{"Concurrent first passage", "Concurrent second passage"} {
+		wait.Add(1)
+		go func(quote string) {
+			defer wait.Done()
+			<-start
+			req := httptest.NewRequest(http.MethodPost, "/api/extension/annotations", strings.NewReader(`{"url":"https://example.com/concurrent-annotation","quote":"`+quote+`"}`))
+			req.Header.Set("Authorization", "Bearer "+raceToken)
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			statuses <- rec.Code
+		}(quote)
+	}
+	close(start)
+	wait.Wait()
+	close(statuses)
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("concurrent capture status = %d", status)
+		}
+	}
+	raceID := userIDForEmail(t, a, "annotation-race@example.com")
+	var raceBookmarks, raceAnnotations int
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM bookmarks WHERE user_id=? AND url=?`, raceID, "https://example.com/concurrent-annotation").Scan(&raceBookmarks); err != nil {
+		t.Fatalf("count concurrent bookmarks: %v", err)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM annotations WHERE user_id=?`, raceID).Scan(&raceAnnotations); err != nil {
+		t.Fatalf("count concurrent annotations: %v", err)
+	}
+	if raceBookmarks != 1 || raceAnnotations != 2 {
+		t.Fatalf("concurrent capture rows = %d bookmarks, %d annotations", raceBookmarks, raceAnnotations)
+	}
+
+	for _, tc := range []struct {
+		name  string
+		token string
+		body  string
+	}{
+		{"empty quote", ownerToken, `{"url":"https://example.com/empty","quote":""}`},
+		{"invalid url", ownerToken, `{"url":"file:///tmp/private","quote":"Selected passage"}`},
+		{"web audience", "", `{"url":"https://example.com/web","quote":"Selected passage"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var resp *http.Response
+			if tc.name == "web audience" {
+				resp = adminRequest(t, handler, http.MethodPost, "/api/extension/annotations", tc.body, ownerAccess, ownerCSRF)
+			} else {
+				resp = bearerRequest(t, handler, http.MethodPost, "/api/extension/annotations", tc.body, tc.token)
+			}
+			defer resp.Body.Close()
+			if tc.name == "web audience" {
+				if resp.StatusCode != http.StatusUnauthorized {
+					t.Fatalf("web audience status = %d body=%s", resp.StatusCode, readBody(resp))
+				}
+				return
+			}
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("%s status = %d body=%s", tc.name, resp.StatusCode, readBody(resp))
+			}
+		})
 	}
 }
 
@@ -3699,6 +3839,24 @@ func signupForCookies(t *testing.T, handler http.Handler, email string) (*http.C
 		t.Fatalf("expected access and csrf cookies, got %#v", resp.Cookies())
 	}
 	return accessCookie, csrfCookie
+}
+
+func extensionTokenForTest(t *testing.T, handler http.Handler, accessCookie, csrfCookie *http.Cookie) string {
+	t.Helper()
+	resp := adminRequest(t, handler, http.MethodPost, "/api/auth/extension-token", "", accessCookie, csrfCookie)
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("extension token status = %d body=%s", resp.StatusCode, readBody(resp))
+	}
+	var body map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode extension token: %v", err)
+	}
+	token, _ := body["access_token"].(string)
+	if token == "" {
+		t.Fatalf("extension token missing: %#v", body)
+	}
+	return token
 }
 
 func adminRequest(t *testing.T, handler http.Handler, method string, path string, body string, accessCookie, csrfCookie *http.Cookie) *http.Response {
