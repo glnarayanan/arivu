@@ -117,6 +117,11 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Bookmark enrichment now preserves successful model-generated bullets,
+  highlights, and suggested tags instead of overwriting them with local fallback
+  text; bookmark pages render the associated long-form explanation, leading
+  capture banner text is trimmed before analysis, and Gemini semantic search
+  uses `gemini-embedding-2` after `text-embedding-004` retirement.
 - Documented that local `go run` processes are fixed build snapshots: restart
   them after source or branch changes, while SQLite-backed runtime settings take
   effect without a restart; added the persistent local development health check.

@@ -16,6 +16,8 @@ import (
 const (
 	defaultGeneratePromptLimit = 12000
 	summaryGeneratePromptLimit = 50000
+	GeminiEmbeddingModel       = "gemini-embedding-2"
+	embeddingDimensions        = 768
 )
 
 type GeminiClient struct {
@@ -37,12 +39,13 @@ func (c GeminiClient) GenerateSummary(ctx context.Context, text string) (string,
 
 func (c GeminiClient) GenerateSummaryFields(ctx context.Context, text string) (map[string]any, error) {
 	prompt := `You are an expert content analyst. Return only valid JSON with these keys:
-- one_sentence: one precise sentence, maximum 25 words
-- long_form: two concise paragraphs with the core argument, evidence, and takeaway
-- highlights: array of 4 to 6 standalone insights
-- suggested_tags: array of 4 to 6 lowercase hyphenated tags
+	- one_sentence: one precise sentence, maximum 25 words
+	- long_form: a 100-150 word executive briefing in two concise paragraphs: the core argument first, then evidence and the practical takeaway
+	- bullet_points: array of 3 to 5 concise, evidence-based takeaways
+	- highlights: array of 4 to 6 standalone insights
+	- suggested_tags: array of 4 to 6 lowercase hyphenated tags
 
-Avoid generic phrases like "this article discusses". Use article-specific names, numbers, and claims when present.
+Use article-specific names, numbers, and claims only when they appear in the article. Avoid generic phrases such as "this article discusses" or "paradigm shift", boilerplate, and promotional navigation text.
 
 ARTICLE:
 ` + text
@@ -118,7 +121,7 @@ func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, dat
 	return decoded.Candidates[0].Content.Parts[0].Text, nil
 }
 
-func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskType string) (values []float64, err error) {
+func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string) (values []float64, err error) {
 	defer func() { c.record("embedding", err) }()
 	if c.APIKey == "" || !c.usesGeminiNative() {
 		return nil, ErrNotConfigured
@@ -130,13 +133,10 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskTy
 		text = text[:12000]
 	}
 	body := map[string]any{
-		"model": "models/text-embedding-004",
 		"content": map[string]any{
 			"parts": []map[string]string{{"text": text}},
 		},
-	}
-	if taskType != "" {
-		body["taskType"] = normalizeEmbeddingTaskType(taskType)
+		"output_dimensionality": embeddingDimensions,
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {
@@ -400,11 +400,7 @@ func (c GeminiClient) embeddingEndpoint() string {
 	if base == "" {
 		base = config.DefaultGeminiBaseURL
 	}
-	return strings.TrimRight(base, "/") + "/v1beta/models/text-embedding-004:embedContent?key=" + c.APIKey
-}
-
-func normalizeEmbeddingTaskType(taskType string) string {
-	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(taskType), "-", "_"))
+	return strings.TrimRight(base, "/") + "/v1beta/models/" + GeminiEmbeddingModel + ":embedContent?key=" + c.APIKey
 }
 
 func parseSummaryFields(raw string) (map[string]any, error) {
@@ -425,6 +421,7 @@ func parseSummaryFields(raw string) (map[string]any, error) {
 	}
 	decoded["one_sentence"] = strings.TrimSpace(stringMapValue(decoded, "one_sentence"))
 	decoded["long_form"] = strings.TrimSpace(stringMapValue(decoded, "long_form"))
+	decoded["bullet_points"] = stringSlice(decoded["bullet_points"])
 	decoded["highlights"] = stringSlice(decoded["highlights"])
 	decoded["suggested_tags"] = stringSlice(decoded["suggested_tags"])
 	return decoded, nil

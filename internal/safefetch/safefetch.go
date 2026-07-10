@@ -139,8 +139,9 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 		text := strings.Join(strings.Fields(raw), " ")
 		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname()}, nil
 	}
+	title := ExtractTitle(raw)
 	articleHTML, text := ExtractArticle(raw)
-	return Result{URL: parsed.String(), Title: ExtractTitle(raw), HTML: articleHTML, Text: text, Domain: parsed.Hostname()}, nil
+	return Result{URL: parsed.String(), Title: title, HTML: articleHTML, Text: trimLeadingChrome(text, title), Domain: parsed.Hostname()}, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, rawURL string) (*http.Request, error) {
@@ -236,6 +237,29 @@ func ExtractTitle(html string) string {
 func ExtractText(html string) string {
 	_, text := ExtractArticle(html)
 	return text
+}
+
+func trimLeadingChrome(text, title string) string {
+	text = strings.TrimSpace(text)
+	title = strings.TrimSpace(title)
+	if len(title) < 16 {
+		return text
+	}
+	index := strings.Index(strings.ToLower(text), strings.ToLower(title))
+	if index <= 0 || index > 1600 || !hasLeadingChrome(text[:index]) {
+		return text
+	}
+	return strings.TrimSpace(text[index:])
+}
+
+func hasLeadingChrome(text string) bool {
+	lower := strings.ToLower(text)
+	for _, marker := range []string{"skip to content", "cookie", "privacy", "consent", "analytics", "advertising", "tracking"} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func ExtractArticle(input string) (string, string) {

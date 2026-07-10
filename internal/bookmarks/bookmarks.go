@@ -664,7 +664,7 @@ func (s *Service) GraphSearch(w http.ResponseWriter, r *http.Request, user auth.
 		return
 	}
 	var queryEmbedding []float64
-	if embedding, err := s.geminiClient(r.Context()).GenerateEmbedding(r.Context(), query, "retrieval_query"); err == nil {
+	if embedding, err := s.geminiClient(r.Context()).GenerateEmbedding(r.Context(), query); err == nil {
 		queryEmbedding = embedding
 	}
 	results, threshold := rankGraphSearch(query, queryEmbedding, bookmarks)

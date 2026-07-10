@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/glnarayanan/arivu/internal/providers"
 )
 
 type enrichment struct {
@@ -28,18 +30,20 @@ func (s *Service) enrichText(ctx context.Context, bookmarkID, userID, title, des
 		Entities:   titleTerms(title, body, 10),
 		Concepts:   tags,
 	}
-	if embedding, err := s.geminiClient(ctx).GenerateEmbedding(ctx, body, "retrieval_document"); err == nil && len(embedding) > 0 {
+	if embedding, err := s.geminiClient(ctx).GenerateEmbedding(ctx, body); err == nil && len(embedding) > 0 {
 		result.Embedding = embedding
 	}
 	return result
 }
 
-func (s *Service) storeEnrichment(ctx context.Context, bookmarkID, userID string, item enrichment) {
+func (s *Service) storeEnrichment(ctx context.Context, bookmarkID, userID string, item enrichment, keepAISummary bool) {
 	now := nowString()
-	bullets, _ := json.Marshal(item.Bullets)
-	highlights, _ := json.Marshal(item.Highlights)
-	tags, _ := json.Marshal(item.Tags)
-	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET bullet_points_json=?,highlights_json=?,suggested_tags_json=?,updated_at=? WHERE bookmark_id=? AND user_id=?`, string(bullets), string(highlights), string(tags), now, bookmarkID, userID)
+	if !keepAISummary {
+		bullets, _ := json.Marshal(item.Bullets)
+		highlights, _ := json.Marshal(item.Highlights)
+		tags, _ := json.Marshal(item.Tags)
+		_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET bullet_points_json=?,highlights_json=?,suggested_tags_json=?,updated_at=? WHERE bookmark_id=? AND user_id=?`, string(bullets), string(highlights), string(tags), now, bookmarkID, userID)
+	}
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM bookmark_entities WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID)
 	_, _ = s.db.ExecContext(ctx, `DELETE FROM bookmark_concepts WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID)
 	for _, entity := range item.Entities {
@@ -51,7 +55,7 @@ func (s *Service) storeEnrichment(ctx context.Context, bookmarkID, userID string
 	}
 	if len(item.Embedding) > 0 {
 		raw, _ := json.Marshal(item.Embedding)
-		_, _ = s.db.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=?,updated_at=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), "gemini/text-embedding-004", now, bookmarkID, userID)
+		_, _ = s.db.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=?,updated_at=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), "gemini/"+providers.GeminiEmbeddingModel, now, bookmarkID, userID)
 	}
 }
 

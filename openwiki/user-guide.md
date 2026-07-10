@@ -40,8 +40,9 @@ Dashboard captures a URL with optional quick note and tags. Arivu archives the
 page through the server, sanitizes readable HTML, creates a visible processing
 job, and opens the saved bookmark.
 
-Bookmark pages are reader-first. The top surface is for reading, tags,
-summary/enrichment state, and source controls. The next-step panel captures the
+Bookmark pages are reader-first. The top surface is for reading, tags, a concise
+one-sentence summary, a longer plain-language explanation when available, and
+the supporting bullets/highlights. The next-step panel captures the
 one thing the item should become. Annotations, linked notes, explicit links,
 tasks, reminders, and related items stay in collapsed workbench groups until
 needed. When you select text inside the reader, the annotation form can copy it

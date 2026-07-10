@@ -58,6 +58,7 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 	summary := map[string]any{
 		"one_sentence":   oneSentence(result.Text),
 		"long_form":      "",
+		"bullet_points":  []any{},
 		"highlights":     []any{},
 		"suggested_tags": []any{},
 	}
@@ -76,8 +77,8 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 		return err
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=?, one_sentence=?, bullet_points_json=?, long_form=?, highlights_json=?, suggested_tags_json=?, updated_at=? WHERE bookmark_id=?`,
-		summaryStatus, stringValue(summary["one_sentence"]), jsonListString(summary["highlights"]), stringValue(summary["long_form"]), jsonListString(summary["highlights"]), jsonListString(summary["suggested_tags"]), now, bookmarkID)
-	s.storeEnrichment(ctx, bookmarkID, userID, s.enrichText(ctx, bookmarkID, userID, title, result.Description, result.Text))
+		summaryStatus, stringValue(summary["one_sentence"]), jsonListString(summary["bullet_points"]), stringValue(summary["long_form"]), jsonListString(summary["highlights"]), jsonListString(summary["suggested_tags"]), now, bookmarkID)
+	s.storeEnrichment(ctx, bookmarkID, userID, s.enrichText(ctx, bookmarkID, userID, title, result.Description, result.Text), summaryStatus == "completed")
 	s.refreshSearchIndex(ctx, userID)
 	return nil
 }

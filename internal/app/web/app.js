@@ -1871,12 +1871,14 @@ function summaryPanel(summary) {
   const bullets = Array.isArray(summary.bullet_points) ? summary.bullet_points : [];
   const highlights = Array.isArray(summary.highlights) ? summary.highlights : [];
   const tags = Array.isArray(summary.suggested_tags) ? summary.suggested_tags : [];
-  if (!summary.one_sentence && !bullets.length && !highlights.length && !tags.length) {
+  const longForm = typeof summary.long_form === "string" ? summary.long_form.trim() : "";
+  if (!summary.one_sentence && !longForm && !bullets.length && !highlights.length && !tags.length) {
     return `<section class="insight-strip"><span class="meta">Enrichment</span><p>${escapeHTML(summary.processing_status || "Queued")}</p></section>`;
   }
   return `<section class="insight-strip">
     <span class="meta">Summary</span>
     ${summary.one_sentence ? `<p>${escapeHTML(summary.one_sentence)}</p>` : ""}
+    ${longForm ? `<div class="summary-long-form">${longForm.split(/\n\s*\n/).map((paragraph) => `<p>${escapeHTML(paragraph)}</p>`).join("")}</div>` : ""}
     ${bullets.length ? `<ul>${bullets.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${highlights.length ? `<p class="meta">Highlights</p><ul>${highlights.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${tags.length ? `<div class="chips">${tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}</div>` : ""}

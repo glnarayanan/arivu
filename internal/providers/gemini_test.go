@@ -31,7 +31,7 @@ func TestGeminiSummaryFieldsUseConfiguredModelAndBaseURL(t *testing.T) {
 		_ = json.NewEncoder(&buf).Encode(map[string]any{
 			"candidates": []map[string]any{{
 				"content": map[string]any{"parts": []map[string]any{{
-					"text": `{"one_sentence":"Specific result.","long_form":"Two useful paragraphs.","highlights":["first","second"],"suggested_tags":["research","go"]}`,
+					"text": `{"one_sentence":"Specific result.","long_form":"Two useful paragraphs.","bullet_points":["key point"],"highlights":["first","second"],"suggested_tags":["research","go"]}`,
 				}}},
 			}},
 		})
@@ -57,8 +57,49 @@ func TestGeminiSummaryFieldsUseConfiguredModelAndBaseURL(t *testing.T) {
 	if !strings.Contains(gotPrompt, "tail-marker") {
 		t.Fatalf("summary prompt was truncated before article tail")
 	}
-	if fields["one_sentence"] != "Specific result." || len(fields["highlights"].([]any)) != 2 || len(fields["suggested_tags"].([]any)) != 2 {
+	if !strings.Contains(gotPrompt, "100-150 word executive briefing") {
+		t.Fatalf("summary prompt did not request the executive briefing format: %q", gotPrompt)
+	}
+	if fields["one_sentence"] != "Specific result." || len(fields["bullet_points"].([]any)) != 1 || len(fields["highlights"].([]any)) != 2 || len(fields["suggested_tags"].([]any)) != 2 {
 		t.Fatalf("unexpected parsed fields: %#v", fields)
+	}
+}
+
+func TestGeminiEmbeddingUsesCurrentModel(t *testing.T) {
+	var gotPath string
+	var gotBody struct {
+		Content struct {
+			Parts []struct {
+				Text string `json:"text"`
+			} `json:"parts"`
+		} `json:"content"`
+		OutputDimensionality int `json:"output_dimensionality"`
+	}
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		gotPath = r.URL.Path
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatal(err)
+		}
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(map[string]any{
+			"embeddings": []map[string]any{{"values": []float64{0.1, 0.2, 0.3}}},
+		})
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(&buf)}, nil
+	})}
+
+	gemini := GeminiClient{APIKey: "secret", BaseURL: "https://gemini.test", HTTP: client}
+	values, err := gemini.GenerateEmbedding(context.Background(), "Useable article text.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gotPath != "/v1beta/models/gemini-embedding-2:embedContent" {
+		t.Fatalf("path = %q", gotPath)
+	}
+	if gotBody.Content.Parts[0].Text != "Useable article text." || gotBody.OutputDimensionality != embeddingDimensions {
+		t.Fatalf("request body = %#v", gotBody)
+	}
+	if len(values) != 3 {
+		t.Fatalf("embedding dimensions = %d", len(values))
 	}
 }
 

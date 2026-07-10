@@ -3520,7 +3520,7 @@ func TestDuplicateDetectionAndMergePolicy(t *testing.T) {
 
 func TestSemanticKnowledgeGraphParity(t *testing.T) {
 	geminiHTTP := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		if r.URL.Path != "/v1beta/models/text-embedding-004:embedContent" {
+		if r.URL.Path != "/v1beta/models/gemini-embedding-2:embedContent" {
 			t.Fatalf("unexpected Gemini path: %s", r.URL.Path)
 		}
 		var body struct {
