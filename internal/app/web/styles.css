@@ -1,21 +1,29 @@
 :root {
-  --ink: #0f0f0f;
-  --paper: #f7f7f7;
-  --panel: #ffffff;
-  --panel-strong: #ededed;
-  --field: #ffffff;
-  --muted: #666666;
-  --placeholder: #5f5f5f;
-  --line: #0f0f0f;
-  --line-soft: rgba(15, 15, 15, .28);
-  --accent: #f97316;
-  --accent-ink: #ffffff;
-  --accent-2: #3b82f6;
-  --gold: #facc15;
-  --danger: #dc2626;
-  --focus: #2563eb;
-  --sidebar: #f1f1f1;
-  --scrim: rgba(15, 15, 15, .46);
+  --ink: oklch(18% .018 55);
+  --paper: oklch(96.5% .018 80);
+  --panel: oklch(99% .008 75);
+  --panel-strong: oklch(93% .02 80);
+  --field: oklch(99% .008 75);
+  --muted: oklch(42% .025 55);
+  --placeholder: oklch(38% .025 55);
+  --line: var(--ink);
+  --line-soft: oklch(18% .018 55 / .28);
+  --accent: oklch(72% .18 55);
+  --accent-ink: var(--ink);
+  --accent-2: oklch(51% .16 255);
+  --gold: oklch(85% .16 90);
+  --danger: oklch(48% .18 28);
+  --success: oklch(44% .12 155);
+  --focus: oklch(50% .19 255);
+  --on-strong: oklch(98% .01 80);
+  --sidebar: oklch(92.5% .025 75);
+  --surface-quiet: oklch(97% .012 80);
+  --surface-accent: oklch(93% .07 60);
+  --surface-info: oklch(93% .055 250);
+  --surface-success: oklch(92% .05 155);
+  --surface-warning: oklch(94% .06 85);
+  --highlight: oklch(86% .12 85);
+  --scrim: oklch(18% .018 55 / .46);
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -47,8 +55,8 @@ body {
   min-height: 100%;
   color: var(--ink);
   background:
-    linear-gradient(90deg, rgba(15, 15, 15, .035) 1px, transparent 1px),
-    linear-gradient(rgba(15, 15, 15, .035) 1px, transparent 1px),
+    linear-gradient(90deg, oklch(18% .018 55 / .035) 1px, transparent 1px),
+    linear-gradient(oklch(18% .018 55 / .035) 1px, transparent 1px),
     var(--paper);
   background-size: 24px 24px;
   font-family: var(--font-body);
@@ -95,7 +103,7 @@ button, .button {
 }
 
 button.secondary, .button.secondary { background: var(--panel); color: var(--ink); }
-button.danger, .button.danger { background: var(--danger); color: var(--accent-ink); }
+button.danger, .button.danger { background: var(--danger); color: var(--on-strong); }
 button:disabled {
   cursor: not-allowed;
   opacity: .58;
@@ -124,7 +132,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   z-index: var(--z-toast);
   transform: translateY(-160%);
   background: var(--ink);
-  color: var(--accent-ink);
+  color: var(--on-strong);
   padding: var(--space-3) var(--space-4);
   font: 700 .875rem/1 var(--font-ui);
   text-decoration: none;
@@ -191,7 +199,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 
 .stage-tabs a {
   border: 2px solid var(--ink);
-  background: #fff7cc;
+  background: var(--surface-warning);
   color: var(--ink);
   padding: var(--space-1) var(--space-2);
   font: 700 .75rem/1.25 var(--font-ui);
@@ -200,7 +208,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 .stage-tabs a.active {
   background: var(--ink);
-  color: var(--accent-ink);
+  color: var(--on-strong);
 }
 
 .main {
@@ -267,7 +275,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   box-shadow: var(--shadow);
 }
 .panel:where(.quiet-panel, .disclosure-panel) {
-  background: #fafafa;
+  background: var(--surface-quiet);
 }
 .panel h2,
 .panel h3 {
@@ -324,7 +332,7 @@ details.panel > summary::before {
 }
 details.panel[open] > summary {
   border-bottom: 2px solid var(--ink);
-  background: #fff7cc;
+  background: var(--surface-warning);
 }
 details.panel[open] > summary::before {
   content: "-";
@@ -362,7 +370,7 @@ details.panel[open] > summary::before {
 }
 .priority-buttons button.active {
   background: var(--ink);
-  color: var(--accent-ink);
+  color: var(--on-strong);
 }
 
 .auth {
@@ -423,10 +431,12 @@ input::placeholder, textarea::placeholder {
   font: 700 .875rem/1.35 var(--font-ui);
 }
 .form-message-error {
-  background: #ffedd5;
+  border-color: var(--danger);
+  background: var(--surface-accent);
 }
 .form-message-success {
-  background: #dbeafe;
+  border-color: var(--success);
+  background: var(--surface-success);
 }
 .form-message[hidden] { display: none; }
 .code-block {
@@ -459,7 +469,7 @@ input::placeholder, textarea::placeholder {
 .toolbar details {
   flex: 1 1 100%;
   border: 2px solid var(--ink);
-  background: #fafafa;
+  background: var(--surface-quiet);
   box-shadow: var(--shadow-sm);
 }
 .toolbar summary {
@@ -553,7 +563,7 @@ input::placeholder, textarea::placeholder {
 }
 .data-table th {
   background: var(--ink);
-  color: var(--accent-ink);
+  color: var(--on-strong);
   font: 700 .75rem/1.2 var(--font-ui);
   text-transform: uppercase;
 }
@@ -568,7 +578,7 @@ input::placeholder, textarea::placeholder {
 .chips span,
 .chips a {
   border: 2px solid var(--ink);
-  background: #fef3c7;
+  background: var(--surface-warning);
   color: var(--ink);
   padding: var(--space-1) var(--space-2);
   font: 700 .75rem/1.25 var(--font-ui);
@@ -576,10 +586,10 @@ input::placeholder, textarea::placeholder {
   text-transform: uppercase;
 }
 .term-cloud span:nth-child(3n + 1) {
-  background: #dbeafe;
+  background: var(--surface-info);
 }
 .term-cloud span:nth-child(3n + 2) {
-  background: #ffedd5;
+  background: var(--surface-accent);
 }
 .insight-strip,
 .annotation {
@@ -606,7 +616,7 @@ input::placeholder, textarea::placeholder {
 .annotation blockquote {
   margin: 0;
   border: 2px solid var(--line-soft);
-  background: #fffbeb;
+  background: var(--surface-warning);
   padding: var(--space-3);
   font-size: 1.125rem;
   line-height: 1.45;
@@ -617,7 +627,7 @@ input::placeholder, textarea::placeholder {
 #job-status:not([hidden]) {
   display: block;
   border: 2px dashed var(--ink);
-  background: #dbeafe;
+  background: var(--surface-info);
   padding: var(--space-3);
   font: 700 .875rem/1.4 var(--font-ui);
 }
@@ -650,7 +660,7 @@ input::placeholder, textarea::placeholder {
   overflow: auto;
 }
 .reader-jump-highlight {
-  background: #fde68a;
+  background: var(--highlight);
   color: var(--ink);
   outline: 2px solid var(--ink);
   box-decoration-break: clone;
@@ -674,7 +684,7 @@ input::placeholder, textarea::placeholder {
 }
 .tab-list [role="tab"][aria-selected="true"] {
   background: var(--accent-2);
-  color: var(--accent-ink);
+  color: var(--on-strong);
 }
 
 #toast-region {
@@ -696,8 +706,12 @@ input::placeholder, textarea::placeholder {
   overflow: hidden;
 }
 .toast-success {
+  background: var(--success);
+  color: var(--on-strong);
+}
+.toast-info {
   background: var(--accent-2);
-  color: var(--accent-ink);
+  color: var(--on-strong);
 }
 .toast-earned::after {
   content: "";
@@ -713,7 +727,7 @@ input::placeholder, textarea::placeholder {
 }
 .toast-error {
   background: var(--danger);
-  color: var(--accent-ink);
+  color: var(--on-strong);
 }
 
 .dialog-backdrop {
