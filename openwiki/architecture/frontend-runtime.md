@@ -118,16 +118,25 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
 - `/admin` exposes overview, API usage, user management, system, activity,
   collections, and audit sections for admin users.
 - Extension popup capture includes collection, quick note, and comma-separated
-  tag fields while context-menu capture keeps the selected-text quote path.
+  tag fields. The off-by-default inline-annotation setting requests optional
+  HTTP(S) access from its user gesture, dynamically registers an external-page
+  selection overlay, and unregisters it when disabled. Selected-text
+  context-menu saves use the extension annotation endpoint; page, link, and
+  keyboard saves keep their regular bookmark behavior.
 - Bookmark save responses include `job_id`; the dashboard shows a short
   processing status before navigating to the saved bookmark.
 - Bookmark detail is now reader-first: sanitized archived HTML, summaries,
   tags, and source controls stay up top; workflow state gets one next-step
   panel; annotations, notes, links, tasks, reminders, and related items live in
-  disclosure groups. The annotation form can copy the current browser selection
-  into the quote field when the selection is fully inside the sanitized reader
-  content, stores a text-quote selector for saved highlights, and existing
-  annotations can jump back to source text, be edited, or be deleted inline.
+  disclosure groups. A non-empty selection wholly inside archived reader content
+  opens an accessible annotation composer with an optional note. It captures the
+  selection before focus moves, keeps save failures open for retry, uses a
+  bottom-anchored layout on narrow screens, stores a text-quote selector, and
+  refreshes the saved-annotation count after success. Escape and Cancel dismiss
+  it; the disclosure form remains the fallback for manual capture and tags.
+  Existing reader annotations can jump to matching source text, be edited, or
+  be deleted inline. External extension captures save a quote but have no source
+  selector, so they cannot promise a jump until archived content matches.
 - `/focus` keeps the pending default and adds overdue, today, upcoming, and
   completed views over action items and reminders.
 - `/review` includes the daily memory card from `/api/memory-jogger`, the
@@ -166,6 +175,12 @@ The rewrite frontend is a dependency-free browser SPA served from the Go binary.
   primary navigation should scroll within its own strip instead of widening
   the page.
 - Keep screenshot artifacts out of the repository unless a test needs them.
+- For annotation work, verify pointer and keyboard selections, quote-only saves,
+  failed-save retry, Escape/Cancel, reader source jumps, the manual disclosure
+  fallback, and the bottom-anchored 390x844 composer. Extension checks also
+  cover permission-off behavior, Arivu-origin exclusion, explicit-save payloads,
+  context-menu routing, token expiry cleanup, and cancellation without a
+  request.
 
 ## Ongoing Frontend Verification
 

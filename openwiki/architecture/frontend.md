@@ -36,7 +36,8 @@ The UI assets are located in `/internal/app/web/` and are embedded directly into
   explicit execute/reject controls. Draft cards expose the source item and JSON
   payload before they can be queued as proposals.
 - `/bookmark/:id`: sanitized reader-first workspace with summaries, read
-  state, tags, a compact next-step workflow panel, and collapsed workbench
+  state, tags, a compact next-step workflow panel, a non-modal selection
+  composer for saved quotes and optional notes, and collapsed workbench
   groups for annotations, linked notes, explicit note links/backlinks, action
   items, reminders, related items, and review actions. Reminder controls include
   timezone-aware due times, recurrence, in-app/email channel selection, inline
@@ -71,9 +72,24 @@ The `/extension/` directory houses a companion, cross-browser compatible WebExte
 
 ### Manifest Layout
 Declared in `manifest.json` as a Manifest V3 extension, providing integrations:
-- `background.js`: Listens for action clicks, context-menu saves, keyboard command saves, selected-text capture, and secure token relay from the active Arivu backend instance.
+- `background.js`: Keeps extension tokens in the worker, handles action clicks,
+  context-menu saves, keyboard command saves, selected-text annotation capture,
+  secure token relay, and dynamic content-script registration.
 - `content.js`: Injected scripts to extract selected page content and trigger seamless "Save in Arivu" operations from local tabs.
 - `popup.html` & `popup.js`: Mini utility panel allowing users to connect their active local server instance, preserve page title, capture notes/tags/collections, and open the saved item or Inbox immediately after capture.
+- `selection-overlay.js`: Off-by-default external-page selection composer. The
+  popup requests optional HTTP(S) access only after the user enables it; the
+  worker registers this script dynamically and unregisters it when disabled
+  without removing unrelated self-hosted API permissions. The script excludes
+  Arivu's configured origin so the native reader composer remains the only
+  capture UI there.
+
+Selected external text posts `{url,title,quote,note}` to
+`POST /api/extension/annotations` with an extension-audience token. The server
+gets or creates the current user's exact-URL bookmark atomically, adds the
+annotation, queues enrichment only for a newly created bookmark, and returns
+the bookmark, annotation, creation flag, and optional job ID. External captures
+intentionally store no source selector in v1.
 
 ---
 

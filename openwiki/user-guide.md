@@ -45,9 +45,27 @@ one-sentence summary, a longer plain-language explanation when available, and
 the supporting bullets/highlights. The next-step panel captures the
 one thing the item should become. Annotations, linked notes, explicit links,
 tasks, reminders, and related items stay in collapsed workbench groups until
-needed. When you select text inside the reader, the annotation form can copy it
-as a quote, store a text-quote selector, and later jump the saved annotation
-back to the matching source text.
+needed. Selecting non-empty archived reader text opens a compact inline
+composer with an optional note; Save records either a highlight or annotation
+without leaving the passage. Escape and Cancel dismiss it. Reader captures store
+a text-quote selector, so a saved annotation can later jump back to matching
+archived text. The disclosure form remains available for tags, editing, and
+manual quote entry.
+
+## Browser Extension Annotations
+
+The extension can also capture a selected passage on an external page. In the
+extension settings, turn on **Enable inline annotations on sites**; Arivu then
+asks the browser for optional HTTP(S) page access and shows the selection tool
+only on pages outside your Arivu origin. Save is always explicit and notes are
+optional.
+
+External captures attach to your existing bookmark for that exact page URL, or
+create the bookmark and queue its normal enrichment on the first capture. They
+store the quote and note, but do not create an external-page source selector in
+this release. A source jump is therefore available only after the archived
+bookmark contains a matching passage. Page and link saves retain their normal
+extension behavior; selected-text context-menu saves use this annotation flow.
 
 ## Notes, Links, Tasks, And Reminders
 

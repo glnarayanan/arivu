@@ -32,6 +32,13 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Added inline reader annotation capture with optional notes, selection-derived
+  text-quote selectors, retryable errors, Escape/Cancel behavior, and a
+  narrow-screen bottom composer while preserving the manual annotation form.
+- Added opt-in browser-extension inline annotations for external page text,
+  including dynamic optional-host registration, Arivu-origin exclusion,
+  exact-URL bookmark get-or-create, and extension-audience capture tests.
+
 - Created the standalone low-dependency Go repository for Arivu.
 - Included the embedded frontend, SQLite persistence, auth/session subsystem, safe fetcher, sanitizer, job queue, provider clients, browser extension, deployment assets, and legacy migration tooling.
 - Added contribution guidelines, code of conduct, GitHub sponsorship metadata, and expanded security reporting policy.
