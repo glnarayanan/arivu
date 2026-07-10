@@ -733,6 +733,10 @@ func TestExtensionAnnotationsGetOrCreateUserBookmarks(t *testing.T) {
 	if jobID, _ := second["job_id"].(string); jobID != "" {
 		t.Fatalf("reused bookmark should not enqueue processing: %#v", second)
 	}
+	highlight := capture(ownerToken, "Quote-only highlight", "")
+	if annotation, _ := highlight["annotation"].(map[string]any); annotation["note"] != "" {
+		t.Fatalf("quote-only annotation should preserve an empty note: %#v", annotation)
+	}
 
 	ownerID := userIDForEmail(t, a, "annotation-owner@example.com")
 	var ownerBookmarks, ownerAnnotations int
@@ -742,7 +746,7 @@ func TestExtensionAnnotationsGetOrCreateUserBookmarks(t *testing.T) {
 	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM annotations WHERE user_id=?`, ownerID).Scan(&ownerAnnotations); err != nil {
 		t.Fatalf("count owner annotations: %v", err)
 	}
-	if ownerBookmarks != 1 || ownerAnnotations != 2 {
+	if ownerBookmarks != 1 || ownerAnnotations != 3 {
 		t.Fatalf("owner capture rows = %d bookmarks, %d annotations", ownerBookmarks, ownerAnnotations)
 	}
 
@@ -1119,22 +1123,29 @@ func TestExtensionPopupCapturesNoteAndTags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read extension background: %v", err)
 	}
-	for _, expected := range []string{`id="note"`, `id="tags"`, `id="settingsStatus"`, `src="url-utils.js"`} {
+	overlay, err := os.ReadFile(filepath.Join("..", "..", "extension", "selection-overlay.js"))
+	if err != nil {
+		t.Fatalf("read extension selection overlay: %v", err)
+	}
+	for _, expected := range []string{`id="note"`, `id="tags"`, `id="settingsStatus"`, `id="inlineAnnotationsEnabled"`, `src="url-utils.js"`} {
 		if !strings.Contains(string(html), expected) {
 			t.Fatalf("extension popup missing %s", expected)
 		}
 	}
 	source := string(script)
-	for _, expected := range []string{"function splitTags", "payload.title = title", "payload.note = note", "payload.tags = tags", "Saved to Inbox", "Open Inbox", "Open Item", "replaceChildren", "ensureApiPermission", "configureApiOrigin", "ArivuExtensionURL.normalizeApiUrl"} {
+	for _, expected := range []string{"function splitTags", "payload.title = title", "payload.note = note", "payload.tags = tags", "Saved to Inbox", "Open Inbox", "Open Item", "replaceChildren", "ensureApiPermission", "configureApiOrigin", "ArivuExtensionURL.normalizeApiUrl", "INLINE_ANNOTATION_ORIGINS", "configureInlineAnnotations"} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("extension popup script missing %s", expected)
 		}
 	}
-	if !strings.Contains(string(manifest), `"optional_host_permissions"`) || !strings.Contains(string(manifest), `"scripting"`) {
+	if !strings.Contains(string(manifest), `"optional_host_permissions"`) || !strings.Contains(string(manifest), `"scripting"`) || !strings.Contains(string(manifest), `"version": "1.3.0"`) {
 		t.Fatal("extension manifest missing self-hosted permission support")
 	}
-	if !strings.Contains(string(background), "registerCustomApiContentScript") || !strings.Contains(string(background), "ArivuExtensionURL.senderOriginAllowed") {
+	if !strings.Contains(string(background), "registerCustomApiContentScript") || !strings.Contains(string(background), "ArivuExtensionURL.senderOriginAllowed") || !strings.Contains(string(background), "syncInlineAnnotationOverlay") || !strings.Contains(string(background), "saveAnnotation") || !strings.Contains(string(background), "/extension/annotations") {
 		t.Fatal("extension background missing dynamic content script registration")
+	}
+	if !strings.Contains(string(overlay), "captureAnnotation") || !strings.Contains(string(overlay), "location.origin") || !strings.Contains(string(overlay), "selectedPageText") || !strings.Contains(string(overlay), "if (!selection) {") {
+		t.Fatal("extension selection overlay is missing capture safeguards")
 	}
 }
 
@@ -2918,6 +2929,22 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 		expected := fmt.Sprintf(`{ id: "%s", label: "%s", baseURL: "%s", defaultModel: "%s" }`, provider.ID, provider.Name, provider.BaseURL, provider.DefaultModel)
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend provider catalog missing %s", provider.ID)
+		}
+	}
+}
+
+func TestInlineAnnotationComposerSource(t *testing.T) {
+	script, err := webFS.ReadFile("web/app.js")
+	if err != nil {
+		t.Fatalf("read embedded app.js: %v", err)
+	}
+	for _, expected := range []string{
+		`function bindReaderAnnotationComposer`,
+		`reader-annotation-composer`,
+		"closeComposer();\n        render();",
+	} {
+		if !strings.Contains(string(script), expected) {
+			t.Fatalf("reader annotation composer missing %s", expected)
 		}
 	}
 }

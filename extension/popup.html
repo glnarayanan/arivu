@@ -246,6 +246,32 @@
       font-size: 12px;
       padding: 8px 10px;
     }
+
+    .checkbox-control {
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
+      font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0;
+      line-height: 1.35;
+      text-transform: none;
+    }
+
+    .checkbox-control input {
+      width: auto;
+      min-height: 16px;
+      margin: 1px 0 0;
+      accent-color: #F97316;
+    }
+
+    .settings-copy {
+      margin: 8px 0 0;
+      font-size: 12px;
+      line-height: 1.4;
+      color: #555;
+    }
   </style>
 </head>
 <body>
@@ -300,6 +326,10 @@
       <label>API URL</label>
       <input type="text" id="apiUrlInput" placeholder="https://arivu.app/api">
       <div id="settingsStatus" class="status" style="display:none;"></div>
+    </div>
+    <div class="form-group">
+      <label class="checkbox-control" for="inlineAnnotationsEnabled"><input id="inlineAnnotationsEnabled" type="checkbox">Enable inline annotations on sites</label>
+      <p class="settings-copy">Shows a compact note tool after you select text. Arivu asks your browser for site access only when you enable it.</p>
     </div>
   </div>
 

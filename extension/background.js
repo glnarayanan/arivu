@@ -6,6 +6,8 @@ const MENU_IDS = {
   link: 'arivu-save-link',
   selection: 'arivu-save-selection',
 };
+const INLINE_ANNOTATION_SCRIPT_ID = 'arivu-inline-annotation';
+const INLINE_ANNOTATION_ORIGINS = ['https://*/*', 'http://*/*'];
 
 async function getApiUrl() {
   const result = await chrome.storage.local.get(['apiUrl']);
@@ -37,6 +39,30 @@ async function registerCustomApiContentScript(apiUrl) {
   }]).catch(() => {});
 }
 
+async function syncInlineAnnotationOverlay(enabled) {
+  if (!chrome.scripting?.registerContentScripts) return false;
+
+  await chrome.scripting.unregisterContentScripts({ ids: [INLINE_ANNOTATION_SCRIPT_ID] }).catch(() => {});
+  if (!enabled) return true;
+
+  const allowed = await chrome.permissions?.contains?.({ origins: INLINE_ANNOTATION_ORIGINS });
+  if (!allowed) return false;
+
+  await chrome.scripting.registerContentScripts([{
+    id: INLINE_ANNOTATION_SCRIPT_ID,
+    matches: INLINE_ANNOTATION_ORIGINS,
+    js: ['selection-overlay.js'],
+    runAt: 'document_idle',
+  }]);
+  return true;
+}
+
+async function configureInlineAnnotations(enabled) {
+  const configured = await syncInlineAnnotationOverlay(Boolean(enabled));
+  await chrome.storage.local.set({ inlineAnnotationsEnabled: Boolean(enabled) && configured });
+  return configured;
+}
+
 async function tokenSenderAllowed(sender) {
   if (!sender.url) return false;
 
@@ -63,18 +89,7 @@ function installContextMenus() {
   });
 }
 
-function bookmarkPayload(url, selectionText) {
-  const payload = { url };
-  const text = (selectionText || '').trim();
-
-  if (text) {
-    payload.quote = text.slice(0, 5000);
-  }
-
-  return payload;
-}
-
-async function saveBookmark(url, selectionText) {
+async function saveBookmark(url) {
   const apiUrl = await getApiUrl();
   const tokenResult = await chrome.storage.session.get(['accessToken']);
 
@@ -86,29 +101,45 @@ async function saveBookmark(url, selectionText) {
     'Content-Type': 'application/json',
     'Authorization': `Bearer ${tokenResult.accessToken}`,
   };
-  const payload = bookmarkPayload(url, selectionText);
   const response = await fetch(`${apiUrl}/extension/bookmarks`, {
     method: 'POST',
     headers,
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ url }),
   });
 
-  if (response.ok) return;
-
-  if (payload.quote && (response.status === 400 || response.status === 422)) {
-    const fallback = await fetch(`${apiUrl}/extension/bookmarks`, {
-      method: 'POST',
-      headers,
-      body: JSON.stringify({ url }),
-    });
-    if (fallback.ok) return;
-  }
+  if (response.ok) return response.json().catch(() => ({}));
 
   if (response.status === 401) {
     await chrome.storage.session.remove(['accessToken', 'refreshToken']);
   }
 
   throw new Error(`Save failed: ${response.status}`);
+}
+
+async function saveAnnotation({ url, title = '', quote, note = '' }) {
+  const apiUrl = await getApiUrl();
+  const tokenResult = await chrome.storage.session.get(['accessToken']);
+  const selectedQuote = String(quote || '').replace(/\s+/g, ' ').trim().slice(0, 4000);
+
+  if (!tokenResult.accessToken) throw new Error('Open Arivu to reconnect the extension');
+  if (!url || !selectedQuote) throw new Error('Select a passage to annotate');
+
+  const response = await fetch(`${apiUrl}/extension/annotations`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${tokenResult.accessToken}`,
+    },
+    body: JSON.stringify({ url, title, quote: selectedQuote, note: String(note || '').trim() }),
+  });
+
+  if (response.ok) return response.json();
+  if (response.status === 401) {
+    await chrome.storage.session.remove(['accessToken', 'refreshToken']);
+    throw new Error('Session expired — open Arivu to reconnect the extension');
+  }
+  const body = await response.json().catch(() => ({}));
+  throw new Error(body.detail || `Annotation failed: ${response.status}`);
 }
 
 async function showResult(tabId, label) {
@@ -123,7 +154,11 @@ async function saveFromTab(tab, selectionText) {
   if (!tab?.id || !tab.url) return;
 
   try {
-    await saveBookmark(tab.url, selectionText);
+    if ((selectionText || '').trim()) {
+      await saveAnnotation({ url: tab.url, title: tab.title || '', quote: selectionText });
+    } else {
+      await saveBookmark(tab.url);
+    }
     await showResult(tab.id, 'OK');
   } catch (error) {
     console.error('Arivu save failed:', error);
@@ -132,17 +167,23 @@ async function saveFromTab(tab, selectionText) {
 }
 
 chrome.runtime.onInstalled.addListener(installContextMenus);
-chrome.runtime.onInstalled.addListener(() => getApiUrl().then(registerCustomApiContentScript));
+chrome.runtime.onInstalled.addListener(() => {
+  getApiUrl().then(registerCustomApiContentScript);
+  chrome.storage.local.get(['inlineAnnotationsEnabled']).then((settings) => syncInlineAnnotationOverlay(Boolean(settings.inlineAnnotationsEnabled)));
+});
 chrome.runtime.onStartup.addListener(() => {
   installContextMenus();
   getApiUrl().then(registerCustomApiContentScript);
+  chrome.storage.local.get(['inlineAnnotationsEnabled']).then((settings) => syncInlineAnnotationOverlay(Boolean(settings.inlineAnnotationsEnabled)));
 });
 
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  const url = info.linkUrl || info.pageUrl || tab?.url;
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  const url = info.menuItemId === MENU_IDS.selection
+    ? info.pageUrl || tab?.url
+    : info.linkUrl || info.pageUrl || tab?.url;
   if (!url) return;
 
-  saveFromTab({ id: tab?.id, url }, info.selectionText);
+  await saveFromTab({ id: tab?.id, url, title: tab?.title || '' }, info.selectionText);
 });
 
 chrome.commands.onCommand.addListener(async (command) => {
@@ -171,6 +212,24 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       sendResponse({ success: true });
     }).catch(() => {
       sendResponse({ success: false });
+    });
+  } else if (request.action === 'configureInlineAnnotations') {
+    configureInlineAnnotations(request.enabled).then((enabled) => {
+      sendResponse({ success: enabled });
+    }).catch(() => {
+      sendResponse({ success: false });
+    });
+  } else if (request.action === 'captureAnnotation') {
+    if (!sender.tab?.id) {
+      sendResponse({ success: false, error: 'Annotation requests must come from a browser tab' });
+      return false;
+    }
+    saveAnnotation(request).then(async (result) => {
+      await showResult(sender.tab.id, 'OK');
+      sendResponse({ success: true, result });
+    }).catch(async (error) => {
+      await showResult(sender.tab.id, '!');
+      sendResponse({ success: false, error: error.message || 'Could not save annotation' });
     });
   }
   return true;

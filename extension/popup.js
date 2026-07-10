@@ -1,4 +1,5 @@
 const DEFAULT_API_URL = 'https://arivu.app/api';
+const INLINE_ANNOTATION_ORIGINS = ['https://*/*', 'http://*/*'];
 
 let accessToken = null;
 let apiUrl = DEFAULT_API_URL;
@@ -162,6 +163,22 @@ function savedLink(href, label) {
 const settingsToggle = document.getElementById('settingsToggle');
 const settingsPanel = document.getElementById('settingsPanel');
 const apiUrlInput = document.getElementById('apiUrlInput');
+const inlineAnnotationsEnabled = document.getElementById('inlineAnnotationsEnabled');
+
+async function loadInlineAnnotationSetting() {
+  const settings = await chrome.storage.local.get(['inlineAnnotationsEnabled']);
+  inlineAnnotationsEnabled.checked = Boolean(settings.inlineAnnotationsEnabled);
+}
+
+async function configureInlineAnnotations(enabled) {
+  if (enabled) {
+    if (!chrome.permissions?.request) throw new Error('Your browser cannot grant page access for inline annotations');
+    const granted = await chrome.permissions.request({ origins: INLINE_ANNOTATION_ORIGINS });
+    if (!granted) throw new Error('Permission denied for inline annotations');
+  }
+  const response = await chrome.runtime.sendMessage({ action: 'configureInlineAnnotations', enabled });
+  if (!response?.success) throw new Error('Could not configure inline annotations');
+}
 
 settingsToggle.addEventListener('click', async () => {
   const isVisible = settingsPanel.style.display === 'block';
@@ -169,6 +186,7 @@ settingsToggle.addEventListener('click', async () => {
 
   if (!isVisible) {
     apiUrlInput.value = await getApiUrl();
+    await loadInlineAnnotationSetting();
   }
 });
 
@@ -194,6 +212,20 @@ apiUrlInput.addEventListener('change', async () => {
   apiUrl = DEFAULT_API_URL;
   await configureApiOrigin(DEFAULT_API_URL);
   showSettingsStatus('Using default Arivu API', 'success');
+});
+
+inlineAnnotationsEnabled.addEventListener('change', async () => {
+  const enabled = inlineAnnotationsEnabled.checked;
+  inlineAnnotationsEnabled.disabled = true;
+  try {
+    await configureInlineAnnotations(enabled);
+    showSettingsStatus(enabled ? 'Inline annotations enabled' : 'Inline annotations disabled', 'success');
+  } catch (error) {
+    inlineAnnotationsEnabled.checked = !enabled;
+    showSettingsStatus(error.message || 'Could not configure inline annotations', 'error');
+  } finally {
+    inlineAnnotationsEnabled.disabled = false;
+  }
 });
 
 init();

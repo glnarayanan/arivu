@@ -1812,7 +1812,10 @@ function bindReaderAnnotationComposer(bookmarkID) {
   };
   const openComposer = () => {
     const selection = selectedReaderSelection();
-    if (!selection) return;
+    if (!selection) {
+      closeComposer();
+      return;
+    }
     if (composer?.dataset.quote === selection.quote) return;
     closeComposer();
     const rect = selection.range.getBoundingClientRect();
@@ -1851,6 +1854,7 @@ function bindReaderAnnotationComposer(bookmarkID) {
           body: JSON.stringify({ quote: selection.quote, note: note.value, tags: [], selector: readerQuoteSelector(selection.quote) }),
         });
         ui.toast("Annotation saved", "success");
+        closeComposer();
         render();
       } catch (err) {
         message.textContent = err.message;
