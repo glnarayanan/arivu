@@ -119,7 +119,7 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 - Installer upgrades now download and checksum-verify both the Arivu app and
-  installer from the same release, replace them atomically, and roll both back
+  installer from the same release, replace them transactionally, and roll both back
   when service activation or health checks fail. The one-line bootstrap now
   detects an existing install and repairs older installers through an in-place
   upgrade instead of relaunching the setup wizard.

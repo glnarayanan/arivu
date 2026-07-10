@@ -410,16 +410,21 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 	installerURL := opts.InstallerArtifactURL
 	sumsURL := opts.ChecksumsURL
 	defaultAppURL, defaultInstallerURL, defaultSumsURL := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", plan.Options.Version, facts.Arch)
+	customAppArtifact := appURL != ""
 	if appURL == "" {
 		appURL = defaultAppURL
 	}
-	if installerURL == "" {
+	if installerURL == "" && !customAppArtifact {
 		installerURL = defaultInstallerURL
 	}
 	if sumsURL == "" {
 		sumsURL = defaultSumsURL
 	}
-	for _, target := range []string{appURL, installerURL, sumsURL} {
+	targets := []string{appURL, sumsURL}
+	if installerURL != "" {
+		targets = append(targets, installerURL)
+	}
+	for _, target := range targets {
 		if err := validateDownloadURL(target); err != nil {
 			return err
 		}
@@ -432,13 +437,15 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 	if err != nil {
 		return err
 	}
-	installerBinary, err := downloadVerifiedArtifact(ctx, installerURL, sums)
-	if err != nil {
-		return err
-	}
 	replacements := []*binaryReplacement{
 		{path: rootPath(root, "/usr/local/bin/arivu"), data: app},
-		{path: rootPath(root, "/usr/local/bin/arivu-installer"), data: installerBinary},
+	}
+	if installerURL != "" {
+		installerBinary, err := downloadVerifiedArtifact(ctx, installerURL, sums)
+		if err != nil {
+			return err
+		}
+		replacements = append(replacements, &binaryReplacement{path: rootPath(root, "/usr/local/bin/arivu-installer"), data: installerBinary})
 	}
 	for _, replacement := range replacements {
 		if err := replacement.prepare(); err != nil {
@@ -552,6 +559,7 @@ func (r *binaryReplacement) rollback() error {
 	if !r.applied {
 		return nil
 	}
+	r.applied = false
 	if err := os.Remove(r.path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -563,7 +571,9 @@ func (r *binaryReplacement) rollback() error {
 
 func (r *binaryReplacement) cleanup() {
 	_ = os.Remove(r.tmp)
-	_ = os.Remove(r.previous)
+	if r.applied {
+		_ = os.Remove(r.previous)
+	}
 }
 
 func Uninstall(ctx context.Context, purge bool) error {
