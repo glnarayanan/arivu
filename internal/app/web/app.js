@@ -1768,15 +1768,20 @@ async function decideAssistantAction(button, decision) {
   }
 }
 
-function selectedReaderText() {
+function selectedReaderSelection() {
   const reader = document.querySelector(".reader-content");
   const selection = window.getSelection ? window.getSelection() : null;
-  if (!reader || !selection || selection.rangeCount === 0) return "";
+  if (!reader || !selection || selection.rangeCount === 0) return null;
   const range = selection.getRangeAt(0);
   const start = range.startContainer.nodeType === Node.ELEMENT_NODE ? range.startContainer : range.startContainer.parentElement;
   const end = range.endContainer.nodeType === Node.ELEMENT_NODE ? range.endContainer : range.endContainer.parentElement;
-  if (!start || !end || !reader.contains(start) || !reader.contains(end)) return "";
-  return selection.toString().replace(/\s+/g, " ").trim().slice(0, 4000);
+  const quote = selection.toString().replace(/\s+/g, " ").trim().slice(0, 4000);
+  if (!start || !end || !reader.contains(start) || !reader.contains(end) || !quote) return null;
+  return { quote, range };
+}
+
+function selectedReaderText() {
+  return selectedReaderSelection()?.quote || "";
 }
 
 function readerQuoteSelector(quote) {
@@ -1792,6 +1797,87 @@ function readerQuoteSelector(quote) {
     suffix: offset >= 0 ? readerText.slice(offset + exact.length, offset + exact.length + 80) : "",
     offset,
   };
+}
+
+function bindReaderAnnotationComposer(bookmarkID) {
+  const reader = document.querySelector(".reader-content");
+  if (!reader) return;
+  let composer = null;
+
+  const closeComposer = (restoreFocus = false) => {
+    if (!composer) return;
+    composer.remove();
+    composer = null;
+    if (restoreFocus) reader.focus({ preventScroll: true });
+  };
+  const openComposer = () => {
+    const selection = selectedReaderSelection();
+    if (!selection) return;
+    if (composer?.dataset.quote === selection.quote) return;
+    closeComposer();
+    const rect = selection.range.getBoundingClientRect();
+    composer = document.createElement("section");
+    composer.className = "reader-annotation-composer";
+    composer.dataset.quote = selection.quote;
+    composer.setAttribute("role", "dialog");
+    composer.setAttribute("aria-label", "Annotate selected passage");
+    composer.innerHTML = `<form class="form">
+      <p class="meta">Selected passage</p>
+      <blockquote class="reader-annotation-quote"></blockquote>
+      <div class="field"><label for="reader-annotation-note">Your note</label><textarea id="reader-annotation-note" rows="3" placeholder="Why this matters"></textarea></div>
+      <p class="form-message" aria-live="polite" hidden></p>
+      <p class="button-row"><button type="button" class="secondary" data-reader-annotation-cancel>Cancel</button><button type="submit">Save annotation</button></p>
+    </form>`;
+    composer.querySelector(".reader-annotation-quote").textContent = selection.quote;
+    const width = Math.min(352, window.innerWidth - 32);
+    composer.style.left = `${Math.max(16, Math.min(rect.left, window.innerWidth - width - 16))}px`;
+    composer.style.top = `${Math.min(window.innerHeight - 16, Math.max(16, rect.bottom + 12))}px`;
+    document.body.append(composer);
+    if (composer.getBoundingClientRect().bottom > window.innerHeight - 16) {
+      composer.style.top = `${Math.max(16, rect.top - composer.offsetHeight - 12)}px`;
+    }
+    const form = composer.querySelector("form");
+    const note = composer.querySelector("#reader-annotation-note");
+    const message = composer.querySelector(".form-message");
+    composer.querySelector("[data-reader-annotation-cancel]").addEventListener("click", () => closeComposer(true));
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const save = form.querySelector("button[type=submit]");
+      const done = setButtonBusy(save, "Saving annotation");
+      message.hidden = true;
+      try {
+        await api(`/bookmarks/${bookmarkID}/annotations`, {
+          method: "POST",
+          body: JSON.stringify({ quote: selection.quote, note: note.value, tags: [], selector: readerQuoteSelector(selection.quote) }),
+        });
+        ui.toast("Annotation saved", "success");
+        render();
+      } catch (err) {
+        message.textContent = err.message;
+        message.hidden = false;
+        ui.toast(err.message, "error");
+      } finally {
+        done();
+      }
+    });
+    requestAnimationFrame(() => note.focus());
+  };
+  const scheduleComposer = () => requestAnimationFrame(openComposer);
+
+  ui.on(reader, "pointerup", scheduleComposer);
+  ui.on(reader, "keyup", (event) => {
+    if (event.shiftKey || event.key === "Shift") scheduleComposer();
+  });
+  ui.on(document, "pointerdown", (event) => {
+    if (composer && !composer.contains(event.target) && !reader.contains(event.target)) closeComposer();
+  });
+  ui.on(document, "keydown", (event) => {
+    if (composer && event.key === "Escape") {
+      event.preventDefault();
+      closeComposer(true);
+    }
+  });
+  state.cleanup.push(() => closeComposer());
 }
 
 function findReaderTextRange(reader, quote) {
@@ -2256,7 +2342,7 @@ async function bookmarkPage() {
       </p>
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
-      <div class="reader-content">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
+      <div class="reader-content" tabindex="-1">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
     </article>
     <section class="panel primary-work">
       <div>
@@ -2375,6 +2461,7 @@ async function bookmarkPage() {
   });
   document.querySelector("#processing-save").addEventListener("click", (event) => updateReaderState(event.currentTarget, document.querySelector("#processing-stage").value));
   bindPriorityButtons();
+  bindReaderAnnotationComposer(id);
   const annotationForm = document.querySelector("#annotation-form");
   document.querySelector("#use-selection").addEventListener("click", () => {
     const quote = selectedReaderText();
