@@ -91,6 +91,10 @@ Settings import/export shows queued import progress, source counts, fetched,
 AI-processed, and failed totals. Failed totals mean the source row was accepted
 but the background fetch or processing step did not complete.
 
+Saved-page cards show a source description when one is available. A missing
+description is shown as unavailable rather than as a queued enrichment job;
+use the bookmark reader or import progress to inspect actual processing state.
+
 The Assistant page creates reviewable drafts for allowlisted actions: item state
 updates, links, reminders, and action items. Drafts do not execute until a user
 queues and runs the proposal.

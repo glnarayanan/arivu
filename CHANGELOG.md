@@ -90,6 +90,9 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Bookmark cards now describe missing source metadata neutrally instead of
+  implying that every blank description is waiting for enrichment; reader and
+  import views remain the source of truth for processing status.
 - Clarified core navigation, workflow counts, Assistant safeguards,
   destructive actions, provider settings, and admin controls with specific,
   outcome-focused interface copy.

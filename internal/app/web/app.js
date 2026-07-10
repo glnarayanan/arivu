@@ -1207,7 +1207,7 @@ function bookmarkCard(b) {
   return `<a class="panel bookmark" href="/bookmark/${bookmarkID}">
     <span class="meta">${escapeHTML(b.domain || "web")} · ${Number(b.reading_time || 0)} min</span>
     <h2>${escapeHTML(b.title || b.url)}</h2>
-    <p>${escapeHTML(b.description || "Queued for enrichment")}</p>
+    <p>${escapeHTML(b.description || "No description available.")}</p>
   </a>`;
 }
 
