@@ -2895,7 +2895,7 @@ func TestAdminUserMutations(t *testing.T) {
 		t.Fatalf("api key status = %d body=%s", keyStatus.StatusCode, readBody(keyStatus))
 	}
 	keyStatus.Body.Close()
-	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","x_redirect_uri":"https://example.com/x/callback","x_integration_enabled":true,"resend_from_email":"hello@example.com"}`, accessCookie, csrfCookie)
+	keyUpdate := adminRequest(t, handler, http.MethodPut, "/api/admin/api-keys", `{"gemini_api_key":"test-gemini","gemini_model":"gemini-custom","gemini_base_url":"https://gemini.example.com","x_redirect_uri":"https://example.com/x/callback","x_integration_enabled":true,"resend_from_email":"hello@example.com"}`, accessCookie, csrfCookie)
 	if keyUpdate.StatusCode != http.StatusOK {
 		t.Fatalf("api key update = %d body=%s", keyUpdate.StatusCode, readBody(keyUpdate))
 	}
@@ -2915,6 +2915,12 @@ func TestAdminUserMutations(t *testing.T) {
 	}
 	if storedCipher != "" || storedPlain != "hello@example.com" {
 		t.Fatalf("plain setting was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
+	}
+	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(value_cipher,''),COALESCE(value_plain,'') FROM settings WHERE key='gemini_model'`).Scan(&storedCipher, &storedPlain); err != nil {
+		t.Fatalf("stored gemini model setting: %v", err)
+	}
+	if storedCipher != "" || storedPlain != "gemini-custom" {
+		t.Fatalf("gemini model was not stored plainly: cipher=%q plain=%q", storedCipher, storedPlain)
 	}
 	xEnabled := adminRequest(t, handler, http.MethodGet, "/api/auth/x/enabled", "", accessCookie, csrfCookie)
 	var xEnabledBody map[string]any
@@ -2971,7 +2977,7 @@ func TestAdminUserMutations(t *testing.T) {
 		if event["action"] == "admin.settings.update" && event["actor_email"] == "admin@example.com" {
 			metadata, _ := event["metadata"].(map[string]any)
 			keys, _ := metadata["keys"].([]any)
-			if containsAll(keys, "gemini_api_key", "resend_from_email", "x_integration_enabled", "x_redirect_uri") {
+			if containsAll(keys, "gemini_api_key", "gemini_model", "gemini_base_url", "resend_from_email", "x_integration_enabled", "x_redirect_uri") {
 				sawSettingsAudit = true
 			}
 			if strings.Contains(fmt.Sprint(metadata), "unexpected_setting") {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"io"
 	"net"
 	"net/http"
@@ -11,6 +12,10 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"golang.org/x/net/html"
+
+	"github.com/glnarayanan/arivu/internal/sanitize"
 )
 
 var blockedPrefixes = []netip.Prefix{
@@ -129,10 +134,13 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 		return Result{}, errors.New("content too large")
 	}
 	parsed := resp.Request.URL
-	html := string(body)
-	text := ExtractText(html)
-	title := ExtractTitle(html)
-	return Result{URL: parsed.String(), Title: title, HTML: html, Text: text, Domain: parsed.Hostname()}, nil
+	raw := string(body)
+	if strings.Contains(contentType, "text/plain") {
+		text := strings.Join(strings.Fields(raw), " ")
+		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname()}, nil
+	}
+	articleHTML, text := ExtractArticle(raw)
+	return Result{URL: parsed.String(), Title: ExtractTitle(raw), HTML: articleHTML, Text: text, Domain: parsed.Hostname()}, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, rawURL string) (*http.Request, error) {
@@ -226,20 +234,132 @@ func ExtractTitle(html string) string {
 }
 
 func ExtractText(html string) string {
+	_, text := ExtractArticle(html)
+	return text
+}
+
+func ExtractArticle(input string) (string, string) {
+	root, err := html.Parse(strings.NewReader(input))
+	if err != nil {
+		text := strings.Join(strings.Fields(stdhtml.UnescapeString(input)), " ")
+		return stdhtml.EscapeString(text), text
+	}
+	dropNonContent(root)
+	node := bestArticleNode(root)
+	var htmlOut strings.Builder
+	_ = html.Render(&htmlOut, node)
+	articleHTML := strings.TrimSpace(sanitize.HTML(htmlOut.String()))
+	text := strings.Join(strings.Fields(textContent(node)), " ")
+	if text == "" {
+		text = strings.Join(strings.Fields(textContent(root)), " ")
+		articleHTML = stdhtml.EscapeString(text)
+	}
+	return articleHTML, text
+}
+
+func dropNonContent(n *html.Node) {
+	for c := n.FirstChild; c != nil; {
+		next := c.NextSibling
+		if c.Type == html.ElementNode && shouldDropElement(c) {
+			n.RemoveChild(c)
+		} else {
+			dropNonContent(c)
+		}
+		c = next
+	}
+}
+
+func shouldDropElement(n *html.Node) bool {
+	tag := strings.ToLower(n.Data)
+	switch tag {
+	case "script", "style", "noscript", "template", "svg", "canvas", "nav", "footer", "aside", "form", "button":
+		return true
+	case "header":
+		return !hasAncestor(n, "article") && !hasAncestor(n, "main")
+	}
+	for _, attr := range n.Attr {
+		key := strings.ToLower(attr.Key)
+		value := strings.ToLower(attr.Val)
+		if key != "id" && key != "class" && key != "type" {
+			continue
+		}
+		if strings.Contains(value, "__next_data__") || strings.Contains(value, "cookie") || strings.Contains(value, "advert") || strings.Contains(value, "promo") || strings.Contains(value, "newsletter") || strings.Contains(value, "sidebar") {
+			return true
+		}
+	}
+	return false
+}
+
+func hasAncestor(n *html.Node, tag string) bool {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Type == html.ElementNode && strings.EqualFold(p.Data, tag) {
+			return true
+		}
+	}
+	return false
+}
+
+func bestArticleNode(root *html.Node) *html.Node {
+	if n := firstElement(root, "article"); n != nil {
+		return n
+	}
+	if n := firstElement(root, "main"); n != nil {
+		return n
+	}
+	best := root
+	bestScore := 0
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			tag := strings.ToLower(n.Data)
+			if tag == "section" || tag == "div" || tag == "body" {
+				if score := len(strings.Fields(textContent(n))); score > bestScore {
+					bestScore = score
+					best = n
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(root)
+	return best
+}
+
+func firstElement(n *html.Node, tag string) *html.Node {
+	if n.Type == html.ElementNode && strings.EqualFold(n.Data, tag) {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := firstElement(c, tag); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+func textContent(n *html.Node) string {
 	var b strings.Builder
-	inTag := false
-	for _, r := range html {
-		switch r {
-		case '<':
-			inTag = true
-			b.WriteRune(' ')
-		case '>':
-			inTag = false
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		switch node.Type {
+		case html.TextNode:
+			b.WriteByte(' ')
+			b.WriteString(stdhtml.UnescapeString(node.Data))
+		case html.ElementNode:
+			if shouldDropElement(node) {
+				return
+			}
+			for c := node.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
 		default:
-			if !inTag {
-				b.WriteRune(r)
+			for c := node.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
 			}
 		}
 	}
-	return strings.Join(strings.Fields(b.String()), " ")
+	walk(n)
+	return b.String()
 }

@@ -24,6 +24,7 @@ Use the following section pages to explore specific areas of the repository:
 - **[GitHub Wiki Publishing](operations/github-wiki.md)**: mapping OpenWiki pages into the public GitHub Wiki.
 - **[SQLite Schema](reference/sqlite-schema.md)**: persistence model and FTS fallback.
 - **[Testing Guidelines](testing/tactics.md)**: Go tests, golden fixtures, browser smoke checks, and future-change precautions.
+- **[Implementation Plans](plans/README.md)**: implementation-ready plans for larger changes.
 
 ---
 

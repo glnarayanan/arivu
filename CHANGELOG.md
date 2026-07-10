@@ -90,6 +90,12 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Restored legacy parity for key Go-port surfaces: X OAuth now completes from
+  the Settings redirect callback, Analytics returns the combined legacy summary
+  envelope with immediate first paint and resilient page rendering, bookmark extraction uses readable
+  article text instead of raw DOM text, Gemini summaries populate structured
+  summary fields with a local fallback status when AI is unavailable, Admin settings expose Gemini model/base URL controls, and the
+  embedded UI returns to the sharp signal-orange/electric-blue brutalist theme.
 - Import jobs now recover expired leases after worker crashes and count each
   bookmark's terminal import outcome once, so retryable failures no longer
   inflate progress totals. Job completion and failure updates are now fenced to

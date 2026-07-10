@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"strings"
@@ -21,6 +22,8 @@ const (
 	KeySignupEnabled      = "signups_enabled"
 	KeyCookieSecure       = "cookie_secure"
 	KeyGeminiAPIKey       = "gemini_api_key"
+	KeyGeminiModel        = "gemini_model"
+	KeyGeminiBaseURL      = "gemini_base_url"
 	KeyResendAPIKey       = "resend_api_key"
 	KeyResendFromEmail    = "resend_from_email"
 	KeyXClientID          = "x_client_id"
@@ -34,6 +37,8 @@ var Keys = []string{
 	KeySignupEnabled,
 	KeyCookieSecure,
 	KeyGeminiAPIKey,
+	KeyGeminiModel,
+	KeyGeminiBaseURL,
 	KeyResendAPIKey,
 	KeyResendFromEmail,
 	KeyXClientID,
@@ -65,6 +70,8 @@ type Effective struct {
 	SignupEnabled       bool
 	CookieSecure        bool
 	GeminiAPIKey        string
+	GeminiModel         string
+	GeminiBaseURL       string
 	ResendAPIKey        string
 	ResendFromEmail     string
 	XClientID           string
@@ -100,6 +107,8 @@ func FromConfig(cfg config.Config) Effective {
 		SignupEnabled:       cfg.SignupEnabled,
 		CookieSecure:        cfg.CookieSecure,
 		GeminiAPIKey:        cfg.GeminiAPIKey,
+		GeminiModel:         fallbackString(cfg.GeminiModel, config.DefaultGeminiModel),
+		GeminiBaseURL:       cfg.GeminiBaseURL,
 		ResendAPIKey:        cfg.ResendAPIKey,
 		ResendFromEmail:     cfg.ResendFrom,
 		XClientID:           cfg.XClientID,
@@ -143,6 +152,14 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 	if err != nil {
 		return Effective{}, err
 	}
+	geminiModel, err := s.resolve(ctx, KeyGeminiModel)
+	if err != nil {
+		return Effective{}, err
+	}
+	geminiBaseURL, err := s.resolve(ctx, KeyGeminiBaseURL)
+	if err != nil {
+		return Effective{}, err
+	}
 	resendKey, err := s.resolve(ctx, KeyResendAPIKey)
 	if err != nil {
 		return Effective{}, err
@@ -175,6 +192,8 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 		SignupEnabled:       parseBool(signups.value),
 		CookieSecure:        parseBool(cookieSecure.value),
 		GeminiAPIKey:        gemini.value,
+		GeminiModel:         geminiModel.value,
+		GeminiBaseURL:       geminiBaseURL.value,
 		ResendAPIKey:        resendKey.value,
 		ResendFromEmail:     resendFrom.value,
 		XClientID:           xClientID.value,
@@ -299,7 +318,10 @@ func (s *Service) resolve(ctx context.Context, key string) (resolvedValue, error
 }
 
 func validateResolved(value resolvedValue) (resolvedValue, error) {
-	if value.key != KeyXRedirectURI || value.source == "default" || value.value == "" {
+	if value.source == "default" || value.value == "" {
+		return value, nil
+	}
+	if value.key != KeyXRedirectURI && value.key != KeyGeminiModel && value.key != KeyGeminiBaseURL {
 		return value, nil
 	}
 	normalized, err := normalizeValue(value.key, value.value)
@@ -330,6 +352,14 @@ func (s *Service) fallback(key string) resolvedValue {
 		}
 	case KeyGeminiAPIKey:
 		value, source = envFallback("GEMINI_API_KEY", s.cfg.GeminiAPIKey)
+	case KeyGeminiModel:
+		value, source = envFallback("GEMINI_MODEL", fallbackString(s.cfg.GeminiModel, config.DefaultGeminiModel))
+	case KeyGeminiBaseURL:
+		if _, ok := os.LookupEnv("GEMINI_BASE_URL"); ok || strings.TrimSpace(s.cfg.GeminiBaseURL) != "" {
+			value, source = strings.TrimSpace(s.cfg.GeminiBaseURL), "environment"
+		} else {
+			value, source = config.DefaultGeminiBaseURL, "default"
+		}
 	case KeyResendAPIKey:
 		value, source = envFallback("RESEND_API_KEY", s.cfg.ResendAPIKey)
 	case KeyResendFromEmail:
@@ -376,19 +406,35 @@ func normalizeValue(key string, value any) (string, error) {
 		}
 		return strings.TrimRight(raw, "/"), nil
 	}
-	if key == KeyXRedirectURI {
+	if key == KeyXRedirectURI || key == KeyGeminiBaseURL {
 		if raw == "" {
 			return "", nil
 		}
 		if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
-			return "", fmt.Errorf("x_redirect_uri must not contain whitespace or control characters")
+			return "", fmt.Errorf("%s must not contain whitespace or control characters", key)
 		}
 		parsed, err := url.Parse(raw)
 		if err != nil || parsed.Scheme == "" || parsed.Host == "" {
-			return "", fmt.Errorf("x_redirect_uri must be an absolute http or https URL")
+			return "", fmt.Errorf("%s must be an absolute http or https URL", key)
 		}
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
-			return "", fmt.Errorf("x_redirect_uri must use http or https")
+			return "", fmt.Errorf("%s must use http or https", key)
+		}
+		if key == KeyGeminiBaseURL && parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+			return "", fmt.Errorf("gemini_base_url must use https unless it points to localhost")
+		}
+		if key == KeyGeminiBaseURL {
+			return strings.TrimRight(raw, "/"), nil
+		}
+		return raw, nil
+	}
+	if key == KeyGeminiModel {
+		if raw == "" {
+			return config.DefaultGeminiModel, nil
+		}
+		raw = strings.TrimPrefix(raw, "models/")
+		if strings.ContainsAny(raw, "/ \t\r\n") || strings.ContainsFunc(raw, unicode.IsControl) {
+			return "", fmt.Errorf("gemini_model must be a model id, such as %s or models/%s", config.DefaultGeminiModel, config.DefaultGeminiModel)
 		}
 		return raw, nil
 	}
@@ -396,6 +442,23 @@ func normalizeValue(key string, value any) (string, error) {
 		return boolString(parseBool(raw)), nil
 	}
 	return raw, nil
+}
+
+func fallbackString(value string, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return strings.TrimSpace(value)
+}
+
+func isLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return ip.IsLoopback()
+	}
+	return false
 }
 
 func settingString(value any) string {

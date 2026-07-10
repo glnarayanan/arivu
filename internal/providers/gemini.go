@@ -9,21 +9,51 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/glnarayanan/arivu/internal/config"
+)
+
+const (
+	defaultGeneratePromptLimit = 12000
+	summaryGeneratePromptLimit = 50000
 )
 
 type GeminiClient struct {
 	APIKey   string
 	BaseURL  string
+	Model    string
 	HTTP     *http.Client
 	Recorder func(operation string, err error)
 }
 
 func (c GeminiClient) GenerateSummary(ctx context.Context, text string) (string, error) {
-	return c.generate(ctx, "summary", "Summarize this saved page in one concise sentence:\n\n"+text)
+	summary, err := c.GenerateSummaryFields(ctx, text)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(stringMapValue(summary, "one_sentence")), nil
+}
+
+func (c GeminiClient) GenerateSummaryFields(ctx context.Context, text string) (map[string]any, error) {
+	prompt := `You are an expert content analyst. Return only valid JSON with these keys:
+- one_sentence: one precise sentence, maximum 25 words
+- long_form: two concise paragraphs with the core argument, evidence, and takeaway
+- highlights: array of 4 to 6 standalone insights
+- suggested_tags: array of 4 to 6 lowercase hyphenated tags
+
+Avoid generic phrases like "this article discusses". Use article-specific names, numbers, and claims when present.
+
+ARTICLE:
+` + text
+	raw, err := c.generate(ctx, "summary", prompt, summaryGeneratePromptLimit)
+	if err != nil {
+		return nil, err
+	}
+	return parseSummaryFields(raw)
 }
 
 func (c GeminiClient) GenerateInsight(ctx context.Context, prompt string) (string, error) {
-	return c.generate(ctx, "insight", prompt)
+	return c.generate(ctx, "insight", prompt, defaultGeneratePromptLimit)
 }
 
 func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, data []byte) (result string, err error) {
@@ -153,13 +183,13 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string, taskTy
 	return decoded.Embedding.Values, nil
 }
 
-func (c GeminiClient) generate(ctx context.Context, operation string, prompt string) (result string, err error) {
+func (c GeminiClient) generate(ctx context.Context, operation string, prompt string, promptLimit int) (result string, err error) {
 	defer func() { c.record(operation, err) }()
 	if c.APIKey == "" {
 		return "", ErrNotConfigured
 	}
-	if len(prompt) > 12000 {
-		prompt = prompt[:12000]
+	if promptLimit > 0 && len(prompt) > promptLimit {
+		prompt = prompt[:promptLimit]
 	}
 	body := map[string]any{
 		"contents": []map[string]any{{
@@ -214,19 +244,65 @@ func (c GeminiClient) record(operation string, err error) {
 func (c GeminiClient) endpoint() string {
 	base := c.BaseURL
 	if base == "" {
-		base = "https://generativelanguage.googleapis.com"
+		base = config.DefaultGeminiBaseURL
 	}
-	return strings.TrimRight(base, "/") + "/v1beta/models/gemini-2.5-flash:generateContent?key=" + c.APIKey
+	model := strings.TrimSpace(c.Model)
+	if model == "" {
+		model = config.DefaultGeminiModel
+	}
+	return strings.TrimRight(base, "/") + "/v1beta/models/" + model + ":generateContent?key=" + c.APIKey
 }
 
 func (c GeminiClient) embeddingEndpoint() string {
 	base := c.BaseURL
 	if base == "" {
-		base = "https://generativelanguage.googleapis.com"
+		base = config.DefaultGeminiBaseURL
 	}
 	return strings.TrimRight(base, "/") + "/v1beta/models/text-embedding-004:embedContent?key=" + c.APIKey
 }
 
 func normalizeEmbeddingTaskType(taskType string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(taskType), "-", "_"))
+}
+
+func parseSummaryFields(raw string) (map[string]any, error) {
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "```json")
+	raw = strings.TrimPrefix(raw, "```")
+	raw = strings.TrimSuffix(raw, "```")
+	raw = strings.TrimSpace(raw)
+	if start := strings.Index(raw, "{"); start > 0 {
+		raw = raw[start:]
+	}
+	if end := strings.LastIndex(raw, "}"); end >= 0 && end < len(raw)-1 {
+		raw = raw[:end+1]
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(raw), &decoded); err != nil {
+		return nil, err
+	}
+	decoded["one_sentence"] = strings.TrimSpace(stringMapValue(decoded, "one_sentence"))
+	decoded["long_form"] = strings.TrimSpace(stringMapValue(decoded, "long_form"))
+	decoded["highlights"] = stringSlice(decoded["highlights"])
+	decoded["suggested_tags"] = stringSlice(decoded["suggested_tags"])
+	return decoded, nil
+}
+
+func stringMapValue(values map[string]any, key string) string {
+	value, _ := values[key].(string)
+	return value
+}
+
+func stringSlice(value any) []any {
+	items, ok := value.([]any)
+	if !ok {
+		return []any{}
+	}
+	result := make([]any, 0, len(items))
+	for _, item := range items {
+		if text, ok := item.(string); ok && strings.TrimSpace(text) != "" {
+			result = append(result, strings.TrimSpace(text))
+		}
+	}
+	return result
 }

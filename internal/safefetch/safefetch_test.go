@@ -2,6 +2,7 @@ package safefetch
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
 
@@ -78,5 +79,24 @@ func TestNewWithUserAgentFallsBackToNeutralDefault(t *testing.T) {
 	client := NewWithUserAgent(" ")
 	if client.userAgent != DefaultUserAgent {
 		t.Fatalf("userAgent = %q, want %q", client.userAgent, DefaultUserAgent)
+	}
+}
+
+func TestExtractArticlePrefersReadableContent(t *testing.T) {
+	html := `<!doctype html><html><head><title>Ignored chrome</title><style>.app{display:none}</style><script id="__NEXT_DATA__">{"props":"bad"}</script></head><body>
+		<header>Subscribe now</header><nav>Home Pricing Login</nav>
+		<main><article><header><h1>Useful &amp; Specific</h1><p>Byline that belongs to the article.</p></header><p>This article explains the durable idea.</p><p>It keeps the real body copy.</p></article></main>
+		<footer>Cookie preferences</footer></body></html>`
+	articleHTML, text := ExtractArticle(html)
+	for _, unwanted := range []string{"Subscribe", "Home Pricing", "display:none", "__NEXT_DATA__", "Cookie"} {
+		if strings.Contains(text, unwanted) || strings.Contains(articleHTML, unwanted) {
+			t.Fatalf("chrome leaked into extracted content %q / %q", text, articleHTML)
+		}
+	}
+	if !strings.Contains(text, "Useful & Specific") || !strings.Contains(text, "Byline that belongs") || !strings.Contains(text, "real body copy") {
+		t.Fatalf("article text missing body content: %q", text)
+	}
+	if !strings.Contains(articleHTML, "<article>") || !strings.Contains(articleHTML, "Useful &amp; Specific") {
+		t.Fatalf("article html not preserved safely: %q", articleHTML)
 	}
 }
