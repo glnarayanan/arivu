@@ -2973,7 +2973,7 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 	if etag == "" {
 		t.Fatal("script asset must expose a content ETag")
 	}
-	if got := script.Header.Get("Cache-Control"); got != "public, max-age=0, must-revalidate" {
+	if got := script.Header.Get("Cache-Control"); got != "no-cache" {
 		t.Fatalf("script cache-control = %q", got)
 	}
 	_ = readBody(script)
@@ -3022,6 +3022,9 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 	}
 	if got := serviceWorker.Header.Get("Content-Type"); got != "text/javascript; charset=utf-8" {
 		t.Fatalf("service worker content-type = %q", got)
+	}
+	if got := serviceWorker.Header.Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("service worker cache-control = %q", got)
 	}
 	workerBody := readBody(serviceWorker)
 	if !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, "/api/") {

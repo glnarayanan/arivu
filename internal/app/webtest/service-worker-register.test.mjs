@@ -22,14 +22,14 @@ function browserScope(serviceWorker) {
 }
 
 test("registers the service worker once after load", async () => {
-  const paths = [];
-  const scope = browserScope({ register: async (path) => { paths.push(path); } });
+	const registrations = [];
+	const scope = browserScope({ register: async (path, options) => { registrations.push([path, options]); } });
 
   registerServiceWorker(scope);
   await scope.dispatchLoad();
   await scope.dispatchLoad();
 
-  assert.deepEqual(paths, ["/sw.js"]);
+	assert.deepEqual(registrations, [["/sw.js", { updateViaCache: "none" }]]);
 });
 
 test("does nothing when service workers are unavailable", () => {
