@@ -66,6 +66,13 @@ To pin a release, run
 pass `--version` to `arivu-installer install`/`upgrade`. `reconfigure` keeps
 the installed binary unless a version or artifact override is explicit.
 
+On an existing installation, the same one-line bootstrap refreshes the
+installer and upgrades Arivu without rerunning the setup wizard. Future
+upgrades can use `sudo arivu-installer upgrade`; that command verifies and
+updates both `arivu` and `arivu-installer`, then rolls both back if the service
+does not become healthy. Check installed versions with `arivu --version` and
+`arivu-installer --version`.
+
 For local development, use the Go version declared in `go.mod` (currently Go 1.25.12):
 
 ```bash

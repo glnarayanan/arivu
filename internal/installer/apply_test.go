@@ -2,7 +2,9 @@ package installer
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -197,6 +199,111 @@ func TestRootFreshInstallWithBackupsDisabledDoesNotManageBackupTimer(t *testing.
 	}
 	if indexCommand(commands, "systemctl disable --now arivu-backup.timer") >= 0 || indexCommand(commands, "systemctl enable --now arivu-backup.timer") >= 0 {
 		t.Fatalf("fresh install with disabled backups managed backup timer: %#v", commands)
+	}
+}
+
+func TestUpgradeReplacesAppAndInstallerFromSameVerifiedRelease(t *testing.T) {
+	root := upgradeFixture(t)
+	restoreClient := upgradeReleaseDownloads(t, []byte("new app"), []byte("new installer"))
+	defer restoreClient()
+
+	err := upgrade(context.Background(), HostFacts{Arch: "amd64"}, ApplyOptions{
+		ArtifactURL:          "https://release.example/arivu-linux-amd64",
+		InstallerArtifactURL: "https://release.example/arivu-installer-linux-amd64",
+		ChecksumsURL:         "https://release.example/SHA256SUMS",
+	}, "v1.2.3", root, func(context.Context, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu"), "new app")
+	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu-installer"), "new installer")
+}
+
+func TestUpgradeRollsBackBothBinariesWhenActivationFails(t *testing.T) {
+	root := upgradeFixture(t)
+	restoreClient := upgradeReleaseDownloads(t, []byte("new app"), []byte("new installer"))
+	defer restoreClient()
+
+	err := upgrade(context.Background(), HostFacts{Arch: "amd64"}, ApplyOptions{
+		ArtifactURL:          "https://release.example/arivu-linux-amd64",
+		InstallerArtifactURL: "https://release.example/arivu-installer-linux-amd64",
+		ChecksumsURL:         "https://release.example/SHA256SUMS",
+	}, "v1.2.3", root, func(context.Context, string) error { return errors.New("service unhealthy") })
+	if err == nil || !strings.Contains(err.Error(), "service unhealthy") {
+		t.Fatalf("upgrade error = %v", err)
+	}
+	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu"), "old app")
+	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu-installer"), "old installer")
+}
+
+func TestUpgradeWithCustomAppArtifactPreservesInstaller(t *testing.T) {
+	root := upgradeFixture(t)
+	restoreClient := upgradeReleaseDownloads(t, []byte("custom app"), []byte("unused installer"))
+	defer restoreClient()
+
+	err := upgrade(context.Background(), HostFacts{Arch: "amd64"}, ApplyOptions{
+		ArtifactURL:  "https://release.example/arivu-linux-amd64",
+		ChecksumsURL: "https://release.example/SHA256SUMS",
+	}, "", root, func(context.Context, string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu"), "custom app")
+	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu-installer"), "old installer")
+}
+
+func upgradeFixture(t *testing.T) string {
+	t.Helper()
+	root := t.TempDir()
+	dir := filepath.Join(root, "usr/local/bin")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "arivu"), []byte("old app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "arivu-installer"), []byte("old installer"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func upgradeReleaseDownloads(t *testing.T, app, installer []byte) func() {
+	t.Helper()
+	appSum := sha256.Sum256(app)
+	installerSum := sha256.Sum256(installer)
+	sums := fmt.Sprintf("%x  arivu-linux-amd64\n%x  arivu-installer-linux-amd64\n", appSum, installerSum)
+	oldDownload := downloadFunc
+	downloadFunc = func(_ context.Context, target string) ([]byte, error) {
+		switch pathBase(target) {
+		case "arivu-linux-amd64":
+			return app, nil
+		case "arivu-installer-linux-amd64":
+			return installer, nil
+		case "SHA256SUMS":
+			return []byte(sums), nil
+		default:
+			return nil, fmt.Errorf("unexpected download %s", target)
+		}
+	}
+	return func() { downloadFunc = oldDownload }
+}
+
+func assertFileContent(t *testing.T, path, want string) {
+	t.Helper()
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("%s = %q, want %q", path, got, want)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o755 {
+		t.Fatalf("%s mode = %o, want 755", path, info.Mode().Perm())
 	}
 }
 

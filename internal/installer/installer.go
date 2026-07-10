@@ -417,12 +417,12 @@ func GenerateSecret() (string, error) {
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
 
-func ReleaseArtifactURLs(repo string, version string, arch string) (string, string) {
+func ReleaseArtifactURLs(repo string, version string, arch string) (string, string, string) {
 	base := strings.TrimRight(repo, "/") + "/releases/latest/download"
 	if version != "" && version != "latest" {
 		base = strings.TrimRight(repo, "/") + "/releases/download/" + version
 	}
-	return base + "/arivu-linux-" + arch, base + "/SHA256SUMS"
+	return base + "/arivu-linux-" + arch, base + "/arivu-installer-linux-" + arch, base + "/SHA256SUMS"
 }
 
 func FormatPlan(plan Plan) string {

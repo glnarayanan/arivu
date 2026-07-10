@@ -38,7 +38,9 @@ All notable changes to this project will be documented in this file.
 - Added opt-in browser-extension inline annotations for external page text,
   including dynamic optional-host registration, Arivu-origin exclusion,
   exact-URL bookmark get-or-create, and extension-audience capture tests.
-
+- Added `arivu version`, `arivu --version`, `arivu-installer version`, and
+  `arivu-installer --version`, backed by the release module version embedded in
+  Go build metadata.
 - Created the standalone low-dependency Go repository for Arivu.
 - Included the embedded frontend, SQLite persistence, auth/session subsystem, safe fetcher, sanitizer, job queue, provider clients, browser extension, deployment assets, and legacy migration tooling.
 - Added contribution guidelines, code of conduct, GitHub sponsorship metadata, and expanded security reporting policy.
@@ -123,7 +125,6 @@ All notable changes to this project will be documented in this file.
   attestations.
 
 ### Changed
-
 - Bookmark enrichment now preserves successful model-generated bullets,
   highlights, and suggested tags instead of overwriting them with local fallback
   text; bookmark pages render the associated long-form explanation, leading
@@ -132,6 +133,11 @@ All notable changes to this project will be documented in this file.
 - Documented that local `go run` processes are fixed build snapshots: restart
   them after source or branch changes, while SQLite-backed runtime settings take
   effect without a restart; added the persistent local development health check.
+- Installer upgrades now download and checksum-verify both the Arivu app and
+  installer from the same release, replace them atomically, and roll both back
+  when service activation or health checks fail. The one-line bootstrap now
+  detects an existing install and repairs older installers through an in-place
+  upgrade instead of relaunching the setup wizard.
 - Import jobs now recover expired leases after worker crashes and count each
   bookmark's terminal import outcome once, so retryable failures no longer
   inflate progress totals. Job completion and failure updates are now fenced to

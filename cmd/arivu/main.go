@@ -19,12 +19,16 @@ import (
 
 	"github.com/glnarayanan/arivu/internal/app"
 	"github.com/glnarayanan/arivu/internal/auth"
+	"github.com/glnarayanan/arivu/internal/buildinfo"
 	"github.com/glnarayanan/arivu/internal/config"
 	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/migrate"
 )
 
 func main() {
+	if buildinfo.WriteIfRequested(os.Stdout, "arivu", os.Args[1:]) {
+		return
+	}
 	if len(os.Args) > 1 {
 		switch os.Args[1] {
 		case "serve":
@@ -35,9 +39,6 @@ func main() {
 			return
 		case "admin":
 			runAdmin(os.Args[2:])
-			return
-		case "version":
-			fmt.Println("arivu")
 			return
 		case "login":
 			runLogin(os.Args[2:])

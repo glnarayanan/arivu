@@ -12,11 +12,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/glnarayanan/arivu/internal/buildinfo"
 	"github.com/glnarayanan/arivu/internal/installer"
 )
 
 func main() {
 	log.SetFlags(0)
+	if buildinfo.WriteIfRequested(os.Stdout, "arivu-installer", os.Args[1:]) {
+		return
+	}
 	if len(os.Args) < 2 {
 		usage()
 		os.Exit(2)
@@ -50,6 +54,7 @@ func usage() {
 	fmt.Fprintln(os.Stderr, `usage: arivu-installer <command>
 
 commands:
+  version      print the installed installer version
   install      interactive end-to-end server install
   plan         print the detected install plan without changing the host
   status       print host and Arivu install status
@@ -361,11 +366,12 @@ func runRestore(args []string) {
 func runUpgrade(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
 	artifactURL := fs.String("artifact-url", "", "Arivu binary artifact URL")
+	installerArtifactURL := fs.String("installer-artifact-url", "", "Arivu installer binary artifact URL")
 	checksumsURL := fs.String("checksums-url", "", "SHA256SUMS URL")
 	version := fs.String("version", "", "Release version to install; empty/latest uses the latest release")
 	_ = fs.Parse(args)
 	facts := installer.DetectHost(ctx, "")
-	if err := installer.Upgrade(ctx, facts, installer.ApplyOptions{ArtifactURL: *artifactURL, ChecksumsURL: *checksumsURL}, *version); err != nil {
+	if err := installer.Upgrade(ctx, facts, installer.ApplyOptions{ArtifactURL: *artifactURL, InstallerArtifactURL: *installerArtifactURL, ChecksumsURL: *checksumsURL}, *version); err != nil {
 		log.Fatal(err)
 	}
 }
