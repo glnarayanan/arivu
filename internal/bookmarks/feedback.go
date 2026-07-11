@@ -116,6 +116,24 @@ func (s *Service) knowledgeTargetHidden(ctx context.Context, userID, targetType,
 	return feedback == "dismiss" || (feedback == "snooze" && (!snoozed.Valid || snoozed.String > time.Now().UTC().Format(time.RFC3339)))
 }
 
+func (s *Service) hiddenKnowledgeTargets(ctx context.Context, userID, targetType string) map[string]bool {
+	rows, err := s.db.QueryContext(ctx, `SELECT target_id,feedback,snoozed_until FROM knowledge_feedback WHERE user_id=? AND target_type=?`, userID, targetType)
+	if err != nil {
+		return map[string]bool{}
+	}
+	defer rows.Close()
+	hidden := map[string]bool{}
+	now := time.Now().UTC().Format(time.RFC3339)
+	for rows.Next() {
+		var targetID, feedback string
+		var snoozed sql.NullString
+		if rows.Scan(&targetID, &feedback, &snoozed) == nil && (feedback == "dismiss" || (feedback == "snooze" && (!snoozed.Valid || snoozed.String > now))) {
+			hidden[targetID] = true
+		}
+	}
+	return hidden
+}
+
 func (s *Service) feedbackState(ctx context.Context, userID, itemType, itemID, surface string) string {
 	surface = feedbackSurface(surface)
 	var value string

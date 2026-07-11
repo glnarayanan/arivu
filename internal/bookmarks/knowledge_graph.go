@@ -200,6 +200,10 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 	for _, node := range nodes {
 		known[node.ID] = true
 	}
+	hidden := map[string]bool{}
+	if hideFeedback {
+		hidden = s.hiddenKnowledgeTargets(ctx, userID, "relationship")
+	}
 	edges := []graphV2Edge{}
 	rows, err := s.db.QueryContext(ctx, `SELECT from_type,from_id,to_type,to_id,source FROM item_links WHERE user_id=? ORDER BY created_at,id`, userID)
 	if err == nil {
@@ -209,7 +213,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 			from, to := graphNodeID(fromType, fromID), graphNodeID(toType, toID)
 			if known[from] && known[to] {
 				edge := newGraphV2Edge("explicit", from, to, firstNonEmpty(source, "manual"), 1)
-				if !hideFeedback || !s.knowledgeTargetHidden(ctx, userID, "relationship", edge.ID) {
+				if !hidden[edge.ID] {
 					edges = append(edges, edge)
 				}
 			}
@@ -228,7 +232,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 			from, to := graphNodeID("bookmark", bookmarkID), graphNodeID(table.nodeType, term)
 			if known[from] && known[to] {
 				edge := newGraphV2Edge(table.kind, from, to, table.table, 0.9)
-				if !hideFeedback || !s.knowledgeTargetHidden(ctx, userID, "relationship", edge.ID) {
+				if !hidden[edge.ID] {
 					edges = append(edges, edge)
 				}
 			}
@@ -259,7 +263,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 				continue
 			}
 			edge := newGraphV2Edge("semantic_similarity", graphNodeID("bookmark", embedded[i].id), graphNodeID("bookmark", embedded[j].id), "stored_embeddings", roundFloat(confidence, 4))
-			if !hideFeedback || !s.knowledgeTargetHidden(ctx, userID, "relationship", edge.ID) {
+			if !hidden[edge.ID] {
 				edges = append(edges, edge)
 			}
 		}
@@ -272,7 +276,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 			from, to := graphNodeID("knowledge_object", id), graphNodeID(sourceType, sourceID)
 			if known[from] && known[to] {
 				edge := newGraphV2Edge("source", from, to, "knowledge_objects.source_item_id", 1)
-				if !hideFeedback || !s.knowledgeTargetHidden(ctx, userID, "relationship", edge.ID) {
+				if !hidden[edge.ID] {
 					edges = append(edges, edge)
 				}
 			}
@@ -287,7 +291,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 			from, to := graphNodeID("annotation", id), graphNodeID("bookmark", bookmarkID)
 			if known[from] && known[to] {
 				edge := newGraphV2Edge("source", from, to, "annotations.bookmark_id", 1)
-				if !hideFeedback || !s.knowledgeTargetHidden(ctx, userID, "relationship", edge.ID) {
+				if !hidden[edge.ID] {
 					edges = append(edges, edge)
 				}
 			}

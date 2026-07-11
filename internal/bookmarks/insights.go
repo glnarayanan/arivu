@@ -74,14 +74,22 @@ func (s *Service) emergingThemeInsights(ctx context.Context, userID string, now 
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	result := []deterministicInsight{}
+	type themeCandidate struct {
+		concept                 string
+		recentCount, priorCount int
+	}
+	candidates := []themeCandidate{}
 	for rows.Next() {
-		var concept string
-		var recentCount, priorCount int
-		_ = rows.Scan(&concept, &recentCount, &priorCount)
-		evidence := s.conceptEvidence(ctx, userID, concept, 3)
-		result = append(result, deterministicInsight{ID: stableKnowledgeID("insight", "emerging_theme", concept), Type: "emerging_theme", Title: concept + " is emerging", Explanation: "This theme appears more often in your recently updated sources than in the previous period.", Window: "last_30_days", Confidence: ratioConfidence(recentCount, recentCount+priorCount), WhyDetected: intString(recentCount) + " recent sources versus " + intString(priorCount) + " in the preceding 30 days", Evidence: evidence, Actions: []string{"review", "create_note"}})
+		var candidate themeCandidate
+		if rows.Scan(&candidate.concept, &candidate.recentCount, &candidate.priorCount) == nil {
+			candidates = append(candidates, candidate)
+		}
+	}
+	rows.Close()
+	result := []deterministicInsight{}
+	for _, candidate := range candidates {
+		evidence := s.conceptEvidence(ctx, userID, candidate.concept, 3)
+		result = append(result, deterministicInsight{ID: stableKnowledgeID("insight", "emerging_theme", candidate.concept), Type: "emerging_theme", Title: candidate.concept + " is emerging", Explanation: "This theme appears more often in your recently updated sources than in the previous period.", Window: "last_30_days", Confidence: ratioConfidence(candidate.recentCount, candidate.recentCount+candidate.priorCount), WhyDetected: intString(candidate.recentCount) + " recent sources versus " + intString(candidate.priorCount) + " in the preceding 30 days", Evidence: evidence, Actions: []string{"review", "create_note"}})
 	}
 	return result
 }
@@ -91,13 +99,21 @@ func (s *Service) recurringConnectionInsights(ctx context.Context, userID string
 	if err != nil {
 		return nil
 	}
-	defer rows.Close()
-	result := []deterministicInsight{}
+	type connectionCandidate struct {
+		concept        string
+		count, domains int
+	}
+	candidates := []connectionCandidate{}
 	for rows.Next() {
-		var concept string
-		var count, domains int
-		_ = rows.Scan(&concept, &count, &domains)
-		result = append(result, deterministicInsight{ID: stableKnowledgeID("insight", "recurring_connection", concept), Type: "recurring_connection", Title: "Recurring connection: " + concept, Explanation: "The same concept recurs across unrelated sources.", Window: "all_time", Confidence: ratioConfidence(domains, count), WhyDetected: intString(count) + " sources across " + intString(domains) + " domains", Evidence: s.conceptEvidence(ctx, userID, concept, 4), Actions: []string{"review", "connect"}})
+		var candidate connectionCandidate
+		if rows.Scan(&candidate.concept, &candidate.count, &candidate.domains) == nil {
+			candidates = append(candidates, candidate)
+		}
+	}
+	rows.Close()
+	result := []deterministicInsight{}
+	for _, candidate := range candidates {
+		result = append(result, deterministicInsight{ID: stableKnowledgeID("insight", "recurring_connection", candidate.concept), Type: "recurring_connection", Title: "Recurring connection: " + candidate.concept, Explanation: "The same concept recurs across unrelated sources.", Window: "all_time", Confidence: ratioConfidence(candidate.domains, candidate.count), WhyDetected: intString(candidate.count) + " sources across " + intString(candidate.domains) + " domains", Evidence: s.conceptEvidence(ctx, userID, candidate.concept, 4), Actions: []string{"review", "connect"}})
 	}
 	return result
 }
