@@ -30,6 +30,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-07-11
+
 ### Added
 
 - Promoted Notes to the primary desktop and mobile navigation and removed its
