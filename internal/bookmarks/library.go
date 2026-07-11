@@ -64,8 +64,8 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var id, itemType, title, body, source, stage, topic, connection, created, updated string
-		if err := rows.Scan(&id, &itemType, &title, &body, &source, &stage, &topic, &connection, &created, &updated); err != nil {
+		var rowUserID, id, itemType, title, body, source, stage, topic, connection, created, updated string
+		if err := rows.Scan(&rowUserID, &id, &itemType, &title, &body, &source, &stage, &topic, &connection, &created, &updated); err != nil {
 			writeError(w, http.StatusInternalServerError, "Could not load library")
 			return
 		}
