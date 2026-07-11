@@ -35,6 +35,10 @@ X are called through narrow direct HTTP clients.
   URL/origin self-test with the GitHub runner's bundled Node runtime; Arivu
   still ships no npm dependency tree.
 - Dependabot monitors Go modules and GitHub Actions weekly.
+- The scheduled documentation workflow pins both the OpenWiki CLI version and
+  the third-party pull-request action commit; generated documentation may
+  update `openwiki/` and the lean `AGENTS.md`, but cannot rewrite the workflow
+  that receives repository write permissions.
 
 ## Frontend Dependencies
 
