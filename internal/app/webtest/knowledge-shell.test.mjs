@@ -45,6 +45,10 @@ test("uses additive knowledge APIs and approachable object fields", () => {
   assert.ok(!app.includes("Fields JSON must be an object."));
 });
 
+test("escapes user-controlled library filters in pagination links", () => {
+  assert.ok(app.includes("escapeHTML(libraryNextParams(params, result.next_cursor))"));
+});
+
 test("ships a responsive light-only theme and accessible graph fallbacks", () => {
   for (const contract of [
     "color-scheme: light",

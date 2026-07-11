@@ -261,6 +261,8 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Library pagination now HTML-escapes user-controlled filter parameters before
+  inserting the next-page URL into the embedded frontend, preventing DOM XSS.
 - Web CSRF checks now bind the submitted cookie/header token to the authenticated
   session's stored CSRF hash.
 - Runtime X OAuth redirect URI settings are validated for both Admin overrides

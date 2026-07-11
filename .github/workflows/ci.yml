@@ -20,6 +20,7 @@ jobs:
       - run: go mod verify
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
       - run: node --check internal/app/web/app.js
+      - run: node --test internal/app/webtest/*.test.mjs
       - run: node --check extension/popup.js
       - run: node --check extension/background.js
       - run: node --check extension/content.js

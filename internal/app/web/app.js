@@ -911,7 +911,7 @@ async function libraryPage() {
     <section class="library-list" aria-label="Library items">
       ${items.map(libraryItem).join("") || emptyState({ eyebrow: "A clear desk", title: "Your library is ready", body: "Capture a link, note, quote, or file. Arivu will keep it even before enrichment or organization.", tag: "section" })}
     </section>
-    ${result.next_cursor ? `<p class="pagination"><a class="button secondary" href="/library?${libraryNextParams(params, result.next_cursor)}">Load more</a></p>` : ""}
+    ${result.next_cursor ? `<p class="pagination"><a class="button secondary" href="/library?${escapeHTML(libraryNextParams(params, result.next_cursor))}">Load more</a></p>` : ""}
   `));
   document.querySelector("#library-capture")?.addEventListener("click", openCaptureComposer);
   document.querySelector("#library-new-object")?.addEventListener("click", openObjectComposer);
