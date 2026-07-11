@@ -1,27 +1,35 @@
 # Arivu
 
-Self-hosted AI second brain for web research, notes, tasks, and review.
+Self-hosted second brain for connected knowledge and evidence-backed learning.
 
-Arivu helps you save web pages, turn them into useful knowledge, search by
-meaning, and bring important material back before it disappears into the
-archive. It runs on your own infrastructure with a Go application, SQLite
-persistence, embedded browser UI, browser extension, CLI, and optional AI
-provider integrations.
+Arivu turns links, notes, quotes, files, and highlights into a private knowledge
+network. Its core loop is **Capture -> Connect -> Discover -> Learn**: save
+without setup, add explicit links, explore a bounded graph, and recognize
+patterns that cite the source material behind them. It runs on your own
+infrastructure with a Go application, SQLite persistence, embedded browser UI,
+browser extension, CLI, and optional AI provider integrations.
 
 ## What Arivu Does
 
-- Capture pages from the dashboard, browser extension, PWA share target, or
-  `arivu save`.
-- Triage saved pages and notes through Inbox, Working, Kept, and Archived.
-- Work from Focus when an item carries a task or reminder.
-- Use Review to resurface older, due, high-priority, or still-actionable items.
-- Write standalone notes, link notes to saved pages, and keep backlinks.
-- Search saved content by title, URL, tags, filters, archived text, and meaning
-  when semantic features are available.
-- Ask cited questions against your own saved content and approve assistant
-  drafts before they change anything.
+- Start from Home for a daily note, active threads, useful memories, and
+  contextual Focus and Review views.
+- Browse bookmarks, notes, daily notes, annotations, objects, entities, and
+  concepts in one filtered Library.
+- Capture a link, note, quote, or file globally without choosing taxonomy or an
+  AI provider first.
+- Create explicit links and backlinks, then inspect typed derived relationships
+  with provenance and confidence in the bounded Graph.
+- Use deterministic Insights to find emerging themes, recurring connections,
+  forgotten value, knowledge gaps, and serendipitous connections, each linked
+  to owned evidence.
+- Search saved content or ask cited questions against your own material.
+- Triage and act on tasks/reminders when they support the knowledge at hand.
 - Import from common bookmark tools and export JSON, CSV, browser HTML,
   Markdown, and Obsidian-ready ZIP archives.
+
+The primary browser destinations are Home (`/today`), Library (`/library`),
+Graph (`/graph`), and Insights (`/insights`), with Search / Ask at `/search`.
+Existing product deep links remain compatibility routes.
 
 ## How It Runs
 
@@ -32,6 +40,9 @@ provider integrations.
   reminders.
 - Web, CLI, and extension sessions are audience-isolated, with CSRF protection
   for browser mutations.
+- Model providers are optional. Capture, local search, explicit links,
+  deterministic graph structure, and deterministic insights continue without
+  one.
 - Outbound fetching is SSRF-shielded, archived HTML is sanitized on the backend,
   and provider integrations use direct HTTP clients for model providers, Resend,
   and X.

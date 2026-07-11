@@ -8,6 +8,7 @@ This repository has documentation located in the /openwiki directory.
 
 Start here:
 - [OpenWiki quickstart](openwiki/quickstart.md)
+- [Product model](PRODUCT.md) and [design system](DESIGN.md) for product or UI work.
 
 OpenWiki includes repository overview, architecture notes, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
 

@@ -32,6 +32,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Added the knowledge-centered Home, Library, Graph, Insights, and Search / Ask
+  experience around the Capture -> Connect -> Discover -> Learn loop, while
+  preserving legacy deep links as query-aware compatibility routes.
+- Added cursor-based `/api/library/items`, bounded typed
+  `/api/knowledge-graph/v2`, and evidence-backed `/api/insights` endpoints with
+  strict user scoping, deterministic ordering, focused graph expansion,
+  provenance, confidence, and durable relationship/insight feedback.
+- Added the quiet-cartographic neutral/cobalt design system with system-aware
+  light and dark themes, four-item mobile navigation, persistent Capture and
+  Search / Ask actions, an accessible graph node list, and type-specific object
+  fields instead of normal-interface JSON editing.
+- Added `knowledge_feedback` backup/restore support so useful, not-useful,
+  snoozed, dismissed, and confirmed derivative feedback survives export while
+  inferred relationships remain rebuildable.
 - Added per-bookmark reprocessing from the reader while preserving manual data
   and the previous archive until refreshed content is ready.
 - Added inline reader annotation capture with optional notes, selection-derived

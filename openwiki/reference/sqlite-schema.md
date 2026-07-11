@@ -29,6 +29,9 @@ with foreign keys.
   full-text retrieval when the local SQLite build supports FTS5.
 - `result_feedback`: per-user recall feedback for bookmark/note results across
   search, cited answers, and review.
+- `knowledge_feedback`: per-user feedback for stable insight and relationship
+  targets. Supported values are useful, not useful, snooze, dismiss, and
+  confirm; snooze may carry an expiry.
 - `reminders`: due reminders for bookmarks and notes with stored timezone,
   recurrence, notification channel, last-notified, and last-completed state.
 - `action_items`: durable completable tasks attached to bookmarks or notes.
@@ -45,7 +48,8 @@ with foreign keys.
 ## Second-Brain Defaults
 
 - AI fields are nullable. Saves, notes, annotations, tags, search, graph, review,
-  and exports must keep working without a configured model-provider key.
+  deterministic insights, feedback, and exports must keep working without a
+  configured model-provider key.
 - New saves create an `ai_summaries` placeholder and a visible background job.
   A successful provider summary owns its structured summary, long form, bullets,
   highlights, and suggested tags; deterministic local extraction fills those
@@ -58,6 +62,15 @@ with foreign keys.
 - `item_links` is polymorphic, so API handlers must validate that both endpoints
   belong to the authenticated user before inserts or reads expose relationship
   metadata.
+- Library and Graph v2 are read-time projections over canonical user-owned
+  tables. Derived relationship rows are not stored as canonical graph records.
+  Stable relationship IDs let `knowledge_feedback` suppress a rebuilt edge.
+  Confirm promotion is allowed only after the server re-derives the submitted
+  edge and verifies both bookmark/note endpoints.
+- Deterministic Insights derive from owned bookmarks, concepts, states, links,
+  dates, and domains. Insight IDs are stable across identical source state, so
+  dismiss and snooze feedback survives rebuilds. Full JSON exports include
+  `knowledge_feedback`; imports treat it as optional for old-backup parity.
 - Reminder due times are stored as UTC RFC3339 strings while `timezone`
   preserves the user's intended local clock for recurring schedules.
   `recurrence` supports `none`, `daily`, `weekly`, `monthly`, and bounded

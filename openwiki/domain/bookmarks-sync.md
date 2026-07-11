@@ -4,16 +4,28 @@ Arivu is not just a bookmark vault; it is a knowledge engine that processes URL 
 
 ---
 
-## Semantic Knowledge Graph
+## Unified Knowledge Projection
 
 Saving a bookmark initiates several processing stages to build a structured graph:
 
 1. **Extraction**: The `safefetch` engine validates the URL, fetches safe page contents, drops page chrome and script/style data, prefers readable article/main content, and removes leading banner copy from normalized text when the article title identifies a later content boundary. Semantic post containers such as Substack's available post body are preferred over discussion sections, while newsletter-named `<article>` elements remain eligible content. Standard or Open Graph descriptions are retained. Empty and comment-only results are stored with a `partial` enrichment status instead of being presented as complete extraction.
 2. **Analysis**: Clean text drives deterministic reading time, local summaries, highlight candidates, suggested tags, entities, and concepts. A successful model-provider response retains its structured one-sentence summary, long-form explanation, bullets, highlights, and suggested tags; deterministic values fill those fields only when AI is unavailable. Gemini deployments generate semantic vectors through `gemini-embedding-2`; other providers retain local graph enrichment without embeddings.
-3. **Graph Relationships**:
-   - Establishes linkages between bookmarks and distinct parsed keywords.
-   - Computes intersection degrees to link related bookmarks.
-   - Generates active data for the memory joggers and resurfacing prompts (e.g., reminding developers of neglected topics after logical durations).
+3. **Knowledge projection**: `/api/library/items` unions bookmarks, notes, daily
+   notes, annotations, knowledge objects, entities, and concepts into stable
+   user-scoped rows without duplicating canonical content.
+4. **Graph relationships**: `/api/knowledge-graph/v2` projects explicit links,
+   source links, shared concepts, shared entities, and semantic similarity where
+   embeddings exist. Every edge has a stable ID, provenance, and confidence.
+   Node and edge limits are bounded; `focus` plus depth 0-2 performs local
+   expansion.
+5. **Pattern detection**: `/api/insights` deterministically detects emerging
+   themes, recurring connections, forgotten value, knowledge gaps, and
+   serendipitous connections. Evidence joins always include the current user.
+
+Explicit links are durable canonical knowledge. Derived graph edges and insights
+are recalculated from owned source data. `knowledge_feedback` stores the durable
+user response to stable insight/relationship IDs; active dismiss/snooze feedback
+filters derivatives without deleting source material.
 
 ---
 
@@ -64,9 +76,9 @@ Second-brain v1 adds user-authored context around bookmarks:
   reminders, explicit note links, backlinks, note-to-note links, and
   note-to-bookmark links.
 - Knowledge objects add a lightweight typed layer over saved information.
-  `/api/objects` stores per-user project, person, book, meeting, decision, and
-  research-thread objects with title, description, JSON fields, and optional
-  source bookmark/note/object references.
+  `/api/objects` retains structured fields and optional source references; the
+  normal browser composer presents type-specific native fields rather than raw
+  JSON.
 - `/api/calendar/import` parses pasted ICS `VEVENT` entries into meeting
   objects, preserving UID, start, end, location, description, and source fields.
 - `/api/evolution` builds a topic timeline from daily notes, saved pages, notes,
@@ -136,6 +148,10 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Reminder rows are exported and restored with remapped item IDs, UTC due
   times, timezone, recurrence, notification channel, and completion state.
   Restores schedule only future email reminders to avoid flooding old backups.
+- Full JSON backup/restore includes user-scoped `knowledge_feedback`. Old
+  backups without this optional section remain valid. Derived graph edges and
+  insight rows are not persisted as canonical records and rebuild from restored
+  source data.
 
 ---
 

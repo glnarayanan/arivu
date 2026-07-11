@@ -1,161 +1,140 @@
 # User Guide
 
-Arivu is a self-hosted second-brain app for saving web pages, notes, tasks, and
-reminders in one local SQLite-backed workspace.
+Arivu is a self-hosted second brain for turning captured material into connected
+knowledge and evidence-backed learning patterns.
 
 ## Start Arivu
-
-Run the server:
 
 ```bash
 go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3
 ```
 
-Open `http://127.0.0.1:8080/auth`, create an account, then start from `/today`.
+Open `http://127.0.0.1:8080/auth`, create an account, and start from Home at
+`/today`. Production deployments should use TLS and configure `COOKIE_SECURE`,
+`SECRET_KEY`, `APP_URL`, `ADMIN_EMAILS`, and signup policy.
 
-For production, run behind TLS and set `COOKIE_SECURE=true`,
-`SECRET_KEY`, `APP_URL`, `ADMIN_EMAILS`, and `SIGNUPS_ENABLED=false`.
+## Capture -> Connect -> Discover -> Learn
 
-## Core Workflow
+### Capture
 
-1. Start at `/today` to plan the day, check Inbox, see open loops, review older
-   signals, and update the dated daily note.
-2. Capture a URL from `/dashboard`, the browser extension, the PWA share target,
-   or `arivu save`.
-   Dashboard captures made while offline are held in this browser and synced
-   when the signed-in session is online again.
-   Where supported by the browser, Dictate can append speech-to-text into daily
-   notes, quick notes, standalone notes, and bookmark-linked notes.
-3. Triage new saves and notes in `/inbox` by setting stage, priority, and next
-   action.
-4. Work from `/focus` when a save has a task or reminder.
-5. Review older, due, high-priority, or still-actionable items in `/review`.
+Use the persistent Capture button from any authenticated screen. Choose Link,
+Note, Quote, or File and save immediately. Organization and provider setup are
+optional. Link and quote captures queue locally if the browser is offline;
+notes and file imports require the server.
 
-The UI labels item stages as Inbox, Working, Kept, and Archived. The stored API
-values are `inbox`, `processing`, `processed`, and `archived`.
+You can also capture from the browser extension, the PWA share target, or
+`arivu save`. Shared PWA URLs still enter through `/dashboard`; Arivu preserves
+the shared title, text, and URL while opening the canonical Library capture
+context.
 
-## Saving And Reading
+### Connect
 
-Dashboard captures a URL with optional quick note and tags. Arivu archives the
-page through the server, sanitizes readable HTML, creates a visible processing
-job, and opens the saved bookmark.
+Open a bookmark or note to add explicit links and inspect backlinks. Explicit
+links are your durable knowledge. Graph may also show source, concept, entity,
+and semantic-similarity relationships. Derived edges show provenance and
+confidence; eligible suggestions can be confirmed or dismissed.
 
-Bookmark pages are reader-first. The top surface is for reading, tags, a concise
-one-sentence summary, a longer plain-language explanation when available, and
-the supporting bullets/highlights. The next-step panel captures the
-one thing the item should become. Annotations, linked notes, explicit links,
-tasks, reminders, and related items stay in collapsed workbench groups until
-needed. Selecting non-empty archived reader text opens a compact inline
-composer with an optional note; Save records either a highlight or annotation
-without leaving the passage. Escape and Cancel dismiss it. Reader captures store
-a text-quote selector, so a saved annotation can later jump back to matching
-archived text. The disclosure form remains available for tags, editing, and
-manual quote entry.
+### Discover
 
-## Browser Extension Annotations
+Library (`/library`) contains saved pages, notes, daily notes, annotations,
+knowledge objects, entities, and concepts. Filter by type, topic, source, stage,
+date, or connection state. New captures need no folder or tag.
 
-The extension can also capture a selected passage on an external page. In the
-extension settings, turn on **Enable inline annotations on sites**; Arivu then
-asks the browser for optional HTTP(S) page access and shows the selection tool
-only on pages outside your Arivu origin. Save is always explicit and notes are
-optional.
+Use Search / Ask (`/search`) to retrieve matching knowledge or ask a cited
+question. Cited answers use only material in your Arivu account and link back to
+the evidence.
 
-External captures attach to your existing bookmark for that exact page URL, or
-create the bookmark and queue its normal enrichment on the first capture. They
-store the quote and note, but do not create an external-page source selector in
-this release. A source jump is therefore available only after the archived
-bookmark contains a matching passage. Page and link saves retain their normal
-extension behavior; selected-text context-menu saves use this annotation flow.
+Graph (`/graph`) opens a bounded recent view instead of an unreadable global
+network. Choose a focus node to expand its local neighborhood. Selecting a node
+opens the inspector without leaving the graph. The open Accessible node list
+contains the same nodes for keyboard and screen-reader use. The canvas remains
+pannable when zoomed, offers explicit Zoom out, Reset view, and Zoom in
+controls, and keeps normal browser/pinch zoom enabled.
 
-## Notes, Links, Tasks, And Reminders
+### Learn
 
-Use `/notes` for standalone thoughts that do not start from a URL. `/notes/:id`
-is the full note workspace for editing, tasks, reminders, note links, backlinks,
-and note-to-bookmark links.
+Insights (`/insights`) surfaces locally detected emerging themes, recurring
+connections, forgotten value, knowledge gaps, and serendipitous connections.
+Each card shows its explanation, time window, confidence, detection reason,
+supporting sources, and useful next actions.
 
-Use `/objects` when a note or bookmark needs to become a typed thing: project,
-person, book, meeting, decision, or research thread. Objects have a title,
-description, optional source item, and small JSON fields for local structure.
-Use `/board` for a fixed working board that groups Inbox, Working, Review,
-recent decisions, and recent meetings. Use `/evolution?q=topic` to see how a
-topic appears across daily notes, saved pages, notes, meetings, decisions, and
-objects over time.
+Use Useful, Not useful, Snooze, or Dismiss to shape what returns. Feedback is
+private, included in full backup/restore, and never changes another user's
+results.
 
-Use `/today` for the daily operating note. It is intentionally separate from the
-standalone note list: one dated note per user per day, optimized for planning
-and end-of-day wrap-up rather than long-term knowledge pages.
+## Home And Supporting Workflows
 
-Use the Actions button or `Cmd/Ctrl+K` for the command palette. It opens core
-routes, saves a URL, creates a note, runs search or cited-answer mode, and can
-add a task, reminder, or explicit link when a bookmark or note is already open.
+Home is a restrained knowledge pulse: daily note, new material, active tasks or
+reminders, review candidates, recent notes, and one useful memory. Focus,
+Review, and Board remain contextual Home views. Inbox remains a Library view for
+stage, priority, next-action, bulk, and keyboard triage.
 
-Tasks are undated checklist items. Reminders have due times, timezone metadata,
-optional recurrence, and in-app due state. Email reminders are sent only when
-Resend is configured.
+Tasks and reminders remain secondary attributes of bookmarks and notes. Review
+continues to explain why an item returned and supports complete/snooze actions.
+The More button and `Cmd/Ctrl+K` retain the command palette for navigation,
+capture, search, cited Ask, and current-item actions.
 
-## Search And Assistant
+## Reading, Notes, And Objects
 
-Dashboard search finds saved pages and supports filters for tags, domain,
-source, read status, and saved date. Cited answers use only saved Arivu content.
-Search and cited-answer citations explain why an item appeared and accept
-feedback such as Useful, Not useful, Snooze longer, or Never resurface.
+Bookmark pages keep sanitized archived content, summaries, provenance, tags,
+annotations, notes, links/backlinks, related items, tasks, reminders, and review
+actions. Selecting archived text opens the inline annotation composer; the
+manual disclosure form remains available.
 
-After a successful online read, the browser keeps recent local snapshots for
-Today, saved pages, notes, Review, Inbox/work queues, reminders, and typed
-search. If the network drops later, those screens can show the latest local copy
-instead of failing immediately. Writes still require the server except for the
-dashboard URL capture queue.
+`/notes/:id` is the full note workspace. Object creation now presents
+approachable fields for projects, people, books, meetings, decisions, and
+research threads. Normal object creation no longer asks for raw JSON.
 
-Settings import/export shows queued import progress, source counts, fetched,
-AI-processed, and failed totals. Failed totals mean the source row was accepted
-but the background fetch or processing step did not complete.
+## Browser Extension
 
-Saved-page cards show a source description when one is available. A missing
-description is shown as unavailable rather than as a queued enrichment job;
-use the bookmark reader or import progress to inspect actual processing state.
+The extension popup captures pages with title, note, tags, and collections.
+Context-menu and keyboard saves keep their existing behavior. Optional inline
+annotations request page permission only after the user enables them, exclude
+the Arivu origin, and save selected text explicitly. The server reuses an exact
+URL bookmark or creates one and queues normal enrichment.
 
-The Assistant page creates reviewable drafts for allowlisted actions: item state
-updates, links, reminders, and action items. Drafts do not execute until a user
-queues and runs the proposal.
+## Offline And Provider-Optional Use
 
-## Import, Export, And Migration
+Arivu keeps bounded browser snapshots for supported recent reads. If the network
+drops, those surfaces may show the latest local copy. Auth, writes other than
+queued link/quote capture, and admin data remain network-only.
 
-Settings can import browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom,
-URL-bearing Readwise/Kindle CSV or TSV, Arivu JSON, or one URL per line.
-Exports include JSON backup, CSV, browser HTML, Markdown, and Obsidian ZIP vault
-output. Full JSON backups preserve X bookmark identity and metadata, including
-tweet ID, author handle/name, tweet URL, and available metrics.
+A model provider is optional. Without one, Arivu still captures, extracts,
+sanitizes, searches, links, reviews, imports, exports, builds the local graph,
+and generates deterministic insights. Missing embeddings only remove semantic
+similarity relationships; explicit and other local relationships remain.
 
-The same Settings import tab can also turn documents and media transcripts into
-searchable notes. Upload an EPUB, PDF, plain text, Markdown, HTML file, or image,
-or paste a YouTube/video transcript or OCR text. Arivu stores the result as a
-normal note with a `media:*` source so it appears in Inbox, search, export, and
-review. Image uploads use pasted OCR text when provided; if the configured model
-provider is Gemini, Arivu can attempt image text extraction automatically.
+## Import, Export, Backup, And Migration
 
-Calendar imports accept pasted ICS text and create meeting objects with UID,
-start, end, location, description, and source fields. Full JSON backups include
-knowledge objects and restore their source bookmark/note/object references under
-the importing account.
+Settings imports browser, Pocket, Raindrop, Linkwarden, OPML, RSS/Atom,
+URL-bearing Readwise/Kindle CSV or TSV, Arivu JSON, or one URL per line. Document
+and transcript import accepts EPUB, PDF, text, Markdown, HTML, images with OCR
+text, and pasted video transcripts. Calendar ICS creates meeting objects.
 
-CLI tokens can call the agent-oriented `/api/agent/*` routes for scoped search,
-reading saved bookmarks/notes, creating notes, adding tasks/reminders, and
-recording decisions. These routes are intended as the HTTP surface for a thin
-MCP wrapper rather than a separate automation platform.
+Exports include full JSON, CSV, browser HTML, Markdown, and Obsidian ZIP. Full
+JSON preserves bookmarks, summaries, notes, daily notes, objects, explicit
+links, annotations, tasks, reminders, review state, result feedback, knowledge
+feedback, import provenance, and X metadata. Restore remaps owned IDs under the
+importing account. Derived graph relationships and insights are rebuilt from
+canonical data; their durable feedback is restored separately.
 
-Legacy Arivu migrations use the JSON export path documented in
+Legacy migrations use the JSON export process documented in
 `domain/migration-guide.md`.
 
-## Useful Admin Notes
+## Administration And Integrations
 
-Admins are listed in `ADMIN_EMAILS`. Admin users can manage provider settings,
-inspect audit events, and review system status from `/admin`.
+Profile, imports/exports, settings, and administration are under the profile
+menu. Non-admin users do not see provider-secret controls. Admin provider fields
+remain generic: Model Provider, Model, API Key, and Base URL. Local/keyless
+providers remain supported.
 
-Provider integrations are optional. Without a configured model provider, Arivu
-still stores bookmarks, notes, tags, links, search, review, tasks, reminders,
-imports, and exports using local deterministic processing.
+CLI and agent audience routes keep scoped bookmark capture/search, saved-item
+reads, notes, tasks, reminders, and decisions. Web, CLI, and extension tokens
+cannot cross audience boundaries.
 
-When changing Model Provider, enter the model for providers without a preset
-default and provide a new API Key for authenticated services. LM Studio,
-Ollama/local, and Custom may be used without an API key. Arivu replaces the
-previous provider's model, Base URL, and credential state during the switch.
+## Compatibility URLs
+
+Saved links continue to work: `/dashboard`, `/knowledge-graph`, `/analytics`,
+`/inbox`, `/focus`, `/review`, `/board`, `/assistant`, `/objects`, `/evolution`,
+`/duplicates`, and `/imports` map into the corresponding canonical destination
+without dropping query state.
