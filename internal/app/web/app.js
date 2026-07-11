@@ -4461,9 +4461,11 @@ async function insightsPage() {
     <section class="insight-list" aria-live="polite">
       ${insights.map(insightCard).join("") || insightEmptyState(result.state, family)}
     </section>
+    ${result.next_cursor ? `<button type="button" class="secondary" data-insight-more data-cursor="${escapeHTML(result.next_cursor)}">Load more</button>` : ""}
   `));
   document.querySelector("#insight-family")?.addEventListener("change", (event) => navigate(`/insights${event.currentTarget.value ? `?family=${encodeURIComponent(event.currentTarget.value)}` : ""}`));
   bindInsightActions();
+  recordInsightImpressions(insights);
 }
 
 function insightEmptyState(state, family) {
@@ -4477,7 +4479,7 @@ function insightCard(insight) {
   const evidence = insight.evidence || [];
   const isRecommendation = insight.kind === "recommendation";
   return `<article class="insight-card" data-insight-id="${escapeHTML(insight.id)}">
-    <header><div><p class="meta">${isRecommendation ? "Recommendation · " : ""}${escapeHTML(knowledgeTypeLabel(insight.type))} · ${escapeHTML(insight.window || "current")}</p><h2>${escapeHTML(insight.title || "Knowledge pattern")}</h2></div>${isRecommendation ? "" : `<span class="confidence" title="Detector confidence">${confidence}% confidence</span>`}</header>
+    <header><div><p class="meta">${isRecommendation ? "Recommendation · " : ""}${escapeHTML(knowledgeTypeLabel(insight.type))} · ${escapeHTML(insight.window || "current")}</p><h2>${escapeHTML(insight.title || "Knowledge pattern")}</h2></div>${isRecommendation ? "" : `<span class="confidence" title="Evidence strength">${escapeHTML(insight.evidence_strength || `${confidence}% confidence`)}</span>`}</header>
     <p class="insight-explanation">${escapeHTML(insight.explanation || "")}</p>
     <details><summary>Why Arivu detected this</summary><p>${escapeHTML(insight.why_detected || "Detected from the evidence below.")}</p></details>
     <div class="evidence-list" aria-label="Supporting evidence">
@@ -4488,6 +4490,7 @@ function insightCard(insight) {
       <span class="action-spacer"></span>
       <button type="button" class="secondary" data-insight-feedback="useful">Useful</button>
       <button type="button" class="secondary" data-insight-feedback="not_useful">Not useful</button>
+      <select data-insight-reason aria-label="Why this insight was not useful"><option value="">Reason (optional)</option><option value="unsupported">Unsupported</option><option value="obvious">Obvious</option><option value="generic">Too generic</option><option value="wrong_connection">Wrong connection</option><option value="stale">Stale</option><option value="bad_source">Bad source</option></select>
       <button type="button" class="secondary" data-insight-feedback="snooze">Snooze</button>
       <button type="button" class="secondary" data-insight-feedback="dismiss">Dismiss</button>
     </div>
@@ -4502,16 +4505,44 @@ function insightNextAction(action, evidence) {
 }
 
 function bindInsightActions() {
-  document.querySelectorAll("[data-insight-feedback]").forEach((button) => button.addEventListener("click", async () => {
+  document.querySelectorAll("[data-insight-feedback]:not([data-bound])").forEach((button) => {
+    button.dataset.bound = "true";
+    button.addEventListener("click", async () => {
     const card = button.closest("[data-insight-id]");
     const done = setButtonBusy(button, "Saving");
     try {
-      await api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "insight", target_id: card.dataset.insightId, feedback: button.dataset.insightFeedback }) });
+      const reason = button.dataset.insightFeedback === "not_useful" ? card.querySelector("[data-insight-reason]")?.value || "" : "";
+      await api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "insight", target_id: card.dataset.insightId, feedback: button.dataset.insightFeedback, reason }) });
       ui.toast("Insight feedback saved", "success");
       if (button.dataset.insightFeedback === "dismiss" || button.dataset.insightFeedback === "snooze") card.remove();
     } catch (err) { ui.toast(err.message, "error"); } finally { done(); }
-  }));
-  document.querySelectorAll("[data-insight-next='capture-note']").forEach((button) => button.addEventListener("click", openCaptureComposer));
+    });
+  });
+  document.querySelectorAll("[data-insight-next='capture-note']:not([data-bound])").forEach((button) => { button.dataset.bound = "true"; button.addEventListener("click", openCaptureComposer); });
+  const moreButton = document.querySelector("[data-insight-more]:not([data-bound])");
+  if (moreButton) moreButton.dataset.bound = "true";
+  moreButton?.addEventListener("click", async (event) => {
+    const button = event.currentTarget;
+    const family = new URLSearchParams(location.search).get("family") || "";
+    const query = new URLSearchParams({ limit: "40", cursor: button.dataset.cursor });
+    if (family) query.set("family", family);
+    const done = setButtonBusy(button, "Loading");
+    try {
+      const result = await api(`/insights?${query}`);
+      if (result.restart_required) { ui.toast("Your library changed. Refreshing insights.", "info"); return insightsPage(); }
+      const items = result.insights || [];
+      document.querySelector(".insight-list")?.insertAdjacentHTML("beforeend", items.map(insightCard).join(""));
+      recordInsightImpressions(items);
+      button.dataset.cursor = result.next_cursor || "";
+      if (!result.next_cursor) button.remove(); else { done(); bindInsightActions(); }
+    } catch (err) { ui.toast(err.message, "error"); done(); }
+  });
+}
+
+function recordInsightImpressions(insights) {
+  const target_ids = insights.map((insight) => insight.id).filter(Boolean);
+  if (!target_ids.length) return;
+  queueMicrotask(() => api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "insight_impression", target_ids }) }).catch(() => {}));
 }
 
 async function adminPage() {

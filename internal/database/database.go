@@ -74,6 +74,41 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureBookmarkProvenance(ctx, db); err != nil {
 		return err
 	}
+	if err := ensureInsightFeedback(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureInsightFeedback(ctx context.Context, db *sql.DB) error {
+	columns := map[string]string{
+		"detector_family":  "TEXT NOT NULL DEFAULT ''",
+		"detector_version": "TEXT NOT NULL DEFAULT ''",
+		"reason":           "TEXT NOT NULL DEFAULT ''",
+	}
+	for name, definition := range columns {
+		if err := ensureColumn(ctx, db, "knowledge_feedback", name, definition); err != nil {
+			return err
+		}
+	}
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS insight_impressions (
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			insight_id TEXT NOT NULL,
+			detector_family TEXT NOT NULL,
+			detector_version TEXT NOT NULL,
+			first_seen_at TEXT NOT NULL,
+			last_seen_at TEXT NOT NULL,
+			impression_count INTEGER NOT NULL DEFAULT 1,
+			PRIMARY KEY(user_id, insight_id, detector_version)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_insight_impressions_detector ON insight_impressions(user_id, detector_family, detector_version, last_seen_at DESC)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("insight feedback migration: %w", err)
+		}
+	}
 	return nil
 }
 

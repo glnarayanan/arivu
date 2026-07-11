@@ -11,8 +11,8 @@ import (
 func TestInsightContainmentFiltersFamilyBeforeLimitAndRanksCandidates(t *testing.T) {
 	service, db := newKnowledgeTestService(t)
 	seedKnowledgeUser(t, db, "u1", "one@example.com")
-	for _, id := range []string{"a", "b", "c"} {
-		seedKnowledgeBookmark(t, db, "u1", id, id, "2026-07-10T00:00:00Z")
+	for index, id := range []string{"a", "b", "c"} {
+		seedKnowledgeBookmark(t, db, "u1", id, id, time.Date(2026, 7, 10-index, 0, 0, 0, 0, time.UTC).Format(time.RFC3339))
 	}
 	_, _ = db.Exec(`UPDATE bookmarks SET domain='one.example' WHERE id='a'`)
 	_, _ = db.Exec(`UPDATE bookmarks SET domain='two.example' WHERE id='b'`)

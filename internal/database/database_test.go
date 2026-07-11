@@ -32,6 +32,12 @@ func TestMigrateAddsEvidenceProvenanceToLegacyDatabase(t *testing.T) {
 	defer db.Close()
 	legacy := []string{
 		`CREATE TABLE users (id TEXT PRIMARY KEY, email TEXT NOT NULL UNIQUE, name TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+		`CREATE TABLE knowledge_feedback (
+			user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+			target_type TEXT NOT NULL, target_id TEXT NOT NULL, feedback TEXT NOT NULL,
+			snoozed_until TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+			PRIMARY KEY(user_id,target_type,target_id)
+		)`,
 		`CREATE TABLE bookmarks (
 			id TEXT PRIMARY KEY, user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
 			url TEXT NOT NULL, title TEXT, description TEXT, favicon TEXT, thumbnail TEXT,
@@ -66,9 +72,18 @@ func TestMigrateAddsEvidenceProvenanceToLegacyDatabase(t *testing.T) {
 			t.Errorf("bookmarks.%s was not added; columns=%v", column, columns)
 		}
 	}
+	feedbackColumns := tableColumns(t, db, "knowledge_feedback")
+	for _, column := range []string{"detector_family", "detector_version", "reason"} {
+		if !slices.Contains(feedbackColumns, column) {
+			t.Errorf("knowledge_feedback.%s was not added; columns=%v", column, feedbackColumns)
+		}
+	}
 	var table string
 	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name='bookmark_evidence'`).Scan(&table); err != nil {
 		t.Fatalf("bookmark_evidence table missing: %v", err)
+	}
+	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name='insight_impressions'`).Scan(&table); err != nil {
+		t.Fatalf("insight_impressions table missing: %v", err)
 	}
 	for _, index := range []string{"idx_bookmarks_user_published", "idx_bookmarks_user_pipeline_versions", "idx_evidence_user_bookmark", "idx_evidence_user_published", "idx_evidence_user_quality_version"} {
 		if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='index' AND name=?`, index).Scan(&table); err != nil {

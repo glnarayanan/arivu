@@ -158,6 +158,9 @@ CREATE TABLE IF NOT EXISTS knowledge_feedback (
   target_type TEXT NOT NULL CHECK(target_type IN ('insight','relationship')),
   target_id TEXT NOT NULL,
   feedback TEXT NOT NULL CHECK(feedback IN ('useful','not_useful','snooze','dismiss','confirm')),
+  detector_family TEXT NOT NULL DEFAULT '',
+  detector_version TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
   snoozed_until TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -165,6 +168,19 @@ CREATE TABLE IF NOT EXISTS knowledge_feedback (
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_feedback_target ON knowledge_feedback(user_id, target_type, target_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS insight_impressions (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  insight_id TEXT NOT NULL,
+  detector_family TEXT NOT NULL,
+  detector_version TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  impression_count INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY(user_id, insight_id, detector_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_insight_impressions_detector ON insight_impressions(user_id, detector_family, detector_version, last_seen_at DESC);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
   user_id UNINDEXED,

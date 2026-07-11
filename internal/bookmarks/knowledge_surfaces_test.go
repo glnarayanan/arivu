@@ -170,7 +170,7 @@ func seedKnowledgeUser(t *testing.T, db *sql.DB, id, email string) {
 
 func seedKnowledgeBookmark(t *testing.T, db *sql.DB, userID, id, title, updated string) {
 	t.Helper()
-	_, err := db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, userID, "https://"+id+".example", title, id+".example", updated, updated)
+	_, err := db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,source_published_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, userID, "https://"+id+".example", title, id+".example", updated, updated, updated)
 	if err != nil {
 		t.Fatal(err)
 	}
