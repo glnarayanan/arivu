@@ -19,6 +19,7 @@ import (
 
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/ids"
+	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/safefetch"
 	"github.com/glnarayanan/arivu/internal/sanitize"
 )
@@ -26,34 +27,93 @@ import (
 var hrefPattern = regexp.MustCompile(`(?i)href=["']([^"']+)["']`)
 var errPartialExtraction = errors.New("partial content extraction")
 
+type qualityProcessMeta struct {
+	RunID                string
+	ExpectedEvidenceHash string
+}
+
 func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string) error {
 	switch jobType {
 	case "bookmark.process":
 		var body struct {
-			BookmarkID  string `json:"bookmark_id"`
-			URL         string `json:"url"`
-			ImportJobID string `json:"import_job_id"`
+			BookmarkID           string `json:"bookmark_id"`
+			URL                  string `json:"url"`
+			ImportJobID          string `json:"import_job_id"`
+			QualityRunID         string `json:"quality_reprocess_run_id"`
+			ExpectedEvidenceHash string `json:"expected_evidence_hash"`
 		}
 		if err := json.Unmarshal([]byte(payload), &body); err != nil {
 			return err
 		}
-		return s.finishBookmarkProcess(ctx, body.BookmarkID, body.ImportJobID, s.processBookmark(ctx, body.BookmarkID, body.URL))
+		meta := qualityProcessMeta{RunID: body.QualityRunID, ExpectedEvidenceHash: body.ExpectedEvidenceHash}
+		if !s.startQualityProcess(ctx, body.BookmarkID, meta) {
+			return nil
+		}
+		err := s.processBookmark(ctx, body.BookmarkID, body.URL)
+		return s.finishBookmarkProcessWithMeta(ctx, body.BookmarkID, body.ImportJobID, meta, err)
 	default:
 		return fmt.Errorf("unknown job type %s", jobType)
 	}
 }
 
 func (s *Service) finishBookmarkProcess(ctx context.Context, bookmarkID, importJobID string, err error) error {
+	return s.finishBookmarkProcessWithMeta(ctx, bookmarkID, importJobID, qualityProcessMeta{}, err)
+}
+
+func (s *Service) finishBookmarkProcessWithMeta(ctx context.Context, bookmarkID, importJobID string, meta qualityProcessMeta, err error) error {
 	if errors.Is(err, errPartialExtraction) {
 		if importJobID != "" {
 			s.recordImportJobProgress(ctx, bookmarkID, importJobID, 0, 0, 1)
 		}
+		s.completeQualityProcess(ctx, bookmarkID, meta, "partial", errPartialExtraction.Error())
 		return nil
 	}
 	if err == nil && importJobID != "" {
 		s.recordImportJobSuccess(ctx, bookmarkID, importJobID)
 	}
+	if err == nil {
+		s.completeQualityProcess(ctx, bookmarkID, meta, "completed", "")
+	}
 	return err
+}
+
+func (s *Service) startQualityProcess(ctx context.Context, bookmarkID string, meta qualityProcessMeta) bool {
+	if meta.RunID == "" {
+		return true
+	}
+	if meta.ExpectedEvidenceHash != "" {
+		var current string
+		_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(content_hash,'') FROM bookmark_evidence WHERE bookmark_id=? AND is_selected=1`, bookmarkID).Scan(&current)
+		if current != meta.ExpectedEvidenceHash {
+			s.completeQualityProcess(ctx, bookmarkID, meta, "skipped", "selected_evidence_changed")
+			return false
+		}
+	}
+	_, _ = s.db.ExecContext(ctx, `UPDATE quality_reprocess_items SET status='processing',updated_at=? WHERE run_id=? AND bookmark_id=?`, nowString(), meta.RunID, bookmarkID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE quality_reprocess_runs SET status='running',updated_at=? WHERE id=?`, nowString(), meta.RunID)
+	return true
+}
+
+func (s *Service) completeQualityProcess(ctx context.Context, bookmarkID string, meta qualityProcessMeta, status, detail string) {
+	if meta.RunID == "" {
+		return
+	}
+	now := nowString()
+	_, _ = s.db.ExecContext(ctx, `UPDATE quality_reprocess_items SET status=?,reason=CASE WHEN ?='' THEN reason ELSE ? END,last_error=CASE WHEN ?='failed' THEN ? ELSE last_error END,updated_at=? WHERE run_id=? AND bookmark_id=?`, status, detail, detail, status, detail, now, meta.RunID, bookmarkID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE quality_reprocess_runs SET
+		completed_count=(SELECT COUNT(*) FROM quality_reprocess_items WHERE run_id=? AND status='completed'),
+		partial_count=(SELECT COUNT(*) FROM quality_reprocess_items WHERE run_id=? AND status='partial'),
+		failed_count=(SELECT COUNT(*) FROM quality_reprocess_items WHERE run_id=? AND status='failed'),
+		skipped_count=(SELECT COUNT(*) FROM quality_reprocess_items WHERE run_id=? AND status='skipped'),
+		queued_count=(SELECT COUNT(*) FROM quality_reprocess_items WHERE run_id=? AND status IN ('queued','processing')),
+		status=CASE
+			WHEN NOT EXISTS (SELECT 1 FROM quality_reprocess_items WHERE run_id=? AND status IN ('eligible','queued','processing'))
+			THEN CASE
+				WHEN NOT EXISTS (SELECT 1 FROM quality_reprocess_items WHERE run_id=? AND status<>'failed') THEN 'failed'
+				WHEN EXISTS (SELECT 1 FROM quality_reprocess_items WHERE run_id=? AND status IN ('failed','partial')) THEN 'partial'
+				ELSE 'completed' END
+			ELSE 'running' END,
+		updated_at=? WHERE id=?`, meta.RunID, meta.RunID, meta.RunID, meta.RunID, meta.RunID, meta.RunID, meta.RunID, meta.RunID, now, meta.RunID)
 }
 
 func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL string) error {
@@ -80,9 +140,10 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 		Kind: "fetched_article", Origin: "web_fetch", Authority: 70, Text: result.Text, SanitizedHTML: result.HTML,
 		CanonicalURL: result.URL, PublisherKey: result.Domain, ExtractionMethod: result.Quality.Method,
 		QualityStatus: string(result.Quality.Status), QualityReasons: result.Quality.Reasons, ExtractorVersion: result.Quality.Version,
-		Selected: result.Quality.Status == safefetch.QualityComplete,
+		Selected: false,
 	}
-	if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, evidence); err != nil {
+	storedEvidence, err := s.UpsertEvidence(ctx, userID, bookmarkID, evidence)
+	if err != nil {
 		return err
 	}
 	if result.Quality.Status != safefetch.QualityComplete {
@@ -98,7 +159,7 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 		s.refreshSearchIndex(ctx, userID)
 		return errPartialExtraction
 	}
-	return s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, result.Domain), result.Description, result.Domain, evidence)
+	return s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, result.Domain), result.Description, result.Domain, storedEvidence)
 }
 
 func (s *Service) processXBookmark(ctx context.Context, userID, bookmarkID, rawURL, title, description, domain, contentKind, tweetURL string) error {
@@ -123,11 +184,12 @@ func (s *Service) processXBookmark(ctx context.Context, userID, bookmarkID, rawU
 			s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus)
 			return nil
 		}
-		sourceEvidence.Selected = true
-		if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, sourceEvidence); err != nil {
+		sourceEvidence.Selected = false
+		storedEvidence, err := s.UpsertEvidence(ctx, userID, bookmarkID, sourceEvidence)
+		if err != nil {
 			return err
 		}
-		return s.persistSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, sourceEvidence)
+		return s.persistSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, storedEvidence)
 	}
 
 	result, fetchErr := s.fetcher.Fetch(ctx, rawURL)
@@ -143,24 +205,26 @@ func (s *Service) processXBookmark(ctx context.Context, userID, bookmarkID, rawU
 		Kind: "fetched_article", Origin: "web_fetch", Authority: 80, Text: result.Text, SanitizedHTML: result.HTML,
 		CanonicalURL: result.URL, PublisherKey: result.Domain,
 		ExtractionMethod: result.Quality.Method, QualityStatus: string(result.Quality.Status), QualityReasons: result.Quality.Reasons,
-		ExtractorVersion: result.Quality.Version, Selected: result.Quality.Status == safefetch.QualityComplete,
+		ExtractorVersion: result.Quality.Version, Selected: false,
 	}
-	if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, articleEvidence); err != nil {
+	storedArticle, err := s.UpsertEvidence(ctx, userID, bookmarkID, articleEvidence)
+	if err != nil {
 		return err
 	}
 	if result.Quality.Status == safefetch.QualityComplete {
-		return s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, title), result.Description, result.Domain, articleEvidence)
+		return s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, title), result.Description, result.Domain, storedArticle)
 	}
 	return s.useXSourceFallback(ctx, userID, bookmarkID, title, description, domain, sourceEvidence, nil)
 }
 
 func (s *Service) useXSourceFallback(ctx context.Context, userID, bookmarkID, title, description, domain string, sourceEvidence BookmarkEvidence, fetchErr error) error {
 	if sourceEvidence.QualityStatus == "complete" && strings.TrimSpace(sourceEvidence.Text) != "" {
-		sourceEvidence.Selected = true
-		if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, sourceEvidence); err != nil {
+		sourceEvidence.Selected = false
+		storedEvidence, err := s.UpsertEvidence(ctx, userID, bookmarkID, sourceEvidence)
+		if err != nil {
 			return err
 		}
-		return s.persistSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, sourceEvidence)
+		return s.persistSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, storedEvidence)
 	}
 	s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus)
 	return fetchErr
@@ -177,36 +241,145 @@ func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qual
 }
 
 func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence) error {
-	summary := map[string]any{
-		"one_sentence":   oneSentence(evidence.Text),
-		"long_form":      "",
-		"bullet_points":  []any{},
-		"highlights":     []any{},
-		"suggested_tags": []any{},
-	}
-	summaryStatus := "fallback"
-	if aiSummary, err := s.aiClient(ctx).GenerateSummaryFields(ctx, evidence.Text); err == nil {
-		for key, value := range aiSummary {
-			summary[key] = value
-		}
-		summaryStatus = "completed"
-	}
 	title = fallback(title, domain)
 	now := time.Now().UTC().Format(time.RFC3339)
+	request := s.summaryRequestForEvidence(ctx, userID, bookmarkID, title, evidence)
+	generated, generationErr := s.aiClient(ctx).GenerateSummary(ctx, request)
+	if generationErr != nil && s.hasValidSummary(ctx, userID, bookmarkID) {
+		return generationErr
+	}
+	validationReasons := summaryFailureReasons(generationErr)
+	if generationErr != nil {
+		generated = providers.SummaryResult{
+			OneSentence: oneSentence(evidence.Text), Status: providers.SummaryStatusCompleted,
+			PromptVersion: providers.SummaryPromptVersion, ValidatorVersion: providers.SummaryValidatorVersion,
+			ValidationCodes: validationReasons,
+		}
+	}
+	summaryStatus := string(generated.Status)
+	validationStatus := "validated"
+	if generationErr != nil {
+		summaryStatus = "fallback"
+		validationStatus = "fallback"
+	}
+	if summaryStatus == "" {
+		summaryStatus = "insufficient_evidence"
+		validationStatus = "insufficient_evidence"
+	}
+	semanticResult := providers.SemanticResult{Entities: generated.Entities, Concepts: generated.Concepts}
+	enrichment := s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text, semanticResult)
+	highlightSpans := highlightSpansJSON(evidence.ID, evidence.Text, generated.Highlights)
+	generatedAt := nullableTimeString(generated.GeneratedAt)
 	htmlContent := evidence.SanitizedHTML
 	if htmlContent == "" {
 		htmlContent = html.EscapeString(evidence.Text)
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`,
-		evidence.CanonicalURL, evidence.CanonicalURL, title, description, domain, domain, sanitize.HTML(htmlContent), evidence.Text, readingTime(evidence.Text), now, fallback(evidence.ExtractorVersion, safefetch.ExtractorVersion), bookmarkID, userID)
+	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=?, one_sentence=?, bullet_points_json=?, long_form=?, highlights_json=?, suggested_tags_json=?, updated_at=? WHERE bookmark_id=?`,
-		summaryStatus, stringValue(summary["one_sentence"]), jsonListString(summary["bullet_points"]), stringValue(summary["long_form"]), jsonListString(summary["highlights"]), jsonListString(summary["suggested_tags"]), now, bookmarkID)
-	s.storeEnrichment(ctx, bookmarkID, userID, s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text), summaryStatus == "completed")
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_evidence SET is_selected=0,updated_at=? WHERE bookmark_id=? AND user_id=?`, now, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_evidence SET is_selected=1,updated_at=? WHERE id=? AND bookmark_id=? AND user_id=?`, now, evidence.ID, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=?,summary_version=?,enrichment_version=? WHERE id=? AND user_id=?`,
+		evidence.CanonicalURL, evidence.CanonicalURL, title, description, domain, domain, sanitize.HTML(htmlContent), evidence.Text, readingTime(evidence.Text), now, fallback(evidence.ExtractorVersion, safefetch.ExtractorVersion), providers.SummaryPromptVersion, providers.SemanticVersion, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,provider,model,prompt_version,validator_version,evidence_hash,validation_status,validation_reasons_json,highlight_spans_json,generated_at,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(bookmark_id) DO UPDATE SET one_sentence=excluded.one_sentence,bullet_points_json=excluded.bullet_points_json,long_form=excluded.long_form,highlights_json=excluded.highlights_json,suggested_tags_json=excluded.suggested_tags_json,processing_status=excluded.processing_status,provider=excluded.provider,model=excluded.model,prompt_version=excluded.prompt_version,validator_version=excluded.validator_version,evidence_hash=excluded.evidence_hash,validation_status=excluded.validation_status,validation_reasons_json=excluded.validation_reasons_json,highlight_spans_json=excluded.highlight_spans_json,generated_at=excluded.generated_at,updated_at=excluded.updated_at`,
+		ids.New(), bookmarkID, userID, generated.OneSentence, jsonListString(generated.BulletPoints), generated.LongForm, jsonListString(generated.Highlights), jsonListString(generated.SuggestedTags), summaryStatus, generated.Provider, generated.Model, fallback(generated.PromptVersion, providers.SummaryPromptVersion), fallback(generated.ValidatorVersion, providers.SummaryValidatorVersion), evidence.ContentHash, validationStatus, jsonListString(validationReasons), highlightSpans, generatedAt, now, now); err != nil {
+		return err
+	}
+	if err := s.replaceGeneratedEnrichmentTx(ctx, tx, bookmarkID, userID, evidence.ID, enrichment); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
 	s.refreshSearchIndex(ctx, userID)
 	return nil
+}
+
+func (s *Service) summaryRequestForEvidence(ctx context.Context, userID, bookmarkID, title string, evidence BookmarkEvidence) providers.SummaryRequest {
+	var contentKind, published string
+	_ = s.db.QueryRowContext(ctx, `SELECT COALESCE(content_kind,''),COALESCE(source_published_at,'') FROM bookmarks WHERE id=? AND user_id=?`, bookmarkID, userID).Scan(&contentKind, &published)
+	if evidence.PublishedAt != "" {
+		published = evidence.PublishedAt
+	}
+	var sourceText string
+	_ = s.db.QueryRowContext(ctx, `SELECT content_text FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? AND evidence_kind='source_post' ORDER BY authority DESC LIMIT 1`, bookmarkID, userID).Scan(&sourceText)
+	if sourceText == evidence.Text {
+		sourceText = ""
+	}
+	return providers.SummaryRequest{
+		ContentKind: providers.ContentKind(normalizeSummaryContentKind(contentKind, evidence.Kind)), Title: title,
+		SourceText: sourceText, PrimaryText: evidence.Text, SourcePublished: parseSummaryTime(published),
+		QualityStatus: providers.QualityStatus(evidence.QualityStatus), QualityReasons: evidence.QualityReasons,
+	}
+}
+
+func normalizeSummaryContentKind(contentKind, evidenceKind string) string {
+	switch contentKind {
+	case "x_post", "x_thread", "article", "document", "note", "transcript", "marketing_page", "metadata_only":
+		return contentKind
+	}
+	if evidenceKind == "source_post" {
+		return "x_post"
+	}
+	if evidenceKind == "fetched_article" {
+		return "article"
+	}
+	return "web_page"
+}
+
+func parseSummaryTime(value string) time.Time {
+	parsed, _ := time.Parse(time.RFC3339, strings.TrimSpace(value))
+	return parsed
+}
+
+func nullableTimeString(value time.Time) any {
+	if value.IsZero() {
+		return nil
+	}
+	return value.UTC().Format(time.RFC3339)
+}
+
+func (s *Service) hasValidSummary(ctx context.Context, userID, bookmarkID string) bool {
+	var count int
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_summaries WHERE bookmark_id=? AND user_id=? AND processing_status IN ('completed','fallback') AND trim(COALESCE(one_sentence,''))<>''`, bookmarkID, userID).Scan(&count)
+	return count > 0
+}
+
+func summaryFailureReasons(err error) []string {
+	if err == nil {
+		return []string{}
+	}
+	var validationErr *providers.SummaryValidationError
+	if errors.As(err, &validationErr) {
+		return validationErr.ReasonCodes
+	}
+	if errors.Is(err, providers.ErrNotConfigured) {
+		return []string{"provider_not_configured"}
+	}
+	return []string{"provider_error"}
+}
+
+func highlightSpansJSON(evidenceID, evidenceText string, highlights []string) string {
+	spans := make([]map[string]any, 0, len(highlights))
+	lowerEvidence := strings.ToLower(evidenceText)
+	for _, highlight := range highlights {
+		start := strings.Index(lowerEvidence, strings.ToLower(highlight))
+		if start < 0 {
+			continue
+		}
+		spans = append(spans, map[string]any{"text": highlight, "evidence_id": evidenceID, "start": start, "end": start + len(highlight)})
+	}
+	return jsonListString(spans)
 }
 
 func normalizeProcessingURL(raw string) string {
@@ -328,8 +501,8 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 		if oldID != "" {
 			oldBookmarks[oldID] = newID
 		}
-		s.restoreBookmarkChildren(ctx, userID, newID, bookmark, oldNotes, now)
-		s.restoreBookmarkEvidence(ctx, userID, newID, bookmark["evidence"])
+		evidenceIDs := s.restoreBookmarkEvidence(ctx, userID, newID, bookmark["evidence"])
+		s.restoreBookmarkChildren(ctx, userID, newID, bookmark, oldNotes, evidenceIDs, now)
 	}
 	s.restoreStandaloneNotes(ctx, userID, backup["notes"], oldNotes, now)
 	s.restoreDailyNotes(ctx, userID, backup["daily_notes"], now)
@@ -343,6 +516,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreActionItems(ctx, userID, backup["action_items"], oldBookmarks, oldNotes, now)
 	s.restoreResultFeedback(ctx, userID, backup["result_feedback"], oldBookmarks, oldNotes, now)
 	s.restoreKnowledgeFeedback(ctx, userID, backup["knowledge_feedback"], now)
+	s.restoreInsightImpressions(ctx, userID, backup["insight_impressions"], now)
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	s.refreshSearchIndex(ctx, userID)
@@ -388,10 +562,12 @@ func restoredContentKind(source string) string {
 	return "web"
 }
 
-func (s *Service) restoreBookmarkEvidence(ctx context.Context, userID, bookmarkID string, raw any) {
+func (s *Service) restoreBookmarkEvidence(ctx context.Context, userID, bookmarkID string, raw any) map[string]string {
+	restoredIDs := map[string]string{}
 	for _, item := range mapList(raw) {
+		oldID := stringValue(item["id"])
 		evidence := BookmarkEvidence{
-			ID:               stringValue(item["id"]),
+			ID:               oldID,
 			Kind:             stringValue(item["kind"]),
 			Origin:           stringValue(item["origin"]),
 			Authority:        intValue(item["authority"]),
@@ -410,17 +586,22 @@ func (s *Service) restoreBookmarkEvidence(ctx context.Context, userID, bookmarkI
 			CreatedAt:        stringValue(item["created_at"]),
 			UpdatedAt:        stringValue(item["updated_at"]),
 		}
-		if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, evidence); err != nil && evidence.ID != "" {
+		stored, err := s.UpsertEvidence(ctx, userID, bookmarkID, evidence)
+		if err != nil && evidence.ID != "" {
 			evidence.ID = ""
-			_, _ = s.UpsertEvidence(ctx, userID, bookmarkID, evidence)
+			stored, err = s.UpsertEvidence(ctx, userID, bookmarkID, evidence)
+		}
+		if err == nil && oldID != "" {
+			restoredIDs[oldID] = stored.ID
 		}
 	}
+	return restoredIDs
 }
 
-func (s *Service) restoreBookmarkChildren(ctx context.Context, userID, bookmarkID string, bookmark map[string]any, oldNotes map[string]string, now string) {
+func (s *Service) restoreBookmarkChildren(ctx context.Context, userID, bookmarkID string, bookmark map[string]any, oldNotes, evidenceIDs map[string]string, now string) {
 	if summary, ok := bookmark["ai_summary"].(map[string]any); ok {
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET one_sentence=excluded.one_sentence,bullet_points_json=excluded.bullet_points_json,long_form=excluded.long_form,highlights_json=excluded.highlights_json,suggested_tags_json=excluded.suggested_tags_json,processing_status=excluded.processing_status,updated_at=excluded.updated_at`,
-			ids.New(), bookmarkID, userID, stringValue(summary["one_sentence"]), jsonListString(summary["bullet_points"]), stringValue(summary["long_form"]), jsonListString(summary["highlights"]), jsonListString(summary["suggested_tags"]), fallback(stringValue(summary["processing_status"]), "completed"), now, now)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,provider,model,prompt_version,validator_version,evidence_hash,validation_status,validation_reasons_json,highlight_spans_json,generated_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET one_sentence=excluded.one_sentence,bullet_points_json=excluded.bullet_points_json,long_form=excluded.long_form,highlights_json=excluded.highlights_json,suggested_tags_json=excluded.suggested_tags_json,processing_status=excluded.processing_status,provider=excluded.provider,model=excluded.model,prompt_version=excluded.prompt_version,validator_version=excluded.validator_version,evidence_hash=excluded.evidence_hash,validation_status=excluded.validation_status,validation_reasons_json=excluded.validation_reasons_json,highlight_spans_json=excluded.highlight_spans_json,generated_at=excluded.generated_at,updated_at=excluded.updated_at`,
+			ids.New(), bookmarkID, userID, stringValue(summary["one_sentence"]), jsonListString(summary["bullet_points"]), stringValue(summary["long_form"]), jsonListString(summary["highlights"]), jsonListString(summary["suggested_tags"]), fallback(stringValue(summary["processing_status"]), "completed"), stringValue(summary["provider"]), stringValue(summary["model"]), stringValue(summary["prompt_version"]), stringValue(summary["validator_version"]), stringValue(summary["evidence_hash"]), stringValue(summary["validation_status"]), jsonListString(summary["validation_reasons"]), jsonListString(remapHighlightSpans(summary["highlight_spans"], evidenceIDs)), nullableStringValue(stringValue(summary["generated_at"])), now, now)
 	}
 	for _, rawTag := range listValue(bookmark["tags"]) {
 		if tag, ok := rawTag.(map[string]any); ok {
@@ -458,6 +639,16 @@ func (s *Service) restoreBookmarkChildren(ctx context.Context, userID, bookmarkI
 			}
 		}
 	}
+}
+
+func remapHighlightSpans(raw any, evidenceIDs map[string]string) []map[string]any {
+	spans := mapList(raw)
+	for _, span := range spans {
+		if restoredID := evidenceIDs[stringValue(span["evidence_id"])]; restoredID != "" {
+			span["evidence_id"] = restoredID
+		}
+	}
+	return spans
 }
 
 func (s *Service) insertRestoredAnnotation(ctx context.Context, userID, bookmarkID, annotationID string, annotation map[string]any, selector, tagJSON, now string) bool {
@@ -817,23 +1008,24 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		bookmark["evidence"] = s.exportBookmarkEvidence(ctx, userID, id)
 	}
 	return map[string]any{
-		"version":            2,
-		"exported_at":        time.Now().UTC().Format(time.RFC3339),
-		"bookmarks":          bookmarks,
-		"notes":              s.exportStandaloneNotes(ctx, userID),
-		"daily_notes":        s.exportDailyNotes(ctx, userID),
-		"knowledge_objects":  s.exportKnowledgeObjects(ctx, userID),
-		"tags":               s.exportTags(ctx, userID),
-		"saved_searches":     s.exportSavedSearches(ctx, userID),
-		"import_jobs":        s.exportImportJobs(ctx, userID),
-		"import_sources":     s.exportImportSources(ctx, userID),
-		"review_events":      s.exportReviewEvents(ctx, userID),
-		"item_states":        s.exportItemStates(ctx, userID),
-		"item_links":         s.exportItemLinks(ctx, userID),
-		"reminders":          s.exportReminders(ctx, userID),
-		"action_items":       s.exportActionItems(ctx, userID),
-		"result_feedback":    s.exportResultFeedback(ctx, userID),
-		"knowledge_feedback": s.exportKnowledgeFeedback(ctx, userID),
+		"version":             2,
+		"exported_at":         time.Now().UTC().Format(time.RFC3339),
+		"bookmarks":           bookmarks,
+		"notes":               s.exportStandaloneNotes(ctx, userID),
+		"daily_notes":         s.exportDailyNotes(ctx, userID),
+		"knowledge_objects":   s.exportKnowledgeObjects(ctx, userID),
+		"tags":                s.exportTags(ctx, userID),
+		"saved_searches":      s.exportSavedSearches(ctx, userID),
+		"import_jobs":         s.exportImportJobs(ctx, userID),
+		"import_sources":      s.exportImportSources(ctx, userID),
+		"review_events":       s.exportReviewEvents(ctx, userID),
+		"item_states":         s.exportItemStates(ctx, userID),
+		"item_links":          s.exportItemLinks(ctx, userID),
+		"reminders":           s.exportReminders(ctx, userID),
+		"action_items":        s.exportActionItems(ctx, userID),
+		"result_feedback":     s.exportResultFeedback(ctx, userID),
+		"knowledge_feedback":  s.exportKnowledgeFeedback(ctx, userID),
+		"insight_impressions": s.exportInsightImpressions(ctx, userID),
 	}, nil
 }
 
@@ -1081,16 +1273,32 @@ func (s *Service) exportResultFeedback(ctx context.Context, userID string) []map
 }
 
 func (s *Service) exportKnowledgeFeedback(ctx context.Context, userID string) []map[string]any {
-	rows, err := s.db.QueryContext(ctx, `SELECT target_type,target_id,feedback,COALESCE(snoozed_until,''),created_at,updated_at FROM knowledge_feedback WHERE user_id=? ORDER BY updated_at DESC,target_type,target_id`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT target_type,target_id,feedback,detector_family,detector_version,reason,COALESCE(snoozed_until,''),created_at,updated_at FROM knowledge_feedback WHERE user_id=? ORDER BY updated_at DESC,target_type,target_id`, userID)
 	if err != nil {
 		return []map[string]any{}
 	}
 	defer rows.Close()
 	items := []map[string]any{}
 	for rows.Next() {
-		var targetType, targetID, feedback, snoozedUntil, created, updated string
-		_ = rows.Scan(&targetType, &targetID, &feedback, &snoozedUntil, &created, &updated)
-		items = append(items, map[string]any{"target_type": targetType, "target_id": targetID, "feedback": feedback, "snoozed_until": snoozedUntil, "created_at": created, "updated_at": updated})
+		var targetType, targetID, feedback, family, version, reason, snoozedUntil, created, updated string
+		_ = rows.Scan(&targetType, &targetID, &feedback, &family, &version, &reason, &snoozedUntil, &created, &updated)
+		items = append(items, map[string]any{"target_type": targetType, "target_id": targetID, "feedback": feedback, "detector_family": family, "detector_version": version, "reason": reason, "snoozed_until": snoozedUntil, "created_at": created, "updated_at": updated})
+	}
+	return items
+}
+
+func (s *Service) exportInsightImpressions(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT insight_id,detector_family,detector_version,first_seen_at,last_seen_at,impression_count FROM insight_impressions WHERE user_id=? ORDER BY last_seen_at DESC,insight_id`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var insightID, family, version, firstSeen, lastSeen string
+		var count int
+		_ = rows.Scan(&insightID, &family, &version, &firstSeen, &lastSeen, &count)
+		items = append(items, map[string]any{"insight_id": insightID, "detector_family": family, "detector_version": version, "first_seen_at": firstSeen, "last_seen_at": lastSeen, "impression_count": count})
 	}
 	return items
 }
@@ -1109,11 +1317,33 @@ func (s *Service) restoreKnowledgeFeedback(ctx context.Context, userID string, r
 		}
 		created := fallback(stringValue(item["created_at"]), now)
 		updated := fallback(stringValue(item["updated_at"]), now)
+		family := stringValue(item["detector_family"])
+		version := stringValue(item["detector_version"])
+		reason := stringValue(item["reason"])
 		var snoozed any
 		if value := stringValue(item["snoozed_until"]); value != "" {
 			snoozed = value
 		}
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO knowledge_feedback(user_id,target_type,target_id,feedback,snoozed_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,target_type,target_id) DO UPDATE SET feedback=excluded.feedback,snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at`, userID, targetType, targetID, feedback, snoozed, created, updated)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO knowledge_feedback(user_id,target_type,target_id,feedback,detector_family,detector_version,reason,snoozed_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,target_type,target_id) DO UPDATE SET feedback=excluded.feedback,detector_family=excluded.detector_family,detector_version=excluded.detector_version,reason=excluded.reason,snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at`, userID, targetType, targetID, feedback, family, version, reason, snoozed, created, updated)
+	}
+}
+
+func (s *Service) restoreInsightImpressions(ctx context.Context, userID string, raw any, now string) {
+	for _, rawItem := range listValue(raw) {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		insightID := stringValue(item["insight_id"])
+		family := stringValue(item["detector_family"])
+		version := stringValue(item["detector_version"])
+		if insightID == "" || family == "" || version == "" {
+			continue
+		}
+		firstSeen := fallback(stringValue(item["first_seen_at"]), now)
+		lastSeen := fallback(stringValue(item["last_seen_at"]), firstSeen)
+		count := intValueDefault(item["impression_count"], 1)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO insight_impressions(user_id,insight_id,detector_family,detector_version,first_seen_at,last_seen_at,impression_count) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,insight_id,detector_version) DO UPDATE SET detector_family=excluded.detector_family,first_seen_at=excluded.first_seen_at,last_seen_at=excluded.last_seen_at,impression_count=excluded.impression_count`, userID, insightID, family, version, firstSeen, lastSeen, count)
 	}
 }
 
@@ -1431,14 +1661,16 @@ func (s *Service) RecordJobTerminalFailure(ctx context.Context, jobType string, 
 		return
 	}
 	var body struct {
-		BookmarkID  string `json:"bookmark_id"`
-		ImportJobID string `json:"import_job_id"`
+		BookmarkID   string `json:"bookmark_id"`
+		ImportJobID  string `json:"import_job_id"`
+		QualityRunID string `json:"quality_reprocess_run_id"`
 	}
 	if err := json.Unmarshal([]byte(payload), &body); err != nil || body.BookmarkID == "" {
 		return
 	}
 	now := nowString()
-	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='failed', updated_at=? WHERE bookmark_id=?`, now, body.BookmarkID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=CASE WHEN processing_status IN ('completed','fallback') THEN processing_status ELSE 'failed' END, updated_at=? WHERE bookmark_id=?`, now, body.BookmarkID)
+	s.completeQualityProcess(ctx, body.BookmarkID, qualityProcessMeta{RunID: body.QualityRunID}, "failed", "job_attempts_exhausted")
 	if body.ImportJobID != "" {
 		s.recordImportJobProgress(ctx, body.BookmarkID, body.ImportJobID, 0, 0, 1)
 	}
@@ -1449,7 +1681,7 @@ func (s *Service) recordImportJobSuccess(ctx context.Context, bookmarkID string,
 }
 
 func (s *Service) recordImportJobFailure(ctx context.Context, bookmarkID string, importJobID string) {
-	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='failed', updated_at=? WHERE bookmark_id=?`, nowString(), bookmarkID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=CASE WHEN processing_status IN ('completed','fallback') THEN processing_status ELSE 'failed' END, updated_at=? WHERE bookmark_id=?`, nowString(), bookmarkID)
 	s.recordImportJobProgress(ctx, bookmarkID, importJobID, 0, 0, 1)
 }
 

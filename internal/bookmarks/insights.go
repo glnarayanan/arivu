@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/auth"
+	"github.com/glnarayanan/arivu/internal/providers"
 )
 
 const insightDetectorVersion = "2.0.0"
@@ -171,8 +172,12 @@ type conceptSource struct{ id, title, publishedAt, publisher string }
 func (s *Service) conceptSources(ctx context.Context, userID, concept string) []conceptSource {
 	rows, err := s.db.QueryContext(ctx, `SELECT b.id,COALESCE(NULLIF(b.title,''),b.url),COALESCE(b.source_published_at,''),
 		COALESCE(NULLIF(b.source_publisher_key,''),NULLIF(b.source_author_id,''),NULLIF(b.domain,''),b.id)
-		FROM bookmark_concepts c JOIN bookmarks b ON b.user_id=c.user_id AND b.id=c.bookmark_id
-		WHERE c.user_id=? AND c.concept=? ORDER BY COALESCE(b.source_published_at,'') DESC,b.id`, userID, concept)
+		FROM bookmark_concepts c
+		JOIN bookmarks b ON b.user_id=c.user_id AND b.id=c.bookmark_id
+		JOIN bookmark_evidence e ON e.id=c.evidence_id AND e.bookmark_id=c.bookmark_id AND e.user_id=c.user_id AND e.is_selected=1
+		WHERE c.user_id=? AND c.concept=? AND c.confidence>=0.65 AND c.enrichment_version=?
+			AND c.evidence_text<>'' AND c.evidence_end>c.evidence_start AND instr(lower(e.content_text),lower(c.evidence_text))>0 AND e.quality_status='complete'
+		ORDER BY COALESCE(b.source_published_at,'') DESC,b.id`, userID, concept, providers.SemanticVersion)
 	if err != nil {
 		return nil
 	}
@@ -188,7 +193,11 @@ func (s *Service) conceptSources(ctx context.Context, userID, concept string) []
 }
 
 func (s *Service) conceptNames(ctx context.Context, userID string) []string {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT concept FROM bookmark_concepts WHERE user_id=? ORDER BY concept`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT c.concept FROM bookmark_concepts c
+		JOIN bookmark_evidence e ON e.id=c.evidence_id AND e.bookmark_id=c.bookmark_id AND e.user_id=c.user_id AND e.is_selected=1
+		WHERE c.user_id=? AND c.confidence>=0.65 AND c.enrichment_version=?
+			AND c.evidence_text<>'' AND c.evidence_end>c.evidence_start AND instr(lower(e.content_text),lower(c.evidence_text))>0 AND e.quality_status='complete'
+		ORDER BY c.concept`, userID, providers.SemanticVersion)
 	if err != nil {
 		return nil
 	}

@@ -146,7 +146,7 @@ func Reprocess(ctx context.Context, options ReprocessOptions) (ReprocessResult, 
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, candidate := range candidates {
 		var existingJobID string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM jobs WHERE user_id=? AND type='bookmark.process' AND status IN ('queued','leased') AND json_extract(payload_json,'$.bookmark_id')=? ORDER BY created_at LIMIT 1`, candidate.UserID, candidate.BookmarkID).Scan(&existingJobID)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM jobs WHERE user_id=? AND type='bookmark.process' AND status IN ('queued','leased') AND json_extract(payload_json,'$.bookmark_id')=? AND json_extract(payload_json,'$.quality_reprocess_run_id')=? ORDER BY created_at LIMIT 1`, candidate.UserID, candidate.BookmarkID, runID).Scan(&existingJobID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return ReprocessResult{}, err
 		}

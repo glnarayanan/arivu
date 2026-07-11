@@ -74,11 +74,74 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureBookmarkProvenance(ctx, db); err != nil {
 		return err
 	}
+	if err := ensureGeneratedQualityMetadata(ctx, db); err != nil {
+		return err
+	}
 	if err := ensureInsightFeedback(ctx, db); err != nil {
 		return err
 	}
 	if err := ensureQualityOperations(ctx, db); err != nil {
 		return err
+	}
+	return nil
+}
+
+func ensureGeneratedQualityMetadata(ctx context.Context, db *sql.DB) error {
+	summaryColumns := map[string]string{
+		"provider":                "TEXT NOT NULL DEFAULT ''",
+		"model":                   "TEXT NOT NULL DEFAULT ''",
+		"prompt_version":          "TEXT NOT NULL DEFAULT ''",
+		"validator_version":       "TEXT NOT NULL DEFAULT ''",
+		"evidence_hash":           "TEXT NOT NULL DEFAULT ''",
+		"validation_status":       "TEXT NOT NULL DEFAULT ''",
+		"validation_reasons_json": "TEXT NOT NULL DEFAULT '[]'",
+		"highlight_spans_json":    "TEXT NOT NULL DEFAULT '[]'",
+		"generated_at":            "TEXT",
+	}
+	for name, definition := range summaryColumns {
+		if err := ensureColumn(ctx, db, "ai_summaries", name, definition); err != nil {
+			return err
+		}
+	}
+	entityColumns := map[string]string{
+		"normalized_key":     "TEXT NOT NULL DEFAULT ''",
+		"entity_type":        "TEXT NOT NULL DEFAULT ''",
+		"confidence":         "REAL NOT NULL DEFAULT 0",
+		"extraction_method":  "TEXT NOT NULL DEFAULT ''",
+		"evidence_id":        "TEXT",
+		"evidence_text":      "TEXT NOT NULL DEFAULT ''",
+		"evidence_start":     "INTEGER NOT NULL DEFAULT 0",
+		"evidence_end":       "INTEGER NOT NULL DEFAULT 0",
+		"enrichment_version": "TEXT NOT NULL DEFAULT ''",
+	}
+	for name, definition := range entityColumns {
+		if err := ensureColumn(ctx, db, "bookmark_entities", name, definition); err != nil {
+			return err
+		}
+	}
+	conceptColumns := map[string]string{
+		"normalized_key":     "TEXT NOT NULL DEFAULT ''",
+		"confidence":         "REAL NOT NULL DEFAULT 0",
+		"extraction_method":  "TEXT NOT NULL DEFAULT ''",
+		"evidence_id":        "TEXT",
+		"evidence_text":      "TEXT NOT NULL DEFAULT ''",
+		"evidence_start":     "INTEGER NOT NULL DEFAULT 0",
+		"evidence_end":       "INTEGER NOT NULL DEFAULT 0",
+		"enrichment_version": "TEXT NOT NULL DEFAULT ''",
+	}
+	for name, definition := range conceptColumns {
+		if err := ensureColumn(ctx, db, "bookmark_concepts", name, definition); err != nil {
+			return err
+		}
+	}
+	statements := []string{
+		`CREATE INDEX IF NOT EXISTS idx_entities_quality ON bookmark_entities(user_id, enrichment_version, confidence DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_concepts_quality ON bookmark_concepts(user_id, enrichment_version, confidence DESC)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("generated quality metadata migration: %w", err)
+		}
 	}
 	return nil
 }

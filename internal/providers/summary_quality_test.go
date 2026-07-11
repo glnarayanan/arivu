@@ -76,6 +76,16 @@ func TestValidateSummaryRejectsUnsupportedNamedTechnology(t *testing.T) {
 	}
 }
 
+func TestValidateSummaryRejectsUnsupportedOrdinaryProperNounAtSentenceStart(t *testing.T) {
+	err := ValidateSummary(SummaryRequest{
+		ContentKind: ContentKindArticle, PrimaryText: "SQLite keeps the data local.", QualityStatus: QualityComplete,
+	}, SummaryResult{OneSentence: "Oracle keeps the data local."})
+	var validationErr *SummaryValidationError
+	if !errors.As(err, &validationErr) || !containsString(validationErr.ReasonCodes, "unsupported_named_entity") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
 func TestValidateSemanticsRequiresEvidenceAndDropsJunk(t *testing.T) {
 	req := SemanticRequest{ContentKind: ContentKindArticle, EvidenceText: "Microsoft documents row-level security as a database policy mechanism.", QualityStatus: QualityComplete}
 	result := SemanticResult{

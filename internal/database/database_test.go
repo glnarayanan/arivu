@@ -78,6 +78,18 @@ func TestMigrateAddsEvidenceProvenanceToLegacyDatabase(t *testing.T) {
 			t.Errorf("knowledge_feedback.%s was not added; columns=%v", column, feedbackColumns)
 		}
 	}
+	for tableName, expected := range map[string][]string{
+		"ai_summaries":      {"provider", "model", "prompt_version", "validator_version", "evidence_hash", "validation_status", "validation_reasons_json", "highlight_spans_json", "generated_at"},
+		"bookmark_entities": {"normalized_key", "entity_type", "confidence", "extraction_method", "evidence_id", "evidence_text", "evidence_start", "evidence_end", "enrichment_version"},
+		"bookmark_concepts": {"normalized_key", "confidence", "extraction_method", "evidence_id", "evidence_text", "evidence_start", "evidence_end", "enrichment_version"},
+	} {
+		columns := tableColumns(t, db, tableName)
+		for _, column := range expected {
+			if !slices.Contains(columns, column) {
+				t.Errorf("%s.%s was not added; columns=%v", tableName, column, columns)
+			}
+		}
+	}
 	var table string
 	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name='bookmark_evidence'`).Scan(&table); err != nil {
 		t.Fatalf("bookmark_evidence table missing: %v", err)

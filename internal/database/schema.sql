@@ -204,6 +204,15 @@ CREATE TABLE IF NOT EXISTS ai_summaries (
   highlights_json TEXT NOT NULL DEFAULT '[]',
   suggested_tags_json TEXT NOT NULL DEFAULT '[]',
   processing_status TEXT NOT NULL DEFAULT 'pending',
+  provider TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  prompt_version TEXT NOT NULL DEFAULT '',
+  validator_version TEXT NOT NULL DEFAULT '',
+  evidence_hash TEXT NOT NULL DEFAULT '',
+  validation_status TEXT NOT NULL DEFAULT '',
+  validation_reasons_json TEXT NOT NULL DEFAULT '[]',
+  highlight_spans_json TEXT NOT NULL DEFAULT '[]',
+  generated_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -433,6 +442,15 @@ CREATE TABLE IF NOT EXISTS bookmark_entities (
   bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   entity TEXT NOT NULL,
+  normalized_key TEXT NOT NULL DEFAULT '',
+  entity_type TEXT NOT NULL DEFAULT '',
+  confidence REAL NOT NULL DEFAULT 0,
+  extraction_method TEXT NOT NULL DEFAULT '',
+  evidence_id TEXT,
+  evidence_text TEXT NOT NULL DEFAULT '',
+  evidence_start INTEGER NOT NULL DEFAULT 0,
+  evidence_end INTEGER NOT NULL DEFAULT 0,
+  enrichment_version TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(bookmark_id, entity)
 );
 
@@ -440,6 +458,14 @@ CREATE TABLE IF NOT EXISTS bookmark_concepts (
   bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   concept TEXT NOT NULL,
+  normalized_key TEXT NOT NULL DEFAULT '',
+  confidence REAL NOT NULL DEFAULT 0,
+  extraction_method TEXT NOT NULL DEFAULT '',
+  evidence_id TEXT,
+  evidence_text TEXT NOT NULL DEFAULT '',
+  evidence_start INTEGER NOT NULL DEFAULT 0,
+  evidence_end INTEGER NOT NULL DEFAULT 0,
+  enrichment_version TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(bookmark_id, concept)
 );
 

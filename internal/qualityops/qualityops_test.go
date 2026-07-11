@@ -139,6 +139,36 @@ func TestReprocessApplyRejectsUnsafeScopeAndBackup(t *testing.T) {
 	}
 }
 
+func TestReprocessDoesNotAttachRunToUnrelatedBookmarkJob(t *testing.T) {
+	dbPath := seedQualityDatabase(t, 1)
+	backupPath := filepath.Join(t.TempDir(), "arivu.sqlite3")
+	copyFile(t, dbPath, backupPath)
+	db, err := database.Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO jobs(id,user_id,type,status,payload_json,run_after,created_at,updated_at) VALUES('ordinary-job','user-1','bookmark.process','queued','{"bookmark_id":"bookmark-1","url":"https://private.example.test/bookmark-1"}',?,?,?)`, now, now, now)
+	db.Close()
+
+	result, err := Reprocess(context.Background(), ReprocessOptions{DBPath: dbPath, BackupPath: backupPath, UserID: "user-1", BatchSize: 1, Apply: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err = database.Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var jobID, payload string
+	if err := db.QueryRow(`SELECT qi.job_id,j.payload_json FROM quality_reprocess_items qi JOIN jobs j ON j.id=qi.job_id WHERE qi.run_id=?`, result.RunID).Scan(&jobID, &payload); err != nil {
+		t.Fatal(err)
+	}
+	if jobID == "ordinary-job" || !strings.Contains(payload, result.RunID) {
+		t.Fatalf("run item reused unrelated job: id=%q payload=%s", jobID, payload)
+	}
+}
+
 func seedQualityDatabase(t *testing.T, bookmarks int) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "arivu.sqlite3")

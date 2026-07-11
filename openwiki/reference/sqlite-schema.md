@@ -10,6 +10,8 @@ with foreign keys.
 - `password_reset_tokens`: hashed reset tokens with expiry and use tracking.
 - `bookmarks`: URL, metadata, sanitized archived HTML, text, read state, X metadata, embedding metadata, resurfacing fields.
 - `ai_summaries`: one row per bookmark summary.
+- `bookmark_evidence`: source-native, linked-article, web-extraction, and legacy
+  evidence with authority, quality, source time, publisher, hash, and version.
 - `collections` and `collection_bookmarks`: normalized collection membership.
 - `bookmark_accesses`: access history.
 - `bookmark_entities` and `bookmark_concepts`: normalized graph terms.
@@ -44,6 +46,9 @@ with foreign keys.
 - `x_connections` and `oauth_states`: provider connection and PKCE state.
 - `settings`: encrypted or plain runtime settings with key IDs.
 - `rate_limits`, `audit_events`, and `jobs`: local operational state.
+- `quality_reprocess_runs` and `quality_reprocess_items`: explicit repair scope,
+  backup/protected-data fingerprints, target versions, durable job linkage, and
+  aggregate outcomes without private source content.
 
 ## Second-Brain Defaults
 

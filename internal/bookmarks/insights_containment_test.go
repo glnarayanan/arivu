@@ -17,9 +17,11 @@ func TestInsightContainmentFiltersFamilyBeforeLimitAndRanksCandidates(t *testing
 	_, _ = db.Exec(`UPDATE bookmarks SET domain='one.example' WHERE id='a'`)
 	_, _ = db.Exec(`UPDATE bookmarks SET domain='two.example' WHERE id='b'`)
 	_, _ = db.Exec(`UPDATE bookmarks SET domain='three.example' WHERE id='c'`)
-	_, _ = db.Exec(`INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES
-		('a','u1','Alpha'),('b','u1','Alpha'),
-		('a','u1','Beta'),('b','u1','Beta'),('c','u1','Beta')`)
+	seedInsightConcept(t, db, "u1", "a", "Alpha")
+	seedInsightConcept(t, db, "u1", "b", "Alpha")
+	seedInsightConcept(t, db, "u1", "a", "Beta")
+	seedInsightConcept(t, db, "u1", "b", "Beta")
+	seedInsightConcept(t, db, "u1", "c", "Beta")
 	_, _ = db.Exec(`INSERT INTO notes(id,user_id,title,body,created_at,updated_at) VALUES('n1','u1','Revision','I changed my mind about this.','2026-01-01T00:00:00Z','2026-07-10T00:00:00Z')`)
 
 	payload := callKnowledgeHandler(t, service.Insights, auth.User{ID: "u1"}, http.MethodGet, "/api/insights?family=recurring_connection&limit=1", "")
@@ -55,7 +57,7 @@ func TestInsightContainmentReportsMissingHistoryWithoutFullConfidence(t *testing
 	now := time.Now().UTC()
 	for index, id := range []string{"a", "b", "c"} {
 		seedKnowledgeBookmark(t, db, "u1", id, id, now.Add(-time.Duration(index)*time.Hour).Format(time.RFC3339))
-		_, _ = db.Exec(`INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES(?,'u1','Systems')`, id)
+		seedInsightConcept(t, db, "u1", id, "Systems")
 	}
 
 	payload := callKnowledgeHandler(t, service.Insights, auth.User{ID: "u1"}, http.MethodGet, "/api/insights?family=emerging_theme", "")
@@ -74,7 +76,9 @@ func TestInsightContainmentDiversifiesFamiliesAndTypesRecommendations(t *testing
 		seedKnowledgeBookmark(t, db, "u1", id, id, "2025-01-01T00:00:00Z")
 	}
 	_, _ = db.Exec(`UPDATE bookmarks SET domain=id||'.example'`)
-	_, _ = db.Exec(`INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES('a','u1','Systems'),('b','u1','Systems'),('c','u1','Systems')`)
+	for _, id := range []string{"a", "b", "c"} {
+		seedInsightConcept(t, db, "u1", id, "Systems")
+	}
 	for _, id := range []string{"n1", "n2", "n3"} {
 		_, _ = db.Exec(`INSERT INTO notes(id,user_id,title,body,created_at,updated_at) VALUES(?,'u1',?,'I changed my mind about this.','2026-01-01T00:00:00Z','2026-07-10T00:00:00Z')`, id, id)
 	}

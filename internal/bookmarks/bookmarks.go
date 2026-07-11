@@ -963,12 +963,12 @@ func (s *Service) getBookmark(ctx context.Context, userID, id string) (map[strin
 }
 
 func (s *Service) summary(ctx context.Context, userID, bookmarkID string) map[string]any {
-	var one, bullets, long, highlights, tags, status sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status FROM ai_summaries WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID).Scan(&one, &bullets, &long, &highlights, &tags, &status)
+	var one, bullets, long, highlights, tags, status, providerName, model, promptVersion, validatorVersion, evidenceHash, validationStatus, validationReasons, highlightSpans, generatedAt sql.NullString
+	err := s.db.QueryRowContext(ctx, `SELECT one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,provider,model,prompt_version,validator_version,evidence_hash,validation_status,validation_reasons_json,highlight_spans_json,generated_at FROM ai_summaries WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID).Scan(&one, &bullets, &long, &highlights, &tags, &status, &providerName, &model, &promptVersion, &validatorVersion, &evidenceHash, &validationStatus, &validationReasons, &highlightSpans, &generatedAt)
 	if err != nil {
 		return map[string]any{"processing_status": "pending"}
 	}
-	return map[string]any{"one_sentence": one.String, "bullet_points": jsonList(bullets.String), "long_form": long.String, "highlights": jsonList(highlights.String), "suggested_tags": jsonList(tags.String), "processing_status": status.String}
+	return map[string]any{"one_sentence": one.String, "bullet_points": jsonList(bullets.String), "long_form": long.String, "highlights": jsonList(highlights.String), "highlight_spans": jsonList(highlightSpans.String), "suggested_tags": jsonList(tags.String), "processing_status": status.String, "provider": providerName.String, "model": model.String, "prompt_version": promptVersion.String, "validator_version": validatorVersion.String, "evidence_hash": evidenceHash.String, "validation_status": validationStatus.String, "validation_reasons": jsonList(validationReasons.String), "generated_at": generatedAt.String}
 }
 
 type duplicateBookmark struct {

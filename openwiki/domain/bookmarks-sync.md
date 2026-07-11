@@ -8,8 +8,14 @@ Arivu is not just a bookmark vault; it is a knowledge engine that processes URL 
 
 Saving a bookmark initiates several processing stages to build a structured graph:
 
-1. **Extraction**: The `safefetch` engine validates the URL, fetches safe page contents, drops page chrome and script/style data, prefers readable article/main content, and removes leading banner copy from normalized text when the article title identifies a later content boundary. Semantic post containers such as Substack's available post body are preferred over discussion sections, while newsletter-named `<article>` elements remain eligible content. Standard or Open Graph descriptions are retained. Empty and comment-only results are stored with a `partial` enrichment status instead of being presented as complete extraction.
-2. **Analysis**: Clean text drives deterministic reading time, local summaries, highlight candidates, suggested tags, entities, and concepts. A successful model-provider response retains its structured one-sentence summary, long-form explanation, bullets, highlights, and suggested tags; deterministic values fill those fields only when AI is unavailable. Gemini deployments generate semantic vectors through `gemini-embedding-2`; other providers retain local graph enrichment without embeddings.
+1. **Extraction**: `safefetch` validates URLs, enforces SSRF and size limits,
+   removes chrome, and records complete, partial, metadata-only, or failed
+   evidence with stable reasons. Source-native X evidence and linked articles
+   remain separate; generic scraping cannot overwrite higher-authority text.
+2. **Analysis**: Selected evidence drives bounded summaries, extractive
+   highlights, and supported phrase-level semantics. Short evidence may produce
+   only a sentence; metadata-only or failed evidence produces no synthetic
+   claim. No-provider operation does not repopulate the graph with raw tokens.
 3. **Knowledge projection**: `/api/library/items` unions bookmarks, notes, daily
    notes, annotations, knowledge objects, entities, and concepts into stable
    user-scoped rows without duplicating canonical content.

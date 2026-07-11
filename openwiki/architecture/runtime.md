@@ -58,6 +58,9 @@ To achieve high concurrent throughput and protect data integrity, the driver ini
 The full tables structure is declared in `/internal/database/schema.sql`. It models:
 - **Core Entities**: `users`, `sessions`, `bookmarks`, `collections`, `collection_bookmarks` (join table).
 - **Processing Outputs**: `ai_summaries` (from the configured model provider), `bookmark_entities`, and `bookmark_concepts`.
+- **Evidence & Repair**: `bookmark_evidence` preserves versioned source
+  contexts; `quality_reprocess_runs` and `quality_reprocess_items` track
+  explicitly scoped, backup-verified repair batches.
 - **Integrations**: `import_jobs`, `x_connections`, `oauth_states`.
 - **Durable Controls**: `settings` (encrypted provider secrets plus plain runtime settings), `rate_limits`, `audit_events`, and `jobs`.
 - **Knowledge Feedback**: `knowledge_feedback` stores user-scoped insight and
@@ -105,3 +108,8 @@ settings. A job is idempotent: it sends only when the payload reminder ID and
 payload due time still match a pending reminder whose `last_notified_at` is
 empty. Missing Resend configuration makes the job a no-op rather than failing
 the core reminder workflow.
+
+Quality reprocessing queues ordinary durable `bookmark.process` jobs in bounded
+batches. Payloads carry the repair run, target versions, and selected-evidence
+hash. Queueing never deletes active artifacts; validated replacements are the
+processor's swap boundary.

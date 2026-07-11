@@ -2,6 +2,7 @@ package bookmarks
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"strings"
 	"time"
@@ -29,7 +30,8 @@ func (s *Service) enrichText(ctx context.Context, bookmarkID, userID, title, des
 	}
 	if len(semanticResults) > 0 {
 		validated := providers.ValidateSemantics(providers.SemanticRequest{
-			ContentKind: providers.ContentKindDocument, EvidenceText: body, QualityStatus: providers.QualityComplete,
+			EvidenceText:  text,
+			QualityStatus: providers.QualityComplete,
 		}, semanticResults[0])
 		result.Entities = validated.Entities
 		result.Concepts = validated.Concepts
@@ -55,32 +57,39 @@ func (s *Service) storeEnrichment(ctx context.Context, bookmarkID, userID string
 			return
 		}
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_entities WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
+	if err := s.replaceGeneratedEnrichmentTx(ctx, tx, bookmarkID, userID, "", item); err != nil {
 		return
+	}
+	_ = tx.Commit()
+}
+
+func (s *Service) replaceGeneratedEnrichmentTx(ctx context.Context, tx *sql.Tx, bookmarkID, userID, evidenceID string, item enrichment) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_entities WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_concepts WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
-		return
+		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_tags WHERE bookmark_id=? AND user_id=? AND source='enrichment'`, bookmarkID, userID); err != nil {
-		return
+		return err
 	}
 	for _, entity := range item.Entities {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_entities(bookmark_id,user_id,entity) VALUES(?,?,?)`, bookmarkID, userID, entity.Label); err != nil {
-			return
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_entities(bookmark_id,user_id,entity,normalized_key,entity_type,confidence,extraction_method,evidence_id,evidence_text,evidence_start,evidence_end,enrichment_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, entity.Label, entity.NormalizedKey, entity.Type, entity.Confidence, entity.Method, nullableStringValue(evidenceID), entity.Evidence, entity.EvidenceStart, entity.EvidenceEnd, entity.Version); err != nil {
+			return err
 		}
 	}
 	for _, concept := range item.Concepts {
-		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES(?,?,?)`, bookmarkID, userID, concept.Label); err != nil {
-			return
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_concepts(bookmark_id,user_id,concept,normalized_key,confidence,extraction_method,evidence_id,evidence_text,evidence_start,evidence_end,enrichment_version) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, concept.Label, concept.NormalizedKey, concept.Confidence, concept.Method, nullableStringValue(evidenceID), concept.Evidence, concept.EvidenceStart, concept.EvidenceEnd, concept.Version); err != nil {
+			return err
 		}
 	}
 	if len(item.Embedding) > 0 {
 		raw, _ := json.Marshal(item.Embedding)
-		if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=?,updated_at=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), "gemini/"+providers.GeminiEmbeddingModel, now, bookmarkID, userID); err != nil {
-			return
+		if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), "gemini/"+providers.GeminiEmbeddingModel, bookmarkID, userID); err != nil {
+			return err
 		}
 	}
-	_ = tx.Commit()
+	return nil
 }
 
 func (s *Service) bookmarkOwner(ctx context.Context, bookmarkID string) (string, bool) {

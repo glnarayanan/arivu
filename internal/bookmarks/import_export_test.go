@@ -166,6 +166,45 @@ func TestImportJobProgressIgnoresRetryableProcessFailures(t *testing.T) {
 	}
 }
 
+func TestQualityReprocessTerminalFailurePreservesValidSummaryAndFinalizesRun(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, statement := range []string{
+		`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('user-1','one@example.com','One','` + now + `','` + now + `')`,
+		`INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES('bookmark-1','user-1','https://example.com/private','Private','example.com','` + now + `','` + now + `')`,
+		`INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,processing_status,created_at,updated_at) VALUES('summary-1','bookmark-1','user-1','Last valid summary','completed','` + now + `','` + now + `')`,
+		`INSERT INTO quality_reprocess_runs(id,scope_type,scope_user_id,target_fetch_version,target_summary_version,target_enrichment_version,status,total_candidates,queued_count,created_at,updated_at) VALUES('run-1','user','user-1','fetch-v','summary-v','enrichment-v','running',1,1,'` + now + `','` + now + `')`,
+		`INSERT INTO quality_reprocess_items(run_id,bookmark_id,user_id,status,created_at,updated_at) VALUES('run-1','bookmark-1','user-1','processing','` + now + `','` + now + `')`,
+	} {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	service.RecordJobTerminalFailure(ctx, "bookmark.process", `{"bookmark_id":"bookmark-1","quality_reprocess_run_id":"run-1"}`)
+
+	var summaryStatus, itemStatus, runStatus string
+	var failed, queued int
+	if err := db.QueryRow(`SELECT processing_status FROM ai_summaries WHERE bookmark_id='bookmark-1'`).Scan(&summaryStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT status FROM quality_reprocess_items WHERE run_id='run-1' AND bookmark_id='bookmark-1'`).Scan(&itemStatus); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT status,failed_count,queued_count FROM quality_reprocess_runs WHERE id='run-1'`).Scan(&runStatus, &failed, &queued); err != nil {
+		t.Fatal(err)
+	}
+	if summaryStatus != "completed" || itemStatus != "failed" || runStatus != "failed" || failed != 1 || queued != 0 {
+		t.Fatalf("summary=%q item=%q run=%q failed=%d queued=%d", summaryStatus, itemStatus, runStatus, failed, queued)
+	}
+}
+
 func TestPartialExtractionCountsAsImportFailureWithoutRetry(t *testing.T) {
 	ctx := context.Background()
 	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
@@ -350,6 +389,10 @@ func TestFullExportRestoreRoundTripsEvidenceAndProvenance(t *testing.T) {
 	if post.ID == "" || article.ID == "" {
 		t.Fatal("evidence IDs were not assigned")
 	}
+	_, _ = db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,processing_status,provider,model,prompt_version,validator_version,evidence_hash,validation_status,validation_reasons_json,highlight_spans_json,generated_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		"summary-1", "bookmark-1", "user-1", "A supported summary.", "completed", "gemini", "quality-model", "summary-v2", "validator-v2", "article-hash", "validated", `[]`, `[{"evidence_id":"`+article.ID+`","text":"Complete linked article text.","start":0,"end":29}]`, now, now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO knowledge_feedback(user_id,target_type,target_id,feedback,detector_family,detector_version,reason,created_at,updated_at) VALUES('user-1','insight','insight-1','not_useful','recurring_connection','2.0.0','generic',?,?)`, now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO insight_impressions(user_id,insight_id,detector_family,detector_version,first_seen_at,last_seen_at,impression_count) VALUES('user-1','insight-1','recurring_connection','2.0.0',?,?,3)`, now, now)
 	if _, err := service.UpsertEvidence(ctx, "user-2", "bookmark-1", BookmarkEvidence{Kind: "source_post", Text: "cross-user"}); err == nil {
 		t.Fatal("cross-user evidence write unexpectedly succeeded")
 	}
@@ -394,6 +437,37 @@ func TestFullExportRestoreRoundTripsEvidenceAndProvenance(t *testing.T) {
 	}
 	if len(restoredEvidence) != 2 || restoredEvidence[0].BookmarkID != restoredID || restoredEvidence[1].BookmarkID != restoredID {
 		t.Fatalf("restored evidence = %#v", restoredEvidence)
+	}
+	var restoredSummary, restoredProvider, restoredEvidenceHash, restoredValidation, restoredSpans string
+	if err := db.QueryRowContext(ctx, `SELECT one_sentence,provider,evidence_hash,validation_status,highlight_spans_json FROM ai_summaries WHERE bookmark_id=? AND user_id=?`, restoredID, "user-3").Scan(&restoredSummary, &restoredProvider, &restoredEvidenceHash, &restoredValidation, &restoredSpans); err != nil {
+		t.Fatal(err)
+	}
+	if restoredSummary != "A supported summary." || restoredProvider != "gemini" || restoredEvidenceHash != "article-hash" || restoredValidation != "validated" {
+		t.Fatalf("restored summary provenance = %q/%q/%q/%q", restoredSummary, restoredProvider, restoredEvidenceHash, restoredValidation)
+	}
+	var spans []map[string]any
+	if err := json.Unmarshal([]byte(restoredSpans), &spans); err != nil || len(spans) != 1 {
+		t.Fatalf("restored highlight spans = %q err=%v", restoredSpans, err)
+	}
+	var restoredArticleID string
+	for _, item := range restoredEvidence {
+		if item.ContentHash == "article-hash" {
+			restoredArticleID = item.ID
+		}
+	}
+	if spans[0]["evidence_id"] != restoredArticleID || restoredArticleID == article.ID {
+		t.Fatalf("highlight evidence id=%v restored article=%q original=%q", spans[0]["evidence_id"], restoredArticleID, article.ID)
+	}
+	var feedbackFamily, feedbackVersion, feedbackReason string
+	if err := db.QueryRow(`SELECT detector_family,detector_version,reason FROM knowledge_feedback WHERE user_id='user-3' AND target_id='insight-1'`).Scan(&feedbackFamily, &feedbackVersion, &feedbackReason); err != nil {
+		t.Fatal(err)
+	}
+	var impressionCount int
+	if err := db.QueryRow(`SELECT impression_count FROM insight_impressions WHERE user_id='user-3' AND insight_id='insight-1'`).Scan(&impressionCount); err != nil {
+		t.Fatal(err)
+	}
+	if feedbackFamily != "recurring_connection" || feedbackVersion != "2.0.0" || feedbackReason != "generic" || impressionCount != 3 {
+		t.Fatalf("restored insight telemetry=%q/%q/%q impressions=%d", feedbackFamily, feedbackVersion, feedbackReason, impressionCount)
 	}
 	if other, err := service.Evidence(ctx, "user-2", restoredID); err != nil || len(other) != 0 {
 		t.Fatalf("cross-user evidence read = %#v, err=%v", other, err)
@@ -485,6 +559,98 @@ func TestAnalyticsInsightsIncludeStructuredLocalAndGeminiInsights(t *testing.T) 
 			t.Fatalf("insight missing structured fields: %#v", insight)
 		}
 	}
+}
+
+func TestPersistSelectedEvidenceAtomicallyStoresValidatedSummaryAndSemantics(t *testing.T) {
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('user-1','one@example.com','One',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,content_kind,created_at,updated_at) VALUES('bookmark-1','user-1','https://example.com/post','Post','example.com','article',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES('summary-1','bookmark-1','user-1','pending',?,?)`, now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{APIKey: "test", BaseURL: "https://gemini.test", Model: "quality-model", HTTP: summaryTestHTTPClient(`{"one_sentence":"Microsoft released a code exploration model.","long_form":"","bullet_points":[],"highlights":[],"suggested_tags":["code-exploration"],"entities":[{"label":"Microsoft","type":"organization","confidence":0.98,"evidence":"Microsoft"}],"concepts":[{"label":"code exploration","type":"","confidence":0.91,"evidence":"code exploration"}]}`)})
+	evidence, err := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "fetched_article", Origin: "web_fetch", Authority: 80, Text: "Microsoft released a code exploration model.", CanonicalURL: "https://example.com/post", QualityStatus: "complete", ExtractionMethod: "article", ExtractorVersion: safefetch.ExtractorVersion})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "example.com", evidence); err != nil {
+		t.Fatal(err)
+	}
+	var status, one, providerName, model, promptVersion, validatorVersion, evidenceHash, validationStatus, summaryVersion, enrichmentVersion string
+	if err := db.QueryRow(`SELECT s.processing_status,s.one_sentence,s.provider,s.model,s.prompt_version,s.validator_version,s.evidence_hash,s.validation_status,b.summary_version,b.enrichment_version FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id WHERE b.id='bookmark-1'`).Scan(&status, &one, &providerName, &model, &promptVersion, &validatorVersion, &evidenceHash, &validationStatus, &summaryVersion, &enrichmentVersion); err != nil {
+		t.Fatal(err)
+	}
+	if status != "completed" || one != "Microsoft released a code exploration model." || providerName != "gemini" || model != "quality-model" || promptVersion != providers.SummaryPromptVersion || validatorVersion != providers.SummaryValidatorVersion || evidenceHash == "" || validationStatus != "validated" || summaryVersion != providers.SummaryPromptVersion || enrichmentVersion != providers.SemanticVersion {
+		t.Fatalf("unexpected persisted quality metadata: status=%q one=%q provider=%q model=%q prompt=%q validator=%q hash=%q validation=%q summary=%q enrichment=%q", status, one, providerName, model, promptVersion, validatorVersion, evidenceHash, validationStatus, summaryVersion, enrichmentVersion)
+	}
+	var entityType, normalized, method, entityEvidenceID, version string
+	var confidence float64
+	if err := db.QueryRow(`SELECT entity_type,normalized_key,confidence,extraction_method,COALESCE(evidence_id,''),enrichment_version FROM bookmark_entities WHERE bookmark_id='bookmark-1' AND entity='Microsoft'`).Scan(&entityType, &normalized, &confidence, &method, &entityEvidenceID, &version); err != nil {
+		t.Fatal(err)
+	}
+	if entityType != "organization" || normalized != "microsoft" || confidence < 0.9 || method != "model_structured" || entityEvidenceID != evidence.ID || version != providers.SemanticVersion {
+		t.Fatalf("unexpected entity metadata: type=%q normalized=%q confidence=%v method=%q evidence=%q version=%q", entityType, normalized, confidence, method, entityEvidenceID, version)
+	}
+}
+
+func TestPersistSelectedEvidenceKeepsLastValidArtifactsWhenValidationFails(t *testing.T) {
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('user-1','one@example.com','One',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,text_content,content_kind,created_at,updated_at) VALUES('bookmark-1','user-1','https://example.com/post','Post','example.com','Old evidence','x_post',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,processing_status,created_at,updated_at) VALUES('summary-1','bookmark-1','user-1','Last valid summary','completed',?,?)`, now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{APIKey: "test", BaseURL: "https://gemini.test", HTTP: summaryTestHTTPClient(`{"one_sentence":"GLM 5.2 is superior.","long_form":"","bullet_points":[],"highlights":[],"suggested_tags":[],"entities":[],"concepts":[]}`)})
+	oldEvidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "Old evidence", QualityStatus: "complete", ExtractorVersion: "old", Selected: true})
+	newEvidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "GLM 5.2 comparison results are pending.", QualityStatus: "complete", ExtractorVersion: "new"})
+	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "x.com", newEvidence); err == nil {
+		t.Fatal("expected unsupported comparison result to fail validation")
+	}
+	var summary, textContent, selectedID string
+	if err := db.QueryRow(`SELECT s.one_sentence,b.text_content,(SELECT id FROM bookmark_evidence WHERE bookmark_id=b.id AND is_selected=1) FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id WHERE b.id='bookmark-1'`).Scan(&summary, &textContent, &selectedID); err != nil {
+		t.Fatal(err)
+	}
+	if summary != "Last valid summary" || textContent != "Old evidence" || selectedID != oldEvidence.ID {
+		t.Fatalf("failed replacement changed active artifacts: summary=%q text=%q selected=%q want=%q", summary, textContent, selectedID, oldEvidence.ID)
+	}
+}
+
+func TestCandidateEvidenceUpsertDoesNotClearCurrentSelection(t *testing.T) {
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('user-1','one@example.com','One',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES('bookmark-1','user-1','https://x.com/post','Post','x.com',?,?)`, now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	selected, err := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "Authoritative text", QualityStatus: "complete", ExtractorVersion: "x-v1", Selected: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidate, err := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "Authoritative text", QualityStatus: "complete", ExtractorVersion: "x-v1", Selected: false})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.ID != selected.ID || !candidate.Selected {
+		t.Fatalf("candidate upsert changed active selection: selected=%#v candidate=%#v", selected, candidate)
+	}
+}
+
+func summaryTestHTTPClient(summaryJSON string) *http.Client {
+	return &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if strings.Contains(req.URL.Path, "embedContent") {
+			return jsonResponse(http.StatusOK, map[string]any{"embedding": map[string]any{"values": []float64{0.1, 0.2}}}), nil
+		}
+		return jsonResponse(http.StatusOK, map[string]any{"candidates": []map[string]any{{"content": map[string]any{"parts": []map[string]any{{"text": summaryJSON}}}}}}), nil
+	})}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)

@@ -348,12 +348,14 @@ func normalizeNumber(value string) string {
 
 func unsupportedNamedEntities(evidence, output string) bool {
 	words := strings.FieldsFunc(output, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '-' })
-	for index, word := range words {
+	allowedSentenceWords := map[string]bool{"a": true, "an": true, "the": true, "this": true, "these": true, "it": true, "they": true, "according": true}
+	for _, word := range words {
 		if word == "" || containsFold(evidence, word) {
 			continue
 		}
+		runes := []rune(word)
 		internalUpper := false
-		for _, r := range []rune(word)[1:] {
+		for _, r := range runes[1:] {
 			if unicode.IsUpper(r) {
 				internalUpper = true
 				break
@@ -362,15 +364,15 @@ func unsupportedNamedEntities(evidence, output string) bool {
 		if internalUpper {
 			return true
 		}
-		if index == 0 {
-			continue
+		if unicode.IsUpper(runes[0]) && !allowedSentenceWords[strings.ToLower(word)] {
+			return true
 		}
 	}
 	return false
 }
 
 func unsupportedRecommendationOrResult(evidence, output string) bool {
-	for _, marker := range []string{" should ", " must ", " recommend", " winner", " won ", " outperform"} {
+	for _, marker := range []string{" should ", " must ", " recommend", " winner", " won ", " outperform", " superior", " better ", " best "} {
 		if strings.Contains(" "+strings.ToLower(output)+" ", marker) && !strings.Contains(" "+strings.ToLower(evidence)+" ", marker) {
 			return true
 		}

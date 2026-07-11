@@ -49,6 +49,11 @@ Dismissed and active snoozed insights do not return. Optional AI remains
 available on the legacy analytics path for extra explanation, but the canonical
 Insights experience does not depend on it.
 
+Analytical families use source publication time, publisher diversity, specific
+supported concepts, and visible evidence. Evidence strength is not a model
+probability. Forgotten value and knowledge gaps are typed recommendations and
+remain separate from synthesized patterns.
+
 ## Home Contexts
 
 Home (`/today`) is the daily knowledge pulse. It keeps the dated daily note and

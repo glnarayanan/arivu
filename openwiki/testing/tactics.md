@@ -37,6 +37,15 @@ destinations, query-preserving compatibility aliases, additive endpoint usage,
 raw-JSON removal from normal object creation, global Capture/Search, the
 light-only theme contract, and the accessible graph list.
 
+### 5. Data-quality evaluation and operator safety
+
+`internal/bookmarks/testdata/quality/evaluation.json` contains at least 30
+synthetic fixtures spanning X content, articles, failed extraction, code,
+Unicode, and prompt injection. Contracts label supported semantic spans and
+allowed/forbidden claims. `internal/qualityops` tests prove audits are redacted
+and read-only, dry runs write nothing, unsafe scope/backup combinations fail
+closed, and repeated applies queue bounded idempotent batches.
+
 ---
 
 ## Browser Smoke Checks
