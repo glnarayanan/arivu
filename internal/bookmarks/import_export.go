@@ -208,6 +208,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 			oldBookmarks[oldID] = newID
 		}
 		s.restoreBookmarkChildren(ctx, userID, newID, bookmark, oldNotes, now)
+		s.restoreBookmarkEvidence(ctx, userID, newID, bookmark["evidence"])
 	}
 	s.restoreStandaloneNotes(ctx, userID, backup["notes"], oldNotes, now)
 	s.restoreDailyNotes(ctx, userID, backup["daily_notes"], now)
@@ -248,13 +249,51 @@ func (s *Service) insertRestoredBookmark(ctx context.Context, userID, id, rawURL
 	} else {
 		xMetrics = strings.TrimSpace(stringValue(bookmark["x_metrics_json"]))
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,description,domain,favicon,thumbnail,sanitized_html,text_content,reading_time,read_status,source,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json,created_at,updated_at,last_accessed,view_count,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		id, userID, rawURL, stringValue(bookmark["title"]), stringValue(bookmark["description"]), fallback(stringValue(bookmark["domain"]), domainFallback), nullableStringValue(stringValue(bookmark["favicon"])), nullableStringValue(stringValue(bookmark["thumbnail"])), sanitize.HTML(stringValue(bookmark["html_content"])), stringValue(bookmark["text_content"]), intValue(bookmark["reading_time"]), boolValue(bookmark["read_status"]), fallback(stringValue(bookmark["source"]), "restore"), nullableStringValue(stringValue(bookmark["x_tweet_id"])), nullableStringValue(stringValue(bookmark["x_author_username"])), nullableStringValue(stringValue(bookmark["x_author_name"])), nullableStringValue(stringValue(bookmark["x_tweet_url"])), nullableStringValue(xMetrics), fallback(stringValue(bookmark["created_at"]), now), fallback(stringValue(bookmark["updated_at"]), now), nullableStringValue(stringValue(bookmark["last_accessed"])), intValue(bookmark["view_count"]), intValueDefault(bookmark["version"], 1))
+	source := fallback(stringValue(bookmark["source"]), "restore")
+	capturedAt := fallback(stringValue(bookmark["captured_at"]), fallback(stringValue(bookmark["created_at"]), now))
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmarks(id,user_id,url,title,description,domain,favicon,thumbnail,sanitized_html,text_content,reading_time,read_status,source,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json,canonical_url,content_kind,source_published_at,source_author_id,source_publisher_key,processed_at,fetch_version,summary_version,enrichment_version,created_at,updated_at,last_accessed,view_count,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		id, userID, rawURL, stringValue(bookmark["title"]), stringValue(bookmark["description"]), fallback(stringValue(bookmark["domain"]), domainFallback), nullableStringValue(stringValue(bookmark["favicon"])), nullableStringValue(stringValue(bookmark["thumbnail"])), sanitize.HTML(stringValue(bookmark["html_content"])), stringValue(bookmark["text_content"]), intValue(bookmark["reading_time"]), boolValue(bookmark["read_status"]), source, nullableStringValue(stringValue(bookmark["x_tweet_id"])), nullableStringValue(stringValue(bookmark["x_author_username"])), nullableStringValue(stringValue(bookmark["x_author_name"])), nullableStringValue(stringValue(bookmark["x_tweet_url"])), nullableStringValue(xMetrics), fallback(stringValue(bookmark["canonical_url"]), rawURL), fallback(stringValue(bookmark["content_kind"]), restoredContentKind(source)), nullableStringValue(stringValue(bookmark["source_published_at"])), nullableStringValue(stringValue(bookmark["source_author_id"])), nullableStringValue(stringValue(bookmark["source_publisher_key"])), nullableStringValue(stringValue(bookmark["processed_at"])), stringValue(bookmark["fetch_version"]), stringValue(bookmark["summary_version"]), stringValue(bookmark["enrichment_version"]), capturedAt, fallback(stringValue(bookmark["updated_at"]), now), nullableStringValue(stringValue(bookmark["last_accessed"])), intValue(bookmark["view_count"]), intValueDefault(bookmark["version"], 1))
 	if err != nil {
 		return false, err
 	}
 	rows, _ := res.RowsAffected()
 	return rows > 0, nil
+}
+
+func restoredContentKind(source string) string {
+	if source == "x" || source == "twitter" {
+		return "x_post"
+	}
+	return "web"
+}
+
+func (s *Service) restoreBookmarkEvidence(ctx context.Context, userID, bookmarkID string, raw any) {
+	for _, item := range mapList(raw) {
+		evidence := BookmarkEvidence{
+			ID:               stringValue(item["id"]),
+			Kind:             stringValue(item["kind"]),
+			Origin:           stringValue(item["origin"]),
+			Authority:        intValue(item["authority"]),
+			Text:             stringValue(item["text"]),
+			SanitizedHTML:    stringValue(item["sanitized_html"]),
+			CanonicalURL:     stringValue(item["canonical_url"]),
+			AuthorID:         stringValue(item["author_id"]),
+			PublisherKey:     stringValue(item["publisher_key"]),
+			PublishedAt:      stringValue(item["published_at"]),
+			ExtractionMethod: stringValue(item["extraction_method"]),
+			ContentHash:      stringValue(item["content_hash"]),
+			QualityStatus:    stringValue(item["quality_status"]),
+			QualityReasons:   stringSlice(item["quality_reasons"]),
+			ExtractorVersion: stringValue(item["extractor_version"]),
+			Selected:         boolValue(item["selected"]),
+			CreatedAt:        stringValue(item["created_at"]),
+			UpdatedAt:        stringValue(item["updated_at"]),
+		}
+		if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, evidence); err != nil && evidence.ID != "" {
+			evidence.ID = ""
+			_, _ = s.UpsertEvidence(ctx, userID, bookmarkID, evidence)
+		}
+	}
 }
 
 func (s *Service) restoreBookmarkChildren(ctx context.Context, userID, bookmarkID string, bookmark map[string]any, oldNotes map[string]string, now string) {
@@ -617,19 +656,30 @@ func (s *Service) writeObsidianExport(ctx context.Context, w http.ResponseWriter
 }
 
 func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json,canonical_url,content_kind,source_published_at,source_author_id,source_publisher_key,processed_at,fetch_version,summary_version,enrichment_version FROM bookmarks WHERE user_id=? ORDER BY created_at DESC`, userID)
 	if err != nil {
 		return nil, err
 	}
 	bookmarks := []map[string]any{}
 	for rows.Next() {
 		var tweetID, authorUsername, authorName, tweetURL, metrics sql.NullString
-		bookmark := scanBookmarkRow(rows, &tweetID, &authorUsername, &authorName, &tweetURL, &metrics)
+		var canonicalURL, contentKind, publishedAt, sourceAuthorID, publisherKey, processedAt, fetchVersion, summaryVersion, enrichmentVersion sql.NullString
+		bookmark := scanBookmarkRow(rows, &tweetID, &authorUsername, &authorName, &tweetURL, &metrics, &canonicalURL, &contentKind, &publishedAt, &sourceAuthorID, &publisherKey, &processedAt, &fetchVersion, &summaryVersion, &enrichmentVersion)
 		bookmark["x_tweet_id"] = nullString(tweetID)
 		bookmark["x_author_username"] = nullString(authorUsername)
 		bookmark["x_author_name"] = nullString(authorName)
 		bookmark["x_tweet_url"] = nullString(tweetURL)
 		bookmark["x_metrics"] = jsonObjectValue(metrics.String)
+		bookmark["captured_at"] = bookmark["created_at"]
+		bookmark["canonical_url"] = canonicalURL.String
+		bookmark["content_kind"] = contentKind.String
+		bookmark["source_published_at"] = nullString(publishedAt)
+		bookmark["source_author_id"] = nullString(sourceAuthorID)
+		bookmark["source_publisher_key"] = nullString(publisherKey)
+		bookmark["processed_at"] = nullString(processedAt)
+		bookmark["fetch_version"] = fetchVersion.String
+		bookmark["summary_version"] = summaryVersion.String
+		bookmark["enrichment_version"] = enrichmentVersion.String
 		bookmarks = append(bookmarks, bookmark)
 	}
 	if err := rows.Err(); err != nil {
@@ -643,9 +693,10 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		bookmark["tags"] = s.bookmarkTags(ctx, userID, id)
 		bookmark["annotations"] = s.bookmarkAnnotations(ctx, userID, id)
 		bookmark["notes"] = s.bookmarkNotes(ctx, userID, id)
+		bookmark["evidence"] = s.exportBookmarkEvidence(ctx, userID, id)
 	}
 	return map[string]any{
-		"version":            1,
+		"version":            2,
 		"exported_at":        time.Now().UTC().Format(time.RFC3339),
 		"bookmarks":          bookmarks,
 		"notes":              s.exportStandaloneNotes(ctx, userID),
@@ -663,6 +714,33 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"result_feedback":    s.exportResultFeedback(ctx, userID),
 		"knowledge_feedback": s.exportKnowledgeFeedback(ctx, userID),
 	}, nil
+}
+
+func (s *Service) exportBookmarkEvidence(ctx context.Context, userID, bookmarkID string) []map[string]any {
+	evidence, err := s.Evidence(ctx, userID, bookmarkID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	result := make([]map[string]any, 0, len(evidence))
+	for _, item := range evidence {
+		result = append(result, map[string]any{
+			"id": item.ID, "kind": item.Kind, "origin": item.Origin, "authority": item.Authority,
+			"text": item.Text, "sanitized_html": item.SanitizedHTML, "canonical_url": item.CanonicalURL,
+			"author_id": item.AuthorID, "publisher_key": item.PublisherKey, "published_at": nullableExportString(item.PublishedAt),
+			"extraction_method": item.ExtractionMethod, "content_hash": item.ContentHash,
+			"quality_status": item.QualityStatus, "quality_reasons": item.QualityReasons,
+			"extractor_version": item.ExtractorVersion, "selected": item.Selected,
+			"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+		})
+	}
+	return result
+}
+
+func nullableExportString(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }
 
 func (s *Service) exportStandaloneNotes(ctx context.Context, userID string) []map[string]any {

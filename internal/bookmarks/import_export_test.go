@@ -231,6 +231,114 @@ func TestReprocessQueuesExistingBookmarkWithoutDeletingManualData(t *testing.T) 
 	}
 }
 
+func TestFullExportRestoreRoundTripsEvidenceAndProvenance(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := "2026-07-11T08:00:00Z"
+	for _, user := range []struct{ id, email string }{{"user-1", "one@example.com"}, {"user-2", "two@example.com"}, {"user-3", "three@example.com"}} {
+		if _, err := db.ExecContext(ctx, `INSERT INTO users(id,email,name,created_at,updated_at) VALUES(?,?,?,?,?)`, user.id, user.email, user.id, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,domain,source,canonical_url,content_kind,source_published_at,source_author_id,source_publisher_key,processed_at,fetch_version,summary_version,enrichment_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		"bookmark-1", "user-1", "https://x.com/author/status/1", "Post", "x.com", "x", "https://example.com/article", "x_post_with_article", "2026-07-10T04:00:00Z", "author-1", "x:author", "2026-07-11T07:00:00Z", "x-api-v2", "summary-v2", "semantic-v2", "2026-07-11T06:00:00Z", now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "bookmark-2", "user-2", "https://example.org/private", "Private", "example.org", now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	post, err := service.UpsertEvidence(ctx, "user-1", "bookmark-1", BookmarkEvidence{
+		Kind: "source_post", Origin: "source_provided", Authority: 100, Text: "Authoritative post text.", CanonicalURL: "https://x.com/author/status/1", AuthorID: "author-1", PublisherKey: "x:author", PublishedAt: "2026-07-10T04:00:00Z", ExtractionMethod: "x_api", ContentHash: "post-hash", QualityStatus: "complete", QualityReasons: []string{}, ExtractorVersion: "x-api-v2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	article, err := service.UpsertEvidence(ctx, "user-1", "bookmark-1", BookmarkEvidence{
+		Kind: "linked_article", Origin: "fetched", Authority: 80, Text: "Complete linked article text.", SanitizedHTML: "<p>Complete linked article text.</p>", CanonicalURL: "https://example.com/article", PublisherKey: "example.com", PublishedAt: "2026-07-09T03:00:00Z", ExtractionMethod: "readability", ContentHash: "article-hash", QualityStatus: "complete", ExtractorVersion: "readability-v1", Selected: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if post.ID == "" || article.ID == "" {
+		t.Fatal("evidence IDs were not assigned")
+	}
+	if _, err := service.UpsertEvidence(ctx, "user-2", "bookmark-1", BookmarkEvidence{Kind: "source_post", Text: "cross-user"}); err == nil {
+		t.Fatal("cross-user evidence write unexpectedly succeeded")
+	}
+
+	exported, err := service.fullExport(ctx, "user-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exported["version"] != 2 {
+		t.Fatalf("export version = %#v, want 2", exported["version"])
+	}
+	bookmarks := mapList(exported["bookmarks"])
+	if len(bookmarks) != 1 {
+		t.Fatalf("exported bookmarks = %#v", bookmarks)
+	}
+	bookmark := bookmarks[0]
+	if bookmark["captured_at"] != "2026-07-11T06:00:00Z" || bookmark["source_published_at"] != "2026-07-10T04:00:00Z" || bookmark["processed_at"] != "2026-07-11T07:00:00Z" || bookmark["updated_at"] != now {
+		t.Fatalf("timestamps not distinguished: %#v", bookmark)
+	}
+	evidence := mapList(bookmark["evidence"])
+	if len(evidence) != 2 || evidence[0]["user_id"] != nil || evidence[1]["user_id"] != nil {
+		t.Fatalf("evidence export malformed or leaked owner IDs: %#v", evidence)
+	}
+
+	raw, err := json.Marshal(exported)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := service.restoreFullExport(ctx, "user-3", raw); err != nil || !ok {
+		t.Fatalf("restoreFullExport() ok=%v err=%v", ok, err)
+	}
+	var restoredID, canonicalURL, contentKind, publishedAt, processedAt, fetchVersion, summaryVersion, enrichmentVersion, capturedAt, updatedAt string
+	if err := db.QueryRowContext(ctx, `SELECT id,canonical_url,content_kind,source_published_at,processed_at,fetch_version,summary_version,enrichment_version,created_at,updated_at FROM bookmarks WHERE user_id=?`, "user-3").Scan(&restoredID, &canonicalURL, &contentKind, &publishedAt, &processedAt, &fetchVersion, &summaryVersion, &enrichmentVersion, &capturedAt, &updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if canonicalURL != "https://example.com/article" || contentKind != "x_post_with_article" || publishedAt != "2026-07-10T04:00:00Z" || processedAt != "2026-07-11T07:00:00Z" || fetchVersion != "x-api-v2" || summaryVersion != "summary-v2" || enrichmentVersion != "semantic-v2" || capturedAt != "2026-07-11T06:00:00Z" || updatedAt != now {
+		t.Fatalf("restored provenance mismatch: canonical=%q kind=%q published=%q processed=%q versions=%q/%q/%q captured=%q updated=%q", canonicalURL, contentKind, publishedAt, processedAt, fetchVersion, summaryVersion, enrichmentVersion, capturedAt, updatedAt)
+	}
+	restoredEvidence, err := service.Evidence(ctx, "user-3", restoredID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restoredEvidence) != 2 || restoredEvidence[0].BookmarkID != restoredID || restoredEvidence[1].BookmarkID != restoredID {
+		t.Fatalf("restored evidence = %#v", restoredEvidence)
+	}
+	if other, err := service.Evidence(ctx, "user-2", restoredID); err != nil || len(other) != 0 {
+		t.Fatalf("cross-user evidence read = %#v, err=%v", other, err)
+	}
+}
+
+func TestRestoreV1FullExportDefaultsProvenance(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.ExecContext(ctx, `INSERT INTO users(id,email,name,created_at,updated_at) VALUES(?,?,?,?,?)`, "user-1", "one@example.com", "One", now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	raw := []byte(`{"version":1,"bookmarks":[{"id":"old-bookmark","url":"https://example.com/old","title":"Old","source":"browser","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-02T00:00:00Z"}]}`)
+	if _, ok, err := service.restoreFullExport(ctx, "user-1", raw); err != nil || !ok {
+		t.Fatalf("restore v1 ok=%v err=%v", ok, err)
+	}
+	var canonicalURL, contentKind, capturedAt, updatedAt string
+	if err := db.QueryRowContext(ctx, `SELECT canonical_url,content_kind,created_at,updated_at FROM bookmarks WHERE user_id='user-1'`).Scan(&canonicalURL, &contentKind, &capturedAt, &updatedAt); err != nil {
+		t.Fatal(err)
+	}
+	if canonicalURL != "https://example.com/old" || contentKind != "web" || capturedAt != "2025-01-01T00:00:00Z" || updatedAt != "2025-01-02T00:00:00Z" {
+		t.Fatalf("v1 defaults = canonical:%q kind:%q captured:%q updated:%q", canonicalURL, contentKind, capturedAt, updatedAt)
+	}
+}
+
 func assertImportCounters(t *testing.T, db *sql.DB, id string, fetched int, processed int, failed int, status string) {
 	t.Helper()
 	var gotFetched, gotProcessed, gotFailed int

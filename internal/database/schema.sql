@@ -58,6 +58,15 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   x_author_name TEXT,
   x_tweet_url TEXT,
   x_metrics_json TEXT,
+  canonical_url TEXT NOT NULL DEFAULT '',
+  content_kind TEXT NOT NULL DEFAULT '',
+  source_published_at TEXT,
+  source_author_id TEXT,
+  source_publisher_key TEXT,
+  processed_at TEXT,
+  fetch_version TEXT NOT NULL DEFAULT '',
+  summary_version TEXT NOT NULL DEFAULT '',
+  enrichment_version TEXT NOT NULL DEFAULT '',
   embedding BLOB,
   embedding_model TEXT,
   embedding_dim INTEGER NOT NULL DEFAULT 0,
@@ -74,6 +83,38 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_created ON bookmarks(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_domain ON bookmarks(user_id, domain);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_source ON bookmarks(user_id, source);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_id_user ON bookmarks(id, user_id);
+
+CREATE TABLE IF NOT EXISTS bookmark_evidence (
+  id TEXT PRIMARY KEY,
+  bookmark_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  evidence_kind TEXT NOT NULL,
+  evidence_origin TEXT NOT NULL,
+  authority INTEGER NOT NULL DEFAULT 0,
+  content_text TEXT NOT NULL DEFAULT '',
+  sanitized_html TEXT NOT NULL DEFAULT '',
+  canonical_url TEXT NOT NULL DEFAULT '',
+  author_id TEXT NOT NULL DEFAULT '',
+  publisher_key TEXT NOT NULL DEFAULT '',
+  published_at TEXT,
+  extraction_method TEXT NOT NULL DEFAULT '',
+  content_hash TEXT NOT NULL DEFAULT '',
+  quality_status TEXT NOT NULL DEFAULT 'failed',
+  quality_reasons_json TEXT NOT NULL DEFAULT '[]',
+  extractor_version TEXT NOT NULL DEFAULT '',
+  is_selected INTEGER NOT NULL DEFAULT 0 CHECK(is_selected IN (0,1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(bookmark_id, user_id) REFERENCES bookmarks(id, user_id) ON DELETE CASCADE,
+  UNIQUE(bookmark_id, evidence_kind, content_hash, extractor_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_user_bookmark ON bookmark_evidence(user_id, bookmark_id, authority DESC);
+CREATE INDEX IF NOT EXISTS idx_evidence_user_published ON bookmark_evidence(user_id, published_at DESC) WHERE published_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_evidence_user_quality_version ON bookmark_evidence(user_id, quality_status, extractor_version);
+CREATE INDEX IF NOT EXISTS idx_evidence_content_hash ON bookmark_evidence(content_hash) WHERE content_hash != '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_selected_bookmark ON bookmark_evidence(bookmark_id) WHERE is_selected = 1;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
   title,
