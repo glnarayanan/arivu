@@ -61,49 +61,170 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 	if !ok {
 		return errors.New("bookmark not found")
 	}
-	result, err := s.fetcher.Fetch(ctx, rawURL)
-	if err != nil {
+	var source, currentTitle, currentDescription, currentDomain, contentKind, tweetURL string
+	if err := s.db.QueryRowContext(ctx, `SELECT source,COALESCE(title,''),COALESCE(description,''),COALESCE(domain,''),COALESCE(content_kind,''),COALESCE(x_tweet_url,'') FROM bookmarks WHERE id=? AND user_id=?`, bookmarkID, userID).Scan(&source, &currentTitle, &currentDescription, &currentDomain, &contentKind, &tweetURL); err != nil {
 		return err
 	}
-	if result.Quality == safefetch.QualityPartial {
+	if source == "x" {
+		return s.processXBookmark(ctx, userID, bookmarkID, rawURL, currentTitle, currentDescription, currentDomain, contentKind, tweetURL)
+	}
+	result, err := s.fetcher.Fetch(ctx, rawURL)
+	if err != nil {
+		_, _ = s.UpsertEvidence(ctx, userID, bookmarkID, BookmarkEvidence{
+			Kind: "fetched_article", Origin: "web_fetch", CanonicalURL: rawURL, ExtractionMethod: "generic_web",
+			QualityStatus: "failed", QualityReasons: []string{safefetch.FailureReason(err)}, ExtractorVersion: safefetch.ExtractorVersion,
+		})
+		return err
+	}
+	evidence := BookmarkEvidence{
+		Kind: "fetched_article", Origin: "web_fetch", Authority: 70, Text: result.Text, SanitizedHTML: result.HTML,
+		CanonicalURL: result.URL, PublisherKey: result.Domain, ExtractionMethod: result.Quality.Method,
+		QualityStatus: string(result.Quality.Status), QualityReasons: result.Quality.Reasons, ExtractorVersion: result.Quality.Version,
+		Selected: result.Quality.Status == safefetch.QualityComplete,
+	}
+	if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, evidence); err != nil {
+		return err
+	}
+	if result.Quality.Status != safefetch.QualityComplete {
 		now := nowString()
 		title := fallback(result.Title, result.Domain)
-		if _, err := s.db.ExecContext(ctx, `UPDATE bookmarks SET url=?,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=?,updated_at=? WHERE id=? AND user_id=?`, result.URL, title, result.Description, result.Domain, now, bookmarkID, userID); err != nil {
+		if _, err := s.db.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=?,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`, result.URL, title, result.Description, result.Domain, now, safefetch.ExtractorVersion, bookmarkID, userID); err != nil {
 			return err
 		}
-		_, err := s.db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET processing_status='partial',updated_at=excluded.updated_at`, ids.New(), bookmarkID, userID, "partial", now, now)
+		_, err := s.db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET processing_status=CASE WHEN ai_summaries.processing_status IN ('completed','fallback') THEN ai_summaries.processing_status ELSE excluded.processing_status END,updated_at=excluded.updated_at`, ids.New(), bookmarkID, userID, string(result.Quality.Status), now, now)
 		if err != nil {
 			return err
 		}
 		s.refreshSearchIndex(ctx, userID)
 		return errPartialExtraction
 	}
+	return s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, result.Domain), result.Description, result.Domain, evidence)
+}
+
+func (s *Service) processXBookmark(ctx context.Context, userID, bookmarkID, rawURL, title, description, domain, contentKind, tweetURL string) error {
+	evidenceRows, err := s.Evidence(ctx, userID, bookmarkID)
+	if err != nil {
+		return err
+	}
+	var sourceEvidence BookmarkEvidence
+	for _, evidence := range evidenceRows {
+		if evidence.Kind == "source_post" && (evidence.Origin == "x_api" || evidence.ExtractionMethod == "x_api") {
+			sourceEvidence = evidence
+			break
+		}
+	}
+	if sourceEvidence.ID == "" {
+		s.markInsufficientEvidence(ctx, bookmarkID, "failed")
+		return nil
+	}
+	isExternalArticle := strings.Contains(contentKind, "article") && normalizeProcessingURL(rawURL) != normalizeProcessingURL(tweetURL)
+	if !isExternalArticle {
+		if sourceEvidence.QualityStatus != "complete" || strings.TrimSpace(sourceEvidence.Text) == "" {
+			s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus)
+			return nil
+		}
+		sourceEvidence.Selected = true
+		if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, sourceEvidence); err != nil {
+			return err
+		}
+		return s.persistSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, sourceEvidence)
+	}
+
+	result, fetchErr := s.fetcher.Fetch(ctx, rawURL)
+	if fetchErr != nil {
+		articlePublisher := publisherForURL(rawURL)
+		_, _ = s.UpsertEvidence(ctx, userID, bookmarkID, BookmarkEvidence{
+			Kind: "fetched_article", Origin: "web_fetch", CanonicalURL: rawURL, PublisherKey: articlePublisher,
+			ExtractionMethod: "generic_web", QualityStatus: "failed", QualityReasons: []string{safefetch.FailureReason(fetchErr)}, ExtractorVersion: safefetch.ExtractorVersion,
+		})
+		return s.useXSourceFallback(ctx, userID, bookmarkID, title, description, domain, sourceEvidence, fetchErr)
+	}
+	articleEvidence := BookmarkEvidence{
+		Kind: "fetched_article", Origin: "web_fetch", Authority: 80, Text: result.Text, SanitizedHTML: result.HTML,
+		CanonicalURL: result.URL, PublisherKey: result.Domain,
+		ExtractionMethod: result.Quality.Method, QualityStatus: string(result.Quality.Status), QualityReasons: result.Quality.Reasons,
+		ExtractorVersion: result.Quality.Version, Selected: result.Quality.Status == safefetch.QualityComplete,
+	}
+	if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, articleEvidence); err != nil {
+		return err
+	}
+	if result.Quality.Status == safefetch.QualityComplete {
+		return s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, title), result.Description, result.Domain, articleEvidence)
+	}
+	return s.useXSourceFallback(ctx, userID, bookmarkID, title, description, domain, sourceEvidence, nil)
+}
+
+func (s *Service) useXSourceFallback(ctx context.Context, userID, bookmarkID, title, description, domain string, sourceEvidence BookmarkEvidence, fetchErr error) error {
+	if sourceEvidence.QualityStatus == "complete" && strings.TrimSpace(sourceEvidence.Text) != "" {
+		sourceEvidence.Selected = true
+		if _, err := s.UpsertEvidence(ctx, userID, bookmarkID, sourceEvidence); err != nil {
+			return err
+		}
+		return s.persistSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, sourceEvidence)
+	}
+	s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus)
+	return fetchErr
+}
+
+func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qualityStatus string) {
+	status := "insufficient_evidence"
+	if qualityStatus == "failed" {
+		status = "failed"
+	}
+	now := nowString()
+	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=CASE WHEN processing_status IN ('completed','fallback') THEN processing_status ELSE ? END,updated_at=? WHERE bookmark_id=?`, status, now, bookmarkID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE bookmarks SET processed_at=?,fetch_version=? WHERE id=?`, now, safefetch.ExtractorVersion, bookmarkID)
+}
+
+func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence) error {
 	summary := map[string]any{
-		"one_sentence":   oneSentence(result.Text),
+		"one_sentence":   oneSentence(evidence.Text),
 		"long_form":      "",
 		"bullet_points":  []any{},
 		"highlights":     []any{},
 		"suggested_tags": []any{},
 	}
 	summaryStatus := "fallback"
-	if aiSummary, err := s.aiClient(ctx).GenerateSummaryFields(ctx, result.Text); err == nil {
+	if aiSummary, err := s.aiClient(ctx).GenerateSummaryFields(ctx, evidence.Text); err == nil {
 		for key, value := range aiSummary {
 			summary[key] = value
 		}
 		summaryStatus = "completed"
 	}
-	title := fallback(result.Title, result.Domain)
+	title = fallback(title, domain)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx, `UPDATE bookmarks SET url=?,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=?,domain=?,sanitized_html=?,text_content=?,reading_time=?,updated_at=? WHERE id=?`,
-		result.URL, title, result.Description, result.Domain, sanitize.HTML(result.HTML), result.Text, readingTime(result.Text), now, bookmarkID)
+	htmlContent := evidence.SanitizedHTML
+	if htmlContent == "" {
+		htmlContent = html.EscapeString(evidence.Text)
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`,
+		evidence.CanonicalURL, evidence.CanonicalURL, title, description, domain, domain, sanitize.HTML(htmlContent), evidence.Text, readingTime(evidence.Text), now, fallback(evidence.ExtractorVersion, safefetch.ExtractorVersion), bookmarkID, userID)
 	if err != nil {
 		return err
 	}
 	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=?, one_sentence=?, bullet_points_json=?, long_form=?, highlights_json=?, suggested_tags_json=?, updated_at=? WHERE bookmark_id=?`,
 		summaryStatus, stringValue(summary["one_sentence"]), jsonListString(summary["bullet_points"]), stringValue(summary["long_form"]), jsonListString(summary["highlights"]), jsonListString(summary["suggested_tags"]), now, bookmarkID)
-	s.storeEnrichment(ctx, bookmarkID, userID, s.enrichText(ctx, bookmarkID, userID, title, result.Description, result.Text), summaryStatus == "completed")
+	s.storeEnrichment(ctx, bookmarkID, userID, s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text), summaryStatus == "completed")
 	s.refreshSearchIndex(ctx, userID)
 	return nil
+}
+
+func normalizeProcessingURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return strings.ToLower(strings.TrimRight(raw, "/"))
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+	return strings.ToLower(strings.TrimRight(parsed.String(), "/"))
+}
+
+func publisherForURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+	return strings.ToLower(parsed.Hostname())
 }
 
 func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -1791,6 +1912,12 @@ func bookmarkProcessPayload(bookmarkID, rawURL, importJobID string) string {
 	}
 	raw, _ := json.Marshal(payload)
 	return string(raw)
+}
+
+// ProcessPayload builds the durable bookmark processing payload used by
+// integrations that have already inserted source evidence.
+func ProcessPayload(bookmarkID, rawURL, importJobID string) string {
+	return bookmarkProcessPayload(bookmarkID, rawURL, importJobID)
 }
 
 func validImportURL(raw string) bool {

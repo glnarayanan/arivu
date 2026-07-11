@@ -24,8 +24,41 @@ type XBookmark struct {
 	ID            string         `json:"id"`
 	Text          string         `json:"text"`
 	AuthorID      string         `json:"author_id"`
+	CreatedAt     string         `json:"created_at"`
 	Entities      map[string]any `json:"entities"`
 	PublicMetrics map[string]any `json:"public_metrics"`
+	NoteTweet     XNoteTweet     `json:"note_tweet"`
+	References    []XReference   `json:"referenced_tweets"`
+	Attachments   XAttachments   `json:"attachments"`
+}
+
+type XNoteTweet struct {
+	Text string `json:"text"`
+}
+
+type XReference struct {
+	Type string `json:"type"`
+	ID   string `json:"id"`
+}
+
+type XAttachments struct {
+	MediaKeys []string `json:"media_keys"`
+}
+
+type XMedia struct {
+	MediaKey        string `json:"media_key"`
+	Type            string `json:"type"`
+	URL             string `json:"url"`
+	PreviewImageURL string `json:"preview_image_url"`
+	AltText         string `json:"alt_text"`
+	DurationMS      int64  `json:"duration_ms"`
+}
+
+func (b XBookmark) EvidenceText() string {
+	if text := strings.TrimSpace(b.NoteTweet.Text); text != "" {
+		return text
+	}
+	return strings.TrimSpace(b.Text)
 }
 
 type XUser struct {
@@ -45,6 +78,8 @@ type XToken struct {
 type XBookmarkPage struct {
 	Bookmarks []XBookmark
 	Users     map[string]XUser
+	Tweets    map[string]XBookmark
+	Media     map[string]XMedia
 	NextToken string
 }
 
@@ -139,8 +174,9 @@ func (c XClient) BookmarkPage(ctx context.Context, userID string, paginationToke
 	}
 	values := url.Values{}
 	values.Set("max_results", fmt.Sprintf("%d", max))
-	values.Set("tweet.fields", "author_id,created_at,entities,public_metrics")
-	values.Set("expansions", "author_id")
+	values.Set("tweet.fields", "attachments,author_id,created_at,entities,note_tweet,public_metrics,referenced_tweets")
+	values.Set("expansions", "attachments.media_keys,author_id,referenced_tweets.id,referenced_tweets.id.attachments.media_keys,referenced_tweets.id.author_id")
+	values.Set("media.fields", "alt_text,duration_ms,media_key,preview_image_url,type,url")
 	values.Set("user.fields", "username,name,profile_image_url")
 	if paginationToken != "" {
 		values.Set("pagination_token", paginationToken)
@@ -154,7 +190,9 @@ func (c XClient) BookmarkPage(ctx context.Context, userID string, paginationToke
 	var decoded struct {
 		Data     []XBookmark `json:"data"`
 		Includes struct {
-			Users []XUser `json:"users"`
+			Users  []XUser     `json:"users"`
+			Tweets []XBookmark `json:"tweets"`
+			Media  []XMedia    `json:"media"`
 		} `json:"includes"`
 		Meta struct {
 			NextToken string `json:"next_token"`
@@ -167,7 +205,15 @@ func (c XClient) BookmarkPage(ctx context.Context, userID string, paginationToke
 	for _, user := range decoded.Includes.Users {
 		users[user.ID] = user
 	}
-	return XBookmarkPage{Bookmarks: decoded.Data, Users: users, NextToken: decoded.Meta.NextToken}, nil
+	tweets := map[string]XBookmark{}
+	for _, tweet := range decoded.Includes.Tweets {
+		tweets[tweet.ID] = tweet
+	}
+	media := map[string]XMedia{}
+	for _, item := range decoded.Includes.Media {
+		media[item.MediaKey] = item
+	}
+	return XBookmarkPage{Bookmarks: decoded.Data, Users: users, Tweets: tweets, Media: media, NextToken: decoded.Meta.NextToken}, nil
 }
 
 func (c XClient) form(ctx context.Context, method, endpoint string, values url.Values, bearer string, dst any) error {

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -183,6 +184,89 @@ func TestPartialExtractionCountsAsImportFailureWithoutRetry(t *testing.T) {
 		t.Fatalf("partial extraction should complete without retry: %v", err)
 	}
 	assertImportCounters(t, db, "import-1", 0, 0, 1, "completed")
+}
+
+func TestProcessDirectXUsesAuthoritativeEvidenceWithoutScraping(t *testing.T) {
+	service, db := xProcessingTestService(t, "x-direct", "http://127.0.0.1/private", "x_post", "Authoritative API post text.", "complete")
+	beforeUpdated := "2026-07-11T08:00:00Z"
+
+	if err := service.processBookmark(t.Context(), "x-direct", "http://127.0.0.1/private"); err != nil {
+		t.Fatalf("direct X processing should not fetch its URL: %v", err)
+	}
+	var textContent, updatedAt, processedAt, summary string
+	if err := db.QueryRow(`SELECT b.text_content,b.updated_at,COALESCE(b.processed_at,''),COALESCE(s.one_sentence,'') FROM bookmarks b JOIN ai_summaries s ON s.bookmark_id=b.id WHERE b.id='x-direct'`).Scan(&textContent, &updatedAt, &processedAt, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if textContent != "Authoritative API post text." || summary != "Authoritative API post text." || updatedAt != beforeUpdated || processedAt == "" {
+		t.Fatalf("direct X projection = text=%q summary=%q updated=%q processed=%q", textContent, summary, updatedAt, processedAt)
+	}
+}
+
+func TestProcessXArticleFailureFallsBackWithoutDestroyingSource(t *testing.T) {
+	service, db := xProcessingTestService(t, "x-article", "http://127.0.0.1/article", "x_article", "Post context survives article failure.", "complete")
+	_, _ = db.Exec(`UPDATE bookmarks SET x_metrics_json=? WHERE id='x-article'`, `{"view_count":999,"like_count":100}`)
+
+	if err := service.processBookmark(t.Context(), "x-article", "http://127.0.0.1/article"); err != nil {
+		t.Fatalf("usable X source should absorb linked article failure: %v", err)
+	}
+	evidence, err := service.Evidence(t.Context(), "user-1", "x-article")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selectedSource, failedArticle bool
+	for _, item := range evidence {
+		selectedSource = selectedSource || (item.Kind == "source_post" && item.Selected && item.Text == "Post context survives article failure.")
+		failedArticle = failedArticle || (item.Kind == "fetched_article" && item.QualityStatus == "failed" && len(item.QualityReasons) > 0)
+	}
+	if !selectedSource || !failedArticle {
+		t.Fatalf("fallback evidence = %#v", evidence)
+	}
+	var textContent, summary string
+	if err := db.QueryRow(`SELECT b.text_content,COALESCE(s.one_sentence,'') FROM bookmarks b JOIN ai_summaries s ON s.bookmark_id=b.id WHERE b.id='x-article'`).Scan(&textContent, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if textContent != "Post context survives article failure." || summary != textContent || strings.Contains(summary, "999") || strings.Contains(summary, "100") {
+		t.Fatalf("metrics or failed article leaked into selected evidence: text=%q summary=%q", textContent, summary)
+	}
+}
+
+func TestProcessMetadataOnlyXDoesNotGenerateClaims(t *testing.T) {
+	service, db := xProcessingTestService(t, "x-media", "https://x.com/author/status/3", "x_media", "https://t.co/media", "metadata_only")
+	if err := service.processBookmark(t.Context(), "x-media", "https://x.com/author/status/3"); err != nil {
+		t.Fatal(err)
+	}
+	var status, summary string
+	if err := db.QueryRow(`SELECT processing_status,COALESCE(one_sentence,'') FROM ai_summaries WHERE bookmark_id='x-media'`).Scan(&status, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if status != "insufficient_evidence" || summary != "" {
+		t.Fatalf("metadata-only summary = status=%q summary=%q", status, summary)
+	}
+}
+
+func xProcessingTestService(t *testing.T, bookmarkID, rawURL, contentKind, sourceText, qualityStatus string) (*Service, *sql.DB) {
+	t.Helper()
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	now := "2026-07-11T08:00:00Z"
+	_, _ = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES(?,?,?,?,?)`, "user-1", "one@example.com", "One", now, now)
+	_, err = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,description,domain,text_content,source,x_tweet_url,canonical_url,content_kind,source_published_at,source_author_id,source_publisher_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, "user-1", rawURL, "Original title", sourceText, "x.com", sourceText, "x", "https://x.com/author/status/1", rawURL, contentKind, "2026-07-10T04:00:00Z", "author-1", "x:author-1", now, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = db.Exec(`INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "summary-"+bookmarkID, bookmarkID, "user-1", "pending", now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	reasons := []string{}
+	if qualityStatus != "complete" {
+		reasons = []string{"media_without_transcript"}
+	}
+	if _, err := service.UpsertEvidence(t.Context(), "user-1", bookmarkID, BookmarkEvidence{Kind: "source_post", Origin: "x_api", Authority: 100, Text: sourceText, CanonicalURL: "https://x.com/author/status/1", AuthorID: "author-1", PublisherKey: "x:author-1", PublishedAt: "2026-07-10T04:00:00Z", ExtractionMethod: "x_api", QualityStatus: qualityStatus, QualityReasons: reasons, ExtractorVersion: "x-api-v1", Selected: contentKind != "x_article"}); err != nil {
+		t.Fatal(err)
+	}
+	return service, db
 }
 
 func TestReprocessQueuesExistingBookmarkWithoutDeletingManualData(t *testing.T) {

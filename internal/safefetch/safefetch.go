@@ -64,15 +64,43 @@ type Result struct {
 	HTML        string
 	Text        string
 	Domain      string
-	Quality     Quality
+	Quality     Assessment
 }
 
 type Quality string
 
 const (
-	QualityComplete Quality = "complete"
-	QualityPartial  Quality = "partial"
+	QualityComplete     Quality = "complete"
+	QualityPartial      Quality = "partial"
+	QualityMetadataOnly Quality = "metadata_only"
+	QualityFailed       Quality = "failed"
 )
+
+const ExtractorVersion = "web-v2"
+
+type Assessment struct {
+	Status  Quality
+	Score   int
+	Reasons []string
+	Method  string
+	Version string
+}
+
+type FetchError struct {
+	Reason string
+	Err    error
+}
+
+func (e *FetchError) Error() string { return e.Err.Error() }
+func (e *FetchError) Unwrap() error { return e.Err }
+
+func FailureReason(err error) string {
+	var fetchErr *FetchError
+	if errors.As(err, &fetchErr) {
+		return fetchErr.Reason
+	}
+	return "fetch_failed"
+}
 
 func New() *Client {
 	return NewWithUserAgent(DefaultUserAgent)
@@ -124,33 +152,33 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 	// private/reserved IP blocklist.
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return Result{}, err
+		return Result{}, &FetchError{Reason: "fetch_failed", Err: err}
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 400 {
-		return Result{}, fmt.Errorf("upstream status %d", resp.StatusCode)
+		return Result{}, &FetchError{Reason: fmt.Sprintf("upstream_http_%d", resp.StatusCode), Err: fmt.Errorf("upstream status %d", resp.StatusCode)}
 	}
 	contentType := strings.ToLower(resp.Header.Get("Content-Type"))
 	if contentType != "" && !strings.Contains(contentType, "text/html") && !strings.Contains(contentType, "text/plain") {
-		return Result{}, fmt.Errorf("unsupported content type %q", contentType)
+		return Result{}, &FetchError{Reason: "unsupported_content_type", Err: fmt.Errorf("unsupported content type %q", contentType)}
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, MaxBodyBytes+1))
 	if err != nil {
 		return Result{}, err
 	}
 	if len(body) > MaxBodyBytes {
-		return Result{}, errors.New("content too large")
+		return Result{}, &FetchError{Reason: "content_too_large", Err: errors.New("content too large")}
 	}
 	parsed := resp.Request.URL
 	raw := string(body)
 	if strings.Contains(contentType, "text/plain") {
 		text := strings.Join(strings.Fields(raw), " ")
-		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname(), Quality: contentQuality(text)}, nil
+		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname(), Quality: Assess("plain_text", "document", parsed.Hostname(), text)}, nil
 	}
 	title := ExtractTitle(raw)
 	articleHTML, text, description := extractPage(raw)
 	text = trimLeadingChrome(text, title)
-	return Result{URL: parsed.String(), Title: title, Description: description, HTML: articleHTML, Text: text, Domain: parsed.Hostname(), Quality: contentQuality(text)}, nil
+	return Result{URL: parsed.String(), Title: title, Description: description, HTML: articleHTML, Text: text, Domain: parsed.Hostname(), Quality: Assess("article_extraction", "article", title, text)}, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, rawURL string) (*http.Request, error) {
@@ -240,7 +268,7 @@ func ExtractTitle(html string) string {
 	if start <= 0 || end == -1 {
 		return ""
 	}
-	return strings.TrimSpace(html[start : start+end])
+	return strings.TrimSpace(stdhtml.UnescapeString(html[start : start+end]))
 }
 
 func ExtractDescription(input string) string {
@@ -262,7 +290,7 @@ func extractDescription(root *html.Node) string {
 				case "name", "property":
 					name = strings.ToLower(strings.TrimSpace(attr.Val))
 				case "content":
-					value = strings.TrimSpace(stdhtml.UnescapeString(attr.Val))
+					value = strings.TrimSpace(attr.Val)
 				}
 			}
 			switch name {
@@ -336,15 +364,33 @@ func extractPage(input string) (string, string, string) {
 	return articleHTML, text, description
 }
 
-func contentQuality(text string) Quality {
-	words := strings.Fields(text)
-	if len(words) == 0 {
-		return QualityPartial
+func Assess(origin, contentKind, title, text string) Assessment {
+	assessment := Assessment{Status: QualityComplete, Score: 100, Method: origin, Version: ExtractorVersion, Reasons: []string{}}
+	text = strings.TrimSpace(text)
+	title = strings.TrimSpace(title)
+	if text == "" {
+		if title != "" {
+			assessment.Status, assessment.Score, assessment.Reasons = QualityMetadataOnly, 20, []string{"metadata_only"}
+		} else {
+			assessment.Status, assessment.Score, assessment.Reasons = QualityFailed, 0, []string{"empty_content"}
+		}
+		return assessment
 	}
-	if strings.Contains(strings.ToLower(text), "discussion about this post") {
-		return QualityPartial
+	lower := strings.ToLower(text)
+	for _, phrase := range []string{"log in to continue", "sign in to continue", "enable javascript to continue", "checking your browser"} {
+		if strings.Contains(lower, phrase) {
+			assessment.Status, assessment.Score, assessment.Reasons = QualityMetadataOnly, 15, []string{"login_wall"}
+			return assessment
+		}
 	}
-	return QualityComplete
+	if strings.Contains(lower, "discussion about this post") || strings.Contains(lower, "don’t miss what’s happening") || strings.Contains(lower, "don't miss what's happening") {
+		assessment.Status, assessment.Score, assessment.Reasons = QualityPartial, 35, []string{"social_chrome"}
+		return assessment
+	}
+	if contentKind == "article" && len(strings.Fields(text)) < 12 {
+		assessment.Status, assessment.Score, assessment.Reasons = QualityPartial, 45, []string{"too_little_article_text"}
+	}
+	return assessment
 }
 
 func dropNonContent(n *html.Node) {

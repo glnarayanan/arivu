@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/auth"
+	bookmarksvc "github.com/glnarayanan/arivu/internal/bookmarks"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/runtimeconfig"
@@ -263,7 +264,7 @@ func (a *App) syncXBookmarks(r *http.Request, user auth.User, conn xConnectionRo
 				duplicates++
 				continue
 			}
-			if err := a.insertXBookmark(r, user.ID, tweet, author, bookmarkURL); err != nil {
+			if err := a.insertXBookmark(r, user.ID, tweet, author, bookmarkURL, result); err != nil {
 				if strings.Contains(err.Error(), "UNIQUE") {
 					duplicates++
 					continue
@@ -286,9 +287,10 @@ func (a *App) syncXBookmarks(r *http.Request, user auth.User, conn xConnectionRo
 	return map[string]any{"total_fetched": totalFetched, "new_bookmarks": newBookmarks, "duplicates_skipped": duplicates, "sync_status": "idle", "has_more": cursor != ""}, nil
 }
 
-func (a *App) insertXBookmark(r *http.Request, userID string, tweet providers.XBookmark, author providers.XUser, bookmarkURL string) error {
+func (a *App) insertXBookmark(r *http.Request, userID string, tweet providers.XBookmark, author providers.XUser, bookmarkURL string, page providers.XBookmarkPage) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	title := tweet.Text
+	sourceText := tweet.EvidenceText()
+	title := sourceText
 	if len(title) > 100 {
 		title = title[:100] + "..."
 	}
@@ -296,15 +298,83 @@ func (a *App) insertXBookmark(r *http.Request, userID string, tweet providers.XB
 	metrics, _ := json.Marshal(tweet.PublicMetrics)
 	bookmarkID := ids.New()
 	tweetURL := "https://x.com/" + fallbackString(author.Username, "i") + "/status/" + tweet.ID
-	_, err := a.db.ExecContext(r.Context(), `INSERT INTO bookmarks(id,user_id,url,title,description,domain,text_content,read_status,source,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, bookmarkURL, title, tweet.Text, parsed.Hostname(), tweet.Text, false, "x", tweet.ID, author.Username, author.Name, tweetURL, string(metrics), now, now)
+	hasExternalArticle := normalizeForDedup(bookmarkURL) != normalizeForDedup(tweetURL)
+	contentKind := "x_post"
+	if hasExternalArticle {
+		contentKind = "x_article"
+	} else if !hasSubstantiveXText(sourceText) && len(tweet.Attachments.MediaKeys) > 0 {
+		contentKind = "x_media"
+	} else if !hasSubstantiveXText(sourceText) {
+		contentKind = "x_link"
+	}
+	publisherKey := "x:" + fallbackString(tweet.AuthorID, author.Username)
+	_, err := a.db.ExecContext(r.Context(), `INSERT INTO bookmarks(id,user_id,url,title,description,domain,text_content,read_status,source,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json,canonical_url,content_kind,source_published_at,source_author_id,source_publisher_key,fetch_version,created_at,updated_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, bookmarkURL, title, sourceText, parsed.Hostname(), sourceText, false, "x", tweet.ID, author.Username, author.Name, tweetURL, string(metrics), bookmarkURL, contentKind, nullableString(tweet.CreatedAt), nullableString(tweet.AuthorID), publisherKey, "x-api-v1", now, now)
 	if err != nil {
 		return err
 	}
+	status, reasons := xEvidenceQuality(sourceText, len(tweet.Attachments.MediaKeys) > 0)
+	if _, err := a.bookmarks.UpsertEvidence(r.Context(), userID, bookmarkID, bookmarksvc.BookmarkEvidence{
+		Kind: "source_post", Origin: "x_api", Authority: 100, Text: sourceText, CanonicalURL: tweetURL,
+		AuthorID: tweet.AuthorID, PublisherKey: publisherKey, PublishedAt: tweet.CreatedAt,
+		ExtractionMethod: "x_api", QualityStatus: status, QualityReasons: reasons, ExtractorVersion: "x-api-v1", Selected: !hasExternalArticle,
+	}); err != nil {
+		_, _ = a.db.ExecContext(r.Context(), `DELETE FROM bookmarks WHERE id=? AND user_id=?`, bookmarkID, userID)
+		return err
+	}
+	for _, reference := range tweet.References {
+		referenced, ok := page.Tweets[reference.ID]
+		if !ok || referenced.EvidenceText() == "" {
+			continue
+		}
+		referenceAuthor := page.Users[referenced.AuthorID]
+		referencePublisher := "x:" + fallbackString(referenced.AuthorID, referenceAuthor.Username)
+		_, _ = a.bookmarks.UpsertEvidence(r.Context(), userID, bookmarkID, bookmarksvc.BookmarkEvidence{
+			Kind: "referenced_x_post_" + fallbackString(reference.Type, "related"), Origin: "x_api", Authority: 90,
+			Text: referenced.EvidenceText(), CanonicalURL: "https://x.com/" + fallbackString(referenceAuthor.Username, "i") + "/status/" + referenced.ID,
+			AuthorID: referenced.AuthorID, PublisherKey: referencePublisher, PublishedAt: referenced.CreatedAt,
+			ExtractionMethod: "x_api_expansion", QualityStatus: "complete", ExtractorVersion: "x-api-v1",
+		})
+	}
+	for _, mediaKey := range tweet.Attachments.MediaKeys {
+		media, ok := page.Media[mediaKey]
+		if !ok {
+			continue
+		}
+		mediaStatus, mediaReasons := "partial", []string{}
+		if strings.TrimSpace(media.AltText) == "" {
+			mediaStatus, mediaReasons = "metadata_only", []string{"media_without_transcript"}
+		}
+		_, _ = a.bookmarks.UpsertEvidence(r.Context(), userID, bookmarkID, bookmarksvc.BookmarkEvidence{
+			Kind: "x_media_" + fallbackString(media.Type, "attachment"), Origin: "x_api", Authority: 60,
+			Text: strings.TrimSpace(media.AltText), CanonicalURL: fallbackString(media.URL, media.PreviewImageURL),
+			AuthorID: tweet.AuthorID, PublisherKey: publisherKey, PublishedAt: tweet.CreatedAt,
+			ExtractionMethod: "x_media_metadata", QualityStatus: mediaStatus, QualityReasons: mediaReasons, ExtractorVersion: "x-api-v1",
+		})
+	}
 	_, _ = a.db.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, userID, "pending", now, now)
-	payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": bookmarkURL})
-	_ = a.jobs.Enqueue(r.Context(), userID, "bookmark.process", string(payload))
+	_ = a.jobs.Enqueue(r.Context(), userID, "bookmark.process", bookmarksvc.ProcessPayload(bookmarkID, bookmarkURL, ""))
 	return nil
+}
+
+func xEvidenceQuality(text string, hasMedia bool) (string, []string) {
+	if hasSubstantiveXText(text) {
+		return "complete", []string{}
+	}
+	if hasMedia {
+		return "metadata_only", []string{"media_without_transcript"}
+	}
+	return "metadata_only", []string{"link_only"}
+}
+
+func hasSubstantiveXText(text string) bool {
+	for _, field := range strings.Fields(text) {
+		lower := strings.ToLower(strings.Trim(field, ".,;:!?()[]{}<>"))
+		if lower != "" && !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) xAccessToken(r *http.Request, conn xConnectionRow, xCfg runtimeconfig.Effective) (string, error) {
