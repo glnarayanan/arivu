@@ -32,7 +32,7 @@ evidence, derivative feedback filtering, optional old-backup compatibility, and
 user-scoped knowledge-feedback export. Existing graph/analytics goldens remain
 unchanged so additive v2 work cannot silently redefine legacy endpoints.
 
-`internal/app/webtest/knowledge-shell.test.mjs` locks the four primary
+`internal/app/webtest/knowledge-shell.test.mjs` locks the five primary
 destinations, query-preserving compatibility aliases, additive endpoint usage,
 raw-JSON removal from normal object creation, global Capture/Search, the
 light-only theme contract, and the accessible graph list.

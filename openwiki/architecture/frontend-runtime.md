@@ -9,10 +9,10 @@ Routes declare public or protected access before rendering. Same-origin links
 use history navigation; route changes update the document title, announce the
 active surface, expose loading progress, and restore focus to main content.
 
-The primary shell contains Home, Library, Graph, and Insights only. Desktop uses
-a left rail, tablet a compact rail, and mobile a fixed four-item bottom bar.
-Capture and Search / Ask remain visible globally. More opens the existing
-command palette and the profile control opens Notes, imports/exports, Settings,
+The primary shell contains Home, Library, Notes, Graph, and Insights. Desktop
+uses a left rail, tablet a compact rail, and mobile a fixed five-item bottom
+bar. Capture and Search / Ask remain visible globally. More opens the existing
+command palette and the profile control opens imports/exports, Settings,
 Administration for admins, and logout.
 
 Legacy product routes run through `compatibilityRedirect`, which preserves the
@@ -101,7 +101,7 @@ link; the browser does not construct a trusted edge by itself.
 ## Browser Smoke Matrix
 
 Use a temporary SQLite database with signups enabled. Check authenticated Home,
-Library, Search / Ask, Graph, Insights, bookmark detail, note detail, Settings,
+Library, Notes, Search / Ask, Graph, Insights, bookmark detail, note detail, Settings,
 and every compatibility route.
 
 Run desktop, tablet, and 390x844 mobile passes with the light-only palette.

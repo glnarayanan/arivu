@@ -28,7 +28,7 @@ browser extension, CLI, and optional AI provider integrations.
   Markdown, and Obsidian-ready ZIP archives.
 
 The primary browser destinations are Home (`/today`), Library (`/library`),
-Graph (`/graph`), and Insights (`/insights`), with Search / Ask at `/search`.
+Notes (`/notes`), Graph (`/graph`), and Insights (`/insights`), with Search / Ask at `/search`.
 Existing product deep links remain compatibility routes.
 
 ## How It Runs

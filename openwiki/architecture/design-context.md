@@ -11,7 +11,7 @@ Connect -> Discover -> Learn**. The interface must support immediate capture for
 new users while exposing connections, graph exploration, and evidence-backed
 learning patterns progressively.
 
-The four primary destinations are Home, Library, Graph, and Insights. Capture
+The five primary destinations are Home, Library, Notes, Graph, and Insights. Capture
 and Search / Ask stay globally available. Secondary workflows remain available
 as contextual views, settings, or query-preserving compatibility routes.
 

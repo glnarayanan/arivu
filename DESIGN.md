@@ -83,11 +83,11 @@ The existing shell is intentionally unchanged:
 - **Desktop:** left rail, central workspace, and contextual right inspector
   where the surface already needs one.
 - **Tablet:** compact rail; graph inspector moves below the canvas.
-- **Mobile:** fixed four-item bottom navigation, persistent Capture and Search /
+- **Mobile:** fixed five-item bottom navigation, persistent Capture and Search /
   Ask actions, and dialogs/inspectors that fit safe areas.
 
-Primary navigation remains exactly Home, Library, Graph, and Insights. Notes,
-imports/exports, settings, administration, and account actions remain under the
+Primary navigation remains exactly Home, Library, Notes, Graph, and Insights.
+Imports/exports, settings, administration, and account actions remain under the
 profile or contextual controls. The command palette remains under More and
 `Cmd/Ctrl+K`.
 
@@ -149,7 +149,7 @@ alternative; content must be visible before animation.
 
 ## Quality Checks
 
-At minimum, validate authenticated Home, Library, Search / Ask, Graph, Insights,
+At minimum, validate authenticated Home, Library, Notes, Search / Ask, Graph, Insights,
 bookmark detail, note detail, Settings, and legacy route aliases at desktop,
 tablet, and 390x844 mobile sizes. Validate the light-only palette even when the
 operating system requests dark appearance. Check keyboard-only operation,

@@ -32,7 +32,9 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
-- Added the knowledge-centered Home, Library, Graph, Insights, and Search / Ask
+- Promoted Notes to the primary desktop and mobile navigation and removed its
+  duplicate profile-menu entry so the core writing workspace is always visible.
+- Added the knowledge-centered Home, Library, Notes, Graph, Insights, and Search / Ask
   experience around the Capture -> Connect -> Discover -> Learn loop, while
   preserving legacy deep links as query-aware compatibility routes.
 - Added cursor-based `/api/library/items`, bounded typed

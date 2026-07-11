@@ -5,7 +5,14 @@ import test from "node:test";
 const app = await readFile(new URL("../web/app.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/styles.css", import.meta.url), "utf8");
 
-test("declares the four canonical knowledge destinations", () => {
+test("declares the five canonical knowledge destinations", () => {
+  assert.ok(app.includes(`const nav = [
+    ["/today", "Home"],
+    ["/library", "Library"],
+    ["/notes", "Notes"],
+    ["/graph", "Graph"],
+    ["/insights", "Insights"],
+  ];`));
   for (const contract of [
     '{ prefix: "/today", page: todayPage',
     '{ prefix: "/library", page: libraryPage',
@@ -14,9 +21,11 @@ test("declares the four canonical knowledge destinations", () => {
     '{ prefix: "/search", page: searchPage',
     '["/today", "Home"]',
     '["/library", "Library"]',
+    '["/notes", "Notes"]',
     '["/graph", "Graph"]',
     '["/insights", "Insights"]',
   ]) assert.ok(app.includes(contract), `missing frontend contract: ${contract}`);
+  assert.ok(!app.includes('{ label: "Notes", action: () => navigate("/notes") }'));
 });
 
 test("keeps legacy deep links as explicit query-preserving aliases", () => {

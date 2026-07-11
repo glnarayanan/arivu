@@ -45,10 +45,11 @@ browser client remains first-party and dependency-free.
 - `/settings` and `/admin`: account, import/export, providers, connections, and
   administrator controls.
 
-The authenticated shell exposes exactly Home, Library, Graph, and Insights as
-primary navigation. Capture and Search / Ask are persistent global actions.
-Notes, imports/exports, settings, and administration live under the profile or
-contextual controls. The existing More / `Cmd/Ctrl+K` command palette remains.
+The authenticated shell exposes exactly Home, Library, Notes, Graph, and
+Insights as primary navigation. Capture and Search / Ask are persistent global
+actions. Imports/exports, settings, and administration live under the profile
+or contextual controls. The existing More / `Cmd/Ctrl+K` command palette
+remains.
 
 ## Compatibility Routes
 

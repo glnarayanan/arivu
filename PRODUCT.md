@@ -23,13 +23,15 @@ rebuildable. Feedback about those derivatives is durable and user-scoped.
 
 ## Primary Experience
 
-The authenticated interface has four primary destinations:
+The authenticated interface has five primary destinations:
 
 - **Home** (`/today`) is a knowledge pulse: daily note, active work, new
   material, useful memories, and contextual Focus, Review, and Board views.
 - **Library** (`/library`) browses bookmarks, notes, daily notes, annotations,
   knowledge objects, entities, and concepts. It supports cursor pagination and
   filters for type, topic, source, stage, date, and connection state.
+- **Notes** (`/notes`) is the primary writing workspace for standalone notes,
+  note details, tasks, reminders, and explicit connections to saved material.
 - **Graph** (`/graph`) renders a bounded, focusable map from typed graph nodes
   and edges. It includes provenance, confidence, an inspector, and an
   equivalent keyboard and screen-reader-friendly node list.

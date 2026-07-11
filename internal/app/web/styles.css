@@ -1651,7 +1651,7 @@ progress::-moz-progress-bar {
     inset: auto 0 0;
     z-index: var(--z-sticky);
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(5, 1fr);
     border-top: 1px dashed var(--line);
     background: white;
     padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) max(var(--space-2), env(safe-area-inset-bottom)) max(var(--space-2), env(safe-area-inset-left));

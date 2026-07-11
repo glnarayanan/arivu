@@ -81,6 +81,9 @@ capture, search, cited Ask, and current-item actions.
 
 ## Reading, Notes, And Objects
 
+Notes is a primary navigation destination alongside Home, Library, Graph, and
+Insights, so the writing workspace is available without opening a nested menu.
+
 Bookmark pages keep sanitized archived content, summaries, provenance, tags,
 annotations, notes, links/backlinks, related items, tasks, reminders, and review
 actions. Selecting archived text opens the inline annotation composer; the

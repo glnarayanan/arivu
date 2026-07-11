@@ -519,10 +519,15 @@ function navigate(path, replace = false) {
   render();
 }
 
+function primaryNavActive(href) {
+  return location.pathname === href || location.pathname.startsWith(`${href}/`) || (href === "/library" && location.pathname.startsWith("/bookmark/"));
+}
+
 function shell(title, content) {
   const nav = [
     ["/today", "Home"],
     ["/library", "Library"],
+    ["/notes", "Notes"],
     ["/graph", "Graph"],
     ["/insights", "Insights"],
   ];
@@ -533,7 +538,7 @@ function shell(title, content) {
         <a class="brand" href="/today" aria-label="Arivu home">Arivu</a>
         <nav class="nav" aria-label="Primary">
           ${nav.map(([href, label]) => {
-            const active = location.pathname.startsWith(href) || (href === "/library" && (/^\/(bookmark|notes)\//.test(location.pathname)));
+            const active = primaryNavActive(href);
             return `<a href="${href}"${active ? ` class="active" aria-current="page"` : ""}>${label}</a>`;
           }).join("")}
         </nav>
@@ -555,7 +560,7 @@ function shell(title, content) {
       </main>
       <nav class="mobile-nav" aria-label="Primary mobile">
         ${nav.map(([href, label]) => {
-          const active = location.pathname.startsWith(href) || (href === "/library" && /^\/(bookmark|notes)\//.test(location.pathname));
+          const active = primaryNavActive(href);
           return `<a href="${href}"${active ? ` class="active" aria-current="page"` : ""}>${label}</a>`;
         }).join("")}
       </nav>
@@ -4830,7 +4835,6 @@ function bindGlobalShellActions() {
   const profile = document.querySelector("#profile-menu");
   if (!profile) return;
   const items = [
-    { label: "Notes", action: () => navigate("/notes") },
     { label: "Imports and exports", action: () => navigate("/settings?section=import") },
     { label: "Settings", action: () => navigate("/settings") },
   ];
