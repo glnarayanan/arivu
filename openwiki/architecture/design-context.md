@@ -17,18 +17,24 @@ as contextual views, settings, or query-preserving compatibility routes.
 
 ## Visual Direction
 
-Use a quiet cartographic workspace: true or cobalt-tinted neutrals, graphite
-text, one deep cobalt accent, restrained semantic colors, one native sans stack,
-subtle tonal layers, and functional spatial texture only in the graph. Light
-and dark palettes follow the system theme.
+Use the Brightlight-derived warm editorial system defined in `DESIGN.md`: a
+white and pale-sand canvas, neutral ink, coral accent, local serif heading
+stack, local sans-serif UI stack, fine dashed rules, compact radii, pill
+controls, and restrained soft shadows. The application is deliberately
+light-only and sets `color-scheme: light`; OS dark-mode preference must not
+replace the palette.
 
-The former warm-paper brutalist direction is obsolete. Do not reintroduce hard
-offset shadows, decorative grids, condensed display typography, heavy borders,
-or repeated card scaffolding.
+This is a presentation layer, not a product or information-architecture
+change. Preserve the existing routes, primary destinations, navigation, menu
+layout and options, content structure, and functionality. The licensed
+Brightlight project is a visual reference only. Do not copy or ship its Astro
+runtime, Tailwind setup, JavaScript, font files, images, or other assets.
 
 ## Implementation Rules
 
 - Keep `internal/app/web` dependency-free and native-browser-first.
+- Implement the visual system with first-party HTML, CSS, SVG, and browser
+  JavaScript; use local font stacks with platform fallbacks.
 - Extend shared dialogs, menus, tabs, toasts, busy buttons, inline messages,
   empty states, and route cleanup instead of duplicating patterns.
 - Preserve keyboard, touch, slow-network, offline, loading, empty, failure,

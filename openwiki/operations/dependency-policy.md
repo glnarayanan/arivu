@@ -40,6 +40,12 @@ X are called through narrow direct HTTP clients.
 
 The shipped frontend has no npm dependency tree. UI primitives, routing, API
 calls, state, and motion are first-party browser JavaScript and CSS.
+The Brightlight-derived presentation is implemented from visual principles
+only; its Astro/Tailwind implementation, scripts, font binaries, images, and
+other reference assets are not shipped or required. Arivu independently
+self-hosts the official OFL-licensed Geist and Noto Serif WOFF2 files under
+`internal/app/web/fonts`, alongside their license notices; no font CDN or npm
+runtime dependency is required.
 The extension popup also uses native system font stacks and does not import
 remote font CSS.
 

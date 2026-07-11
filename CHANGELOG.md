@@ -39,10 +39,13 @@ All notable changes to this project will be documented in this file.
   `/api/knowledge-graph/v2`, and evidence-backed `/api/insights` endpoints with
   strict user scoping, deterministic ordering, focused graph expansion,
   provenance, confidence, and durable relationship/insight feedback.
-- Added the quiet-cartographic neutral/cobalt design system with system-aware
-  light and dark themes, four-item mobile navigation, persistent Capture and
-  Search / Ask actions, an accessible graph node list, and type-specific object
-  fields instead of normal-interface JSON editing.
+- Reworked the complete embedded interface with a Brightlight-derived,
+  light-only warm editorial system: white and sand surfaces, coral accents,
+  serif headings, sans-serif UI text, dashed rules, compact radii, pill
+  controls, and restrained shadows. This changes look and feel only; routes,
+  navigation, menus, options, content hierarchy, and functionality remain
+  unchanged. OFL-licensed Geist and Noto Serif fonts are served first-party;
+  the Astro/Tailwind reference and its licensed assets are not shipped.
 - Added `knowledge_feedback` backup/restore support so useful, not-useful,
   snoozed, dismissed, and confirmed derivative feedback survives export while
   inferred relationships remain rebuildable.

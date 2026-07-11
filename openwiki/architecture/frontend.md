@@ -8,16 +8,24 @@ separate frontend build.
 
 Assets live under `internal/app/web/` and are embedded with `go:embed`.
 
-- `index.html`: accessible root document, theme-color metadata, app mount, route
-  progress indicator, and toast region.
+- `index.html`: accessible root document, light warm-sand `#fcfcf9`
+  theme-color metadata, app mount, route progress indicator, and toast region.
 - `app.js`: client router, authenticated shell, API client, canonical and
   compatibility routes, shared UI primitives, and product screens.
-- `styles.css`: quiet-cartographic tokens, light/dark palettes, responsive shell,
-  component states, graph semantics, and reduced-motion handling.
-- `manifest.webmanifest`: install metadata and the compatible GET share target
-  into `/dashboard`.
-- `sw.js`: app-shell cache; `/api/*` remains network-only.
+- `styles.css`: Brightlight-derived light-only warm editorial tokens, responsive
+  shell, component states, graph semantics, and reduced-motion handling.
+- `manifest.webmanifest`: install metadata, matching light-only `#fcfcf9`
+  background/theme colors, and the compatible GET share target into
+  `/dashboard`.
+- `sw.js`: app-shell and first-party font cache; `/api/*` remains network-only.
 - `service-worker-register.mjs`: CSP-compatible registration lifecycle.
+
+The visual reference changes presentation only. Existing routes, navigation,
+menu layout and options, content hierarchy, and interactions remain unchanged.
+The shipped assets do not contain Brightlight's Astro components, Tailwind
+configuration, scripts, font binaries, or images. Arivu independently bundles
+official OFL-licensed Geist and Noto Serif WOFF2 files with license notices; the
+browser client remains first-party and dependency-free.
 
 ## Canonical Product Routes
 

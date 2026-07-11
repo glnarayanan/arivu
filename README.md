@@ -36,6 +36,10 @@ Existing product deep links remain compatibility routes.
 - One Go binary serves the web app, API, workers, CLI commands, and migration
   tooling.
 - Embedded dependency-free frontend assets are served from the binary.
+- The light-only browser UI uses a Brightlight-derived warm editorial look
+  implemented in first-party CSS with self-hosted OFL-licensed Geist and Noto
+  Serif fonts; no Astro, Tailwind, reference assets, remote font requests, or
+  frontend dependency tree ships with Arivu.
 - SQLite stores content, sessions, jobs, settings, search indexes, tasks, and
   reminders.
 - Web, CLI, and extension sessions are audience-isolated, with CSRF protection
@@ -134,6 +138,7 @@ Start with `openwiki/user-guide.md` if you are running Arivu, or
 `openwiki/quickstart.md` if you are changing the codebase. OpenWiki contains the
 user guide, codebase guide, deployment notes, dependency policy, security model,
 schema reference, GitHub Wiki publishing notes, and legacy migration guide.
+Product and visual contributors should also read `PRODUCT.md` and `DESIGN.md`.
 
 The user-facing guide is also published at the
 [Arivu GitHub Wiki](https://github.com/glnarayanan/arivu/wiki).

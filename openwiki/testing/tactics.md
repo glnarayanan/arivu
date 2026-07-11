@@ -34,8 +34,8 @@ unchanged so additive v2 work cannot silently redefine legacy endpoints.
 
 `internal/app/webtest/knowledge-shell.test.mjs` locks the four primary
 destinations, query-preserving compatibility aliases, additive endpoint usage,
-raw-JSON removal from normal object creation, global Capture/Search, system
-theme support, and the accessible graph list.
+raw-JSON removal from normal object creation, global Capture/Search, the
+light-only theme contract, and the accessible graph list.
 
 ---
 
@@ -59,12 +59,13 @@ Also load `/dashboard`, `/knowledge-graph`, `/analytics`, `/inbox`, `/focus`,
 `/review`, `/board`, `/assistant`, `/objects`, `/evolution`, `/duplicates`, and
 `/imports`; confirm the canonical URL and incoming query values survive.
 
-Run at desktop, tablet, and 390x844 mobile sizes in light and dark themes. Check
-keyboard-only use, visible focus, route announcements, skip link, dialog/menu
-focus management, graph SVG/list parity, the Graph zoom/reset controls,
-ordinary browser/pinch zoom, reduced motion, offline capture, cached reads,
-loading/empty/failure/long-text states,
-no viewport overflow, WCAG AA contrast, and an empty completed-flow console.
+Run at desktop, tablet, and 390x844 mobile sizes with the Brightlight-derived
+light-only palette. Emulate an OS dark preference and verify the UI remains
+light. Check keyboard-only use, visible focus, route announcements, skip link,
+dialog/menu focus management, graph SVG/list parity, the Graph zoom/reset
+controls, ordinary browser/pinch zoom, reduced motion, offline capture, cached
+reads, loading/empty/failure/long-text states, no viewport overflow, WCAG AA
+contrast, and an empty completed-flow console.
 
 Annotation changes additionally need the reader selection composer checked for
 pointer and keyboard selection, quote-only save, Save failure retry,

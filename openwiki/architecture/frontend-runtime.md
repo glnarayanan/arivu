@@ -30,7 +30,7 @@ existing surfaces. When a later read cannot reach Arivu, those views may show a
 recent offline copy. Link and quote capture continue using the bounded offline
 bookmark queue; note and file writes still require the server.
 
-The service worker caches the app shell and canonical route documents but
+The service worker caches the app shell, bundled webfonts, and canonical route documents but
 bypasses `/api/*`. Online shell requests revalidate so deployments do not leave
 stale JavaScript active.
 
@@ -86,13 +86,16 @@ link; the browser does not construct a trusted edge by itself.
 
 ## Shared Interaction Rules
 
+- Presentation uses the Brightlight-derived white/sand, coral, serif/sans,
+  dashed-rule visual system without changing component behavior or hierarchy.
 - Forms retain labels, inline errors, native validity, and specific busy states.
 - Dialogs trap focus, close with Escape, and restore focus.
 - Menus use ARIA menu semantics and roving keyboard focus.
 - Tabs use tablist/tab/tabpanel semantics and Arrow/Home/End behavior.
 - Toasts announce success politely and errors assertively.
 - Archived third-party HTML appears only after backend sanitization.
-- `prefers-color-scheme` selects the neutral/cobalt light or dark palette.
+- `color-scheme: light` keeps the deliberate light-only palette active even
+  when the operating system requests dark appearance.
 - `prefers-reduced-motion` disables nonessential transitions and animation.
 
 ## Browser Smoke Matrix
@@ -101,8 +104,10 @@ Use a temporary SQLite database with signups enabled. Check authenticated Home,
 Library, Search / Ask, Graph, Insights, bookmark detail, note detail, Settings,
 and every compatibility route.
 
-Run desktop, tablet, and 390x844 mobile passes in light and dark mode. Include
-keyboard-only navigation, graph/list equivalence, reduced motion, offline
-capture, cached reads, empty/loading/failure states, long text, no horizontal
-overflow, and an empty completed-flow console. Browser screenshots remain
-temporary review artifacts unless a regression test requires them.
+Run desktop, tablet, and 390x844 mobile passes with the light-only palette.
+Repeat at least one pass while the operating system or emulated media requests
+dark appearance and confirm Arivu stays light. Include keyboard-only navigation,
+graph/list equivalence, reduced motion, offline capture, cached reads,
+empty/loading/failure states, long text, no horizontal overflow, and an empty
+completed-flow console. Browser screenshots remain temporary review artifacts
+unless a regression test requires them.

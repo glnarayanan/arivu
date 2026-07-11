@@ -100,3 +100,8 @@ self-hosted, privacy-first, dependency-light, and centered on personal
 knowledge even on multi-user instances.
 
 The visual and interaction system is defined in `DESIGN.md`.
+
+The Brightlight-derived presentation is a look-and-feel layer only. Arivu is
+light-only, and the visual overhaul does not change routes, navigation or menu
+options, information architecture, or product behavior. The Astro/Tailwind
+reference implementation and its assets are not part of the shipped product.
