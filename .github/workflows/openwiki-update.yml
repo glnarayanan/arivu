@@ -35,6 +35,8 @@ jobs:
       - name: Keep workflow configuration maintainer-controlled
         run: |
           git restore -- .github/workflows/openwiki-update.yml
+          git restore -- openwiki/operations/dependency-policy.md
+          git restore -- openwiki/operations/github-wiki.md
           git clean -f -- CLAUDE.md
 
       - name: Create OpenWiki update pull request

@@ -264,7 +264,8 @@ All notable changes to this project will be documented in this file.
 - Hardened scheduled OpenWiki updates by disabling unauthenticated LangSmith
   tracing, selecting OpenRouter explicitly, pinning the generator and
   pull-request action, and preventing generated output from rewriting its own
-  privileged workflow while still capturing `openwiki/` and `AGENTS.md` edits.
+  privileged workflow or policy documentation while still capturing ordinary
+  `openwiki/` and `AGENTS.md` edits.
 - Library pagination now HTML-escapes user-controlled filter parameters before
   inserting the next-page URL into the embedded frontend, preventing DOM XSS.
 - Web CSRF checks now bind the submitted cookie/header token to the authenticated

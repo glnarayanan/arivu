@@ -37,8 +37,9 @@ X are called through narrow direct HTTP clients.
 - Dependabot monitors Go modules and GitHub Actions weekly.
 - The scheduled documentation workflow pins both the OpenWiki CLI version and
   the third-party pull-request action commit; generated documentation may
-  update `openwiki/` and the lean `AGENTS.md`, but cannot rewrite the workflow
-  that receives repository write permissions.
+  update ordinary `openwiki/` pages and the lean `AGENTS.md`, but cannot rewrite
+  the workflow that receives repository write permissions or the policy pages
+  documenting that boundary.
 
 ## Frontend Dependencies
 
