@@ -65,6 +65,60 @@ func TestGeminiSummaryFieldsUseConfiguredModelAndBaseURL(t *testing.T) {
 	}
 }
 
+func TestGeminiTypedSummaryUsesStructuredOutputAndRetriesValidationOnce(t *testing.T) {
+	requests := 0
+	var responseSchema map[string]any
+	var prompts []string
+	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		requests++
+		var body struct {
+			Contents []struct {
+				Parts []struct {
+					Text string `json:"text"`
+				} `json:"parts"`
+			} `json:"contents"`
+			GenerationConfig struct {
+				ResponseMIMEType string         `json:"response_mime_type"`
+				ResponseSchema   map[string]any `json:"response_schema"`
+			} `json:"generation_config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		prompts = append(prompts, body.Contents[0].Parts[0].Text)
+		if body.GenerationConfig.ResponseMIMEType != "application/json" {
+			t.Fatalf("response mime type = %q", body.GenerationConfig.ResponseMIMEType)
+		}
+		responseSchema = body.GenerationConfig.ResponseSchema
+		text := `{"one_sentence":"Microsoft reported 99 wins.","bullet_points":[],"long_form":"","highlights":[],"suggested_tags":[],"entities":[],"concepts":[]}`
+		if requests == 2 {
+			text = `{"one_sentence":"Microsoft documents row-level security.","bullet_points":[],"long_form":"","highlights":[],"suggested_tags":["row-level-security"],"entities":[{"label":"Microsoft","type":"organization","confidence":0.98,"evidence":"Microsoft"}],"concepts":[{"label":"row-level security","confidence":0.91,"evidence":"row-level security"}]}`
+		}
+		var buf bytes.Buffer
+		_ = json.NewEncoder(&buf).Encode(map[string]any{"candidates": []map[string]any{{"content": map[string]any{"parts": []map[string]any{{"text": text}}}}}})
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(&buf)}, nil
+	})}
+
+	ai := GeminiClient{APIKey: "secret", BaseURL: "https://gemini.test", HTTP: client}
+	result, err := ai.GenerateSummary(context.Background(), SummaryRequest{
+		ContentKind:   ContentKindArticle,
+		PrimaryText:   "Microsoft documents row-level security as a database policy mechanism. Application authorization still needs deliberate design.",
+		QualityStatus: QualityComplete,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || len(prompts) != 2 || !strings.Contains(prompts[1], "unsupported_number") {
+		t.Fatalf("requests=%d prompts=%#v", requests, prompts)
+	}
+	if responseSchema["type"] != "object" || result.OneSentence == "" || len(result.Entities) != 1 {
+		t.Fatalf("schema=%#v result=%#v", responseSchema, result)
+	}
+	if result.Provider == "" || result.Model == "" || result.PromptVersion == "" || result.ValidatorVersion == "" {
+		t.Fatalf("missing provenance: %#v", result)
+	}
+}
+
 func TestGeminiEmbeddingUsesCurrentModel(t *testing.T) {
 	var gotPath string
 	var gotBody struct {
