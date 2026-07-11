@@ -35,6 +35,13 @@ func (q *Queue) EnqueueWithID(ctx context.Context, userID, jobType, payload stri
 	return q.EnqueueAt(ctx, userID, jobType, payload, time.Now().UTC())
 }
 
+func (q *Queue) EnqueueWithIDTx(ctx context.Context, tx *sql.Tx, userID, jobType, payload string) (string, error) {
+	now := time.Now().UTC()
+	id := ids.New()
+	_, err := tx.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,payload_json,run_after,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, nullable(userID), jobType, "queued", payload, now.Format(time.RFC3339), now.Format(time.RFC3339), now.Format(time.RFC3339))
+	return id, err
+}
+
 func (q *Queue) EnqueueAt(ctx context.Context, userID, jobType, payload string, runAfter time.Time) (string, error) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := ids.New()

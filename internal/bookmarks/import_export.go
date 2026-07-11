@@ -24,6 +24,7 @@ import (
 )
 
 var hrefPattern = regexp.MustCompile(`(?i)href=["']([^"']+)["']`)
+var errPartialExtraction = errors.New("partial content extraction")
 
 func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string) error {
 	switch jobType {
@@ -36,14 +37,23 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 		if err := json.Unmarshal([]byte(payload), &body); err != nil {
 			return err
 		}
-		err := s.processBookmark(ctx, body.BookmarkID, body.URL)
-		if err == nil && body.ImportJobID != "" {
-			s.recordImportJobSuccess(ctx, body.BookmarkID, body.ImportJobID)
-		}
-		return err
+		return s.finishBookmarkProcess(ctx, body.BookmarkID, body.ImportJobID, s.processBookmark(ctx, body.BookmarkID, body.URL))
 	default:
 		return fmt.Errorf("unknown job type %s", jobType)
 	}
+}
+
+func (s *Service) finishBookmarkProcess(ctx context.Context, bookmarkID, importJobID string, err error) error {
+	if errors.Is(err, errPartialExtraction) {
+		if importJobID != "" {
+			s.recordImportJobProgress(ctx, bookmarkID, importJobID, 0, 0, 1)
+		}
+		return nil
+	}
+	if err == nil && importJobID != "" {
+		s.recordImportJobSuccess(ctx, bookmarkID, importJobID)
+	}
+	return err
 }
 
 func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL string) error {
@@ -54,6 +64,19 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 	result, err := s.fetcher.Fetch(ctx, rawURL)
 	if err != nil {
 		return err
+	}
+	if result.Quality == safefetch.QualityPartial {
+		now := nowString()
+		title := fallback(result.Title, result.Domain)
+		if _, err := s.db.ExecContext(ctx, `UPDATE bookmarks SET url=?,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=?,updated_at=? WHERE id=? AND user_id=?`, result.URL, title, result.Description, result.Domain, now, bookmarkID, userID); err != nil {
+			return err
+		}
+		_, err := s.db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET processing_status='partial',updated_at=excluded.updated_at`, ids.New(), bookmarkID, userID, "partial", now, now)
+		if err != nil {
+			return err
+		}
+		s.refreshSearchIndex(ctx, userID)
+		return errPartialExtraction
 	}
 	summary := map[string]any{
 		"one_sentence":   oneSentence(result.Text),
@@ -71,7 +94,7 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 	}
 	title := fallback(result.Title, result.Domain)
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err = s.db.ExecContext(ctx, `UPDATE bookmarks SET url=?, title=?, description=?, domain=?, sanitized_html=?, text_content=?, reading_time=?, updated_at=? WHERE id=?`,
+	_, err = s.db.ExecContext(ctx, `UPDATE bookmarks SET url=?,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=?,domain=?,sanitized_html=?,text_content=?,reading_time=?,updated_at=? WHERE id=?`,
 		result.URL, title, result.Description, result.Domain, sanitize.HTML(result.HTML), result.Text, readingTime(result.Text), now, bookmarkID)
 	if err != nil {
 		return err
@@ -125,8 +148,7 @@ func (s *Service) Import(w http.ResponseWriter, r *http.Request, user auth.User)
 			_, _ = s.db.ExecContext(r.Context(), `INSERT INTO import_sources(id,user_id,import_job_id,source_type,source_name,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), user.ID, jobID, source, item.Title, string(metadata), now)
 		}
 		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
-		payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": item.URL, "import_job_id": jobID})
-		_ = s.jobs.Enqueue(r.Context(), user.ID, "bookmark.process", string(payload))
+		_ = s.jobs.Enqueue(r.Context(), user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, item.URL, jobID))
 		count++
 	}
 	_, _ = s.db.ExecContext(r.Context(), `UPDATE import_jobs SET total_bookmarks=?, updated_at=? WHERE id=?`, count, time.Now().UTC().Format(time.RFC3339), jobID)
@@ -1174,10 +1196,14 @@ func (s *Service) RecordJobTerminalFailure(ctx context.Context, jobType string, 
 		BookmarkID  string `json:"bookmark_id"`
 		ImportJobID string `json:"import_job_id"`
 	}
-	if err := json.Unmarshal([]byte(payload), &body); err != nil || body.ImportJobID == "" {
+	if err := json.Unmarshal([]byte(payload), &body); err != nil || body.BookmarkID == "" {
 		return
 	}
-	s.recordImportJobFailure(ctx, body.BookmarkID, body.ImportJobID)
+	now := nowString()
+	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='failed', updated_at=? WHERE bookmark_id=?`, now, body.BookmarkID)
+	if body.ImportJobID != "" {
+		s.recordImportJobProgress(ctx, body.BookmarkID, body.ImportJobID, 0, 0, 1)
+	}
 }
 
 func (s *Service) recordImportJobSuccess(ctx context.Context, bookmarkID string, importJobID string) {
@@ -1185,8 +1211,7 @@ func (s *Service) recordImportJobSuccess(ctx context.Context, bookmarkID string,
 }
 
 func (s *Service) recordImportJobFailure(ctx context.Context, bookmarkID string, importJobID string) {
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='failed', updated_at=? WHERE bookmark_id=?`, now, bookmarkID)
+	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='failed', updated_at=? WHERE bookmark_id=?`, nowString(), bookmarkID)
 	s.recordImportJobProgress(ctx, bookmarkID, importJobID, 0, 0, 1)
 }
 
@@ -1639,6 +1664,15 @@ func jsonListString(value any) string {
 	if err != nil || len(raw) > 20000 {
 		return "[]"
 	}
+	return string(raw)
+}
+
+func bookmarkProcessPayload(bookmarkID, rawURL, importJobID string) string {
+	payload := map[string]string{"bookmark_id": bookmarkID, "url": rawURL}
+	if importJobID != "" {
+		payload["import_job_id"] = importJobID
+	}
+	raw, _ := json.Marshal(payload)
 	return string(raw)
 }
 

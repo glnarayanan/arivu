@@ -64,7 +64,15 @@ type Result struct {
 	HTML        string
 	Text        string
 	Domain      string
+	Quality     Quality
 }
+
+type Quality string
+
+const (
+	QualityComplete Quality = "complete"
+	QualityPartial  Quality = "partial"
+)
 
 func New() *Client {
 	return NewWithUserAgent(DefaultUserAgent)
@@ -137,11 +145,12 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 	raw := string(body)
 	if strings.Contains(contentType, "text/plain") {
 		text := strings.Join(strings.Fields(raw), " ")
-		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname()}, nil
+		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname(), Quality: contentQuality(text)}, nil
 	}
 	title := ExtractTitle(raw)
-	articleHTML, text := ExtractArticle(raw)
-	return Result{URL: parsed.String(), Title: title, HTML: articleHTML, Text: trimLeadingChrome(text, title), Domain: parsed.Hostname()}, nil
+	articleHTML, text, description := extractPage(raw)
+	text = trimLeadingChrome(text, title)
+	return Result{URL: parsed.String(), Title: title, Description: description, HTML: articleHTML, Text: text, Domain: parsed.Hostname(), Quality: contentQuality(text)}, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, rawURL string) (*http.Request, error) {
@@ -234,6 +243,46 @@ func ExtractTitle(html string) string {
 	return strings.TrimSpace(html[start : start+end])
 }
 
+func ExtractDescription(input string) string {
+	root, err := html.Parse(strings.NewReader(input))
+	if err != nil {
+		return ""
+	}
+	return extractDescription(root)
+}
+
+func extractDescription(root *html.Node) string {
+	var standard, openGraph string
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && strings.EqualFold(n.Data, "meta") {
+			var name, value string
+			for _, attr := range n.Attr {
+				switch strings.ToLower(attr.Key) {
+				case "name", "property":
+					name = strings.ToLower(strings.TrimSpace(attr.Val))
+				case "content":
+					value = strings.TrimSpace(stdhtml.UnescapeString(attr.Val))
+				}
+			}
+			switch name {
+			case "description":
+				standard = value
+			case "og:description":
+				openGraph = value
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	if standard != "" {
+		return standard
+	}
+	return openGraph
+}
+
 func ExtractText(html string) string {
 	_, text := ExtractArticle(html)
 	return text
@@ -263,11 +312,17 @@ func hasLeadingChrome(text string) bool {
 }
 
 func ExtractArticle(input string) (string, string) {
+	articleHTML, text, _ := extractPage(input)
+	return articleHTML, text
+}
+
+func extractPage(input string) (string, string, string) {
 	root, err := html.Parse(strings.NewReader(input))
 	if err != nil {
 		text := strings.Join(strings.Fields(stdhtml.UnescapeString(input)), " ")
-		return stdhtml.EscapeString(text), text
+		return stdhtml.EscapeString(text), text, ""
 	}
+	description := extractDescription(root)
 	dropNonContent(root)
 	node := bestArticleNode(root)
 	var htmlOut strings.Builder
@@ -278,7 +333,18 @@ func ExtractArticle(input string) (string, string) {
 		text = strings.Join(strings.Fields(textContent(root)), " ")
 		articleHTML = stdhtml.EscapeString(text)
 	}
-	return articleHTML, text
+	return articleHTML, text, description
+}
+
+func contentQuality(text string) Quality {
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return QualityPartial
+	}
+	if strings.Contains(strings.ToLower(text), "discussion about this post") {
+		return QualityPartial
+	}
+	return QualityComplete
 }
 
 func dropNonContent(n *html.Node) {
@@ -307,7 +373,8 @@ func shouldDropElement(n *html.Node) bool {
 		if key != "id" && key != "class" && key != "type" {
 			continue
 		}
-		if strings.Contains(value, "__next_data__") || strings.Contains(value, "cookie") || strings.Contains(value, "advert") || strings.Contains(value, "promo") || strings.Contains(value, "newsletter") || strings.Contains(value, "sidebar") {
+		isNewsletterChrome := strings.Contains(value, "newsletter") && tag != "article" && tag != "main"
+		if strings.Contains(value, "__next_data__") || strings.Contains(value, "cookie") || strings.Contains(value, "advert") || strings.Contains(value, "promo") || isNewsletterChrome || strings.Contains(value, "sidebar") || strings.Contains(value, "comments-section") || strings.Contains(value, "comment-list") || strings.Contains(value, "comment-body") {
 			return true
 		}
 	}
@@ -324,6 +391,9 @@ func hasAncestor(n *html.Node, tag string) bool {
 }
 
 func bestArticleNode(root *html.Node) *html.Node {
+	if n := preferredArticleNode(root); n != nil {
+		return n
+	}
 	if n := firstElement(root, "article"); n != nil {
 		return n
 	}
@@ -349,6 +419,64 @@ func bestArticleNode(root *html.Node) *html.Node {
 	}
 	walk(root)
 	return best
+}
+
+func preferredArticleNode(root *html.Node) *html.Node {
+	var substack, articleContent, postContent, entryContent *html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if substack != nil {
+			return
+		}
+		if n.Type == html.ElementNode {
+			switch {
+			case substack == nil && hasClass(n, "body") && hasClass(n, "markup") && hasAncestorClass(n, "available-content"):
+				substack = n
+			case articleContent == nil && hasClass(n, "article-content"):
+				articleContent = n
+			case postContent == nil && hasClass(n, "post-content"):
+				postContent = n
+			case entryContent == nil && hasClass(n, "entry-content"):
+				entryContent = n
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+			if substack != nil {
+				return
+			}
+		}
+	}
+	walk(root)
+	for _, candidate := range []*html.Node{substack, articleContent, postContent, entryContent} {
+		if candidate != nil {
+			return candidate
+		}
+	}
+	return nil
+}
+
+func hasAncestorClass(n *html.Node, wanted string) bool {
+	for parent := n.Parent; parent != nil; parent = parent.Parent {
+		if hasClass(parent, wanted) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasClass(n *html.Node, wanted string) bool {
+	wanted = strings.ToLower(wanted)
+	for _, attr := range n.Attr {
+		if strings.EqualFold(attr.Key, "class") {
+			for _, className := range strings.Fields(strings.ToLower(attr.Val)) {
+				if className == wanted {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func firstElement(n *html.Node, tag string) *html.Node {

@@ -1928,12 +1928,15 @@ async function showJobStatus(jobID) {
   if (!jobID || !status) return;
   status.hidden = false;
   status.textContent = "Queued for archiving";
-  for (let i = 0; i < 4; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 650));
+  for (let i = 0; i < 60; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
     const job = await api(`/jobs/${jobID}`).catch(() => null);
     if (!job) return;
     status.innerHTML = jobStatusMarkup(job.status);
-    if (job.status === "completed" || job.status === "failed") return;
+    if (job.status === "completed" || job.status === "failed") {
+      if (location.pathname.startsWith("/bookmark/")) render();
+      return;
+    }
   }
 }
 
@@ -1962,16 +1965,22 @@ function summaryPanel(summary) {
   const highlights = Array.isArray(summary.highlights) ? summary.highlights : [];
   const tags = Array.isArray(summary.suggested_tags) ? summary.suggested_tags : [];
   const longForm = typeof summary.long_form === "string" ? summary.long_form.trim() : "";
-  if (!summary.one_sentence && !longForm && !bullets.length && !highlights.length && !tags.length) {
-    return `<section class="insight-strip"><span class="meta">Enrichment</span><p>${escapeHTML(summary.processing_status || "Queued")}</p></section>`;
-  }
-  return `<section class="insight-strip">
-    <span class="meta">Summary</span>
+  const hasSummary = summary.one_sentence || longForm || bullets.length || highlights.length || tags.length;
+  const statusNotice = {
+    partial: `<p><strong>Partial extraction:</strong> the source returned too little readable article content. Reprocess after checking that the page is publicly accessible.</p>`,
+    pending: `<p><strong>Reprocessing:</strong> the existing archive remains visible until refreshed content is ready.</p>`,
+    failed: `<p><strong>Reprocessing failed:</strong> the existing archive is unchanged. Check source access or server logs before retrying.</p>`,
+  }[summary.processing_status] || "";
+  const summaryContent = hasSummary ? `
     ${summary.one_sentence ? `<p>${escapeHTML(summary.one_sentence)}</p>` : ""}
     ${longForm ? `<div class="summary-long-form">${longForm.split(/\n\s*\n/).map((paragraph) => `<p>${escapeHTML(paragraph)}</p>`).join("")}</div>` : ""}
     ${bullets.length ? `<ul>${bullets.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${highlights.length ? `<p class="meta">Highlights</p><ul>${highlights.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
-    ${tags.length ? `<div class="chips">${tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}</div>` : ""}
+    ${tags.length ? `<div class="chips">${tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}</div>` : ""}` : "";
+  return `<section class="insight-strip">
+    <span class="meta">${hasSummary ? "Summary" : "Enrichment"}</span>
+    ${statusNotice || (!hasSummary ? `<p>${escapeHTML(summary.processing_status || "Queued")}</p>` : "")}
+    ${summaryContent}
   </section>`;
 }
 
@@ -2342,8 +2351,10 @@ async function bookmarkPage() {
       <p class="button-row">
         <a class="button" href="${escapeHTML(bookmark.url)}" target="_blank" rel="noreferrer noopener">Open original</a>
         <button type="button" class="secondary" id="toggle-read">${bookmark.read_status ? "Mark unread" : "Mark read"}</button>
+        <button type="button" class="secondary" id="reprocess-bookmark">Reprocess</button>
         <button type="button" class="danger" id="delete-bookmark">Delete bookmark</button>
       </p>
+      <p id="job-status" hidden></p>
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
       <div class="reader-content" tabindex="-1">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
@@ -2442,6 +2453,18 @@ async function bookmarkPage() {
       await api(`/bookmarks/${id}/read-status`, { method: "PATCH", body: JSON.stringify({ read_status: !bookmark.read_status }) });
       ui.toast("Read status updated", "success");
       render();
+    } catch (err) {
+      ui.toast(err.message, "error");
+    } finally {
+      done();
+    }
+  });
+  document.querySelector("#reprocess-bookmark").addEventListener("click", async (event) => {
+    const done = setButtonBusy(event.currentTarget, "Queueing");
+    try {
+      const result = await api(`/bookmarks/${id}/reprocess`, { method: "POST", body: "{}" });
+      ui.toast("Bookmark queued for reprocessing", "success");
+      showJobStatus(result.job_id);
     } catch (err) {
       ui.toast(err.message, "error");
     } finally {

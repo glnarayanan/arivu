@@ -98,11 +98,51 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 		tagJSON, _ := json.Marshal(cleanStringList(body.Tags, 20))
 		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
 	}
-	payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": body.URL})
-	jobID, _ := s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", string(payload))
+	jobID, _ := s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, ""))
 	bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
 	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
+}
+
+func (s *Service) Reprocess(w http.ResponseWriter, r *http.Request, user auth.User) {
+	bookmarkID := r.PathValue("id")
+	var rawURL string
+	if err := s.db.QueryRowContext(r.Context(), `SELECT url FROM bookmarks WHERE id=? AND user_id=?`, bookmarkID, user.ID).Scan(&rawURL); err != nil {
+		writeError(w, http.StatusNotFound, "Bookmark not found")
+		return
+	}
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not queue bookmark")
+		return
+	}
+	defer tx.Rollback()
+	var existingJobID string
+	err = tx.QueryRowContext(r.Context(), `SELECT id FROM jobs WHERE user_id=? AND type='bookmark.process' AND status IN ('queued','leased') AND json_extract(payload_json,'$.bookmark_id')=? ORDER BY created_at LIMIT 1`, user.ID, bookmarkID).Scan(&existingJobID)
+	if err == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark is already queued for reprocessing", "job_id": existingJobID})
+		return
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "Could not check bookmark queue")
+		return
+	}
+	now := nowString()
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET processing_status='pending',updated_at=excluded.updated_at`, ids.New(), bookmarkID, user.ID, "pending", now, now)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not reset bookmark processing")
+		return
+	}
+	jobID, err := s.jobs.EnqueueWithIDTx(r.Context(), tx, user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, rawURL, ""))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not queue bookmark")
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not queue bookmark")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark queued for reprocessing", "job_id": jobID})
 }
 
 // CreateExtensionAnnotation captures a selected external passage against an
@@ -192,8 +232,7 @@ func (s *Service) CreateExtensionAnnotation(w http.ResponseWriter, r *http.Reque
 
 	jobID := ""
 	if createdBookmark {
-		payload, _ := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": body.URL})
-		jobID, _ = s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", string(payload))
+		jobID, _ = s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, ""))
 	}
 	bookmark, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
 	annotation, _ := s.annotation(r.Context(), user.ID, annotationID)

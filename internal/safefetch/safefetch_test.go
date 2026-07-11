@@ -101,6 +101,54 @@ func TestExtractArticlePrefersReadableContent(t *testing.T) {
 	}
 }
 
+func TestExtractArticlePrefersSubstackPostBodyOverDiscussion(t *testing.T) {
+	html := `<!doctype html><html><head><title>Useful Post</title><meta name="description" content="A useful explanation of agent tools."></head><body>
+		<article class="newsletter-post">
+			<header><h1>Useful Post</h1></header>
+			<div class="available-content"><div class="body markup">
+				<p>The actual article starts with a concrete mental model for choosing tools.</p>
+				<p>It continues with enough durable detail to make the saved page useful later.</p>
+			</div></div>
+			<section id="substack-comments" class="comments-section"><h2>Discussion about this post</h2><p>This comment should not become archived article text.</p></section>
+		</article>
+	</body></html>`
+	articleHTML, text := ExtractArticle(html)
+	if !strings.Contains(text, "actual article starts") || !strings.Contains(articleHTML, "durable detail") {
+		t.Fatalf("post body missing from extraction: %q / %q", text, articleHTML)
+	}
+	if strings.Contains(text, "Discussion about this post") || strings.Contains(articleHTML, "This comment should not") {
+		t.Fatalf("discussion leaked into extracted content: %q / %q", text, articleHTML)
+	}
+}
+
+func TestExtractDescriptionReadsStandardAndOpenGraphMetadata(t *testing.T) {
+	standard := `<html><head><meta name="description" content=" Standard description. "></head></html>`
+	if got := ExtractDescription(standard); got != "Standard description." {
+		t.Fatalf("standard description = %q", got)
+	}
+	openGraph := `<html><head><meta property="og:description" content="OpenGraph description."></head></html>`
+	if got := ExtractDescription(openGraph); got != "OpenGraph description." {
+		t.Fatalf("OpenGraph description = %q", got)
+	}
+}
+
+func TestContentQualityMarksEmptyAndDiscussionOnlyExtractionsPartial(t *testing.T) {
+	for _, text := range []string{
+		"",
+		"Discussion about this post. Reply Share No posts Ready for more?",
+	} {
+		if got := contentQuality(text); got != QualityPartial {
+			t.Fatalf("contentQuality(%q) = %q, want %q", text, got, QualityPartial)
+		}
+	}
+	if got := contentQuality("A concise release note explains the change, the reason for it, and how readers should use the new behavior safely in their workflow."); got != QualityComplete {
+		t.Fatalf("meaningful short content quality = %q, want %q", got, QualityComplete)
+	}
+	if got := contentQuality("Fixed login redirect handling."); got != QualityComplete {
+		t.Fatalf("concise content quality = %q, want %q", got, QualityComplete)
+	}
+}
+
 func TestTrimLeadingChromeUsesTheArticleTitle(t *testing.T) {
 	title := "Useful & Specific Article"
 	text := "Skip to content Privacy preferences and tracking options. " + title + " The article starts here."
