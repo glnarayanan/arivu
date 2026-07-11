@@ -70,8 +70,8 @@ derived edges, while the inspector exposes provenance and confidence.
 SVG nodes are keyboard-selectable. The open `Accessible node list` contains the
 same nodes as ordinary buttons and does not require interpreting the visual
 map. On constrained screens the canvas scrolls and the inspector moves below
-it. Normal browser and touch zoom remain enabled; there are no custom zoom
-controls or unbounded global render.
+it. Normal browser and touch zoom remain enabled. The graph also provides
+bounded Zoom out, Reset, and Zoom in controls for focused canvas navigation.
 
 ### Insights
 

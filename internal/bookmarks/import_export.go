@@ -905,7 +905,7 @@ func (s *Service) restoreKnowledgeFeedback(ctx context.Context, userID string, r
 		targetType := stringValue(item["target_type"])
 		targetID := stringValue(item["target_id"])
 		feedback := stringValue(item["feedback"])
-		if targetID == "" || (targetType != "insight" && targetType != "relationship") || !validKnowledgeFeedback(feedback) {
+		if targetID == "" || !validKnowledgeFeedback(targetType, feedback) {
 			continue
 		}
 		created := fallback(stringValue(item["created_at"]), now)

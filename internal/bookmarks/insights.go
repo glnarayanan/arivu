@@ -42,6 +42,7 @@ func (s *Service) deterministicInsights(ctx context.Context, userID string, hide
 	insights := []deterministicInsight{}
 	insights = append(insights, s.emergingThemeInsights(ctx, userID, now)...)
 	insights = append(insights, s.recurringConnectionInsights(ctx, userID)...)
+	insights = append(insights, s.changedThinkingInsights(ctx, userID)...)
 	insights = append(insights, s.forgottenValueInsights(ctx, userID, now)...)
 	insights = append(insights, s.knowledgeGapInsights(ctx, userID)...)
 	insights = append(insights, s.serendipitousInsights(ctx, userID)...)
@@ -61,6 +62,27 @@ func (s *Service) deterministicInsights(ctx context.Context, userID string, hide
 		return insights[i].ID < insights[j].ID
 	})
 	return insights
+}
+
+func (s *Service) changedThinkingInsights(ctx context.Context, userID string) []deterministicInsight {
+	rows, err := s.db.QueryContext(ctx, `SELECT item_type,item_id,title FROM (
+		SELECT 'note' item_type,id item_id,COALESCE(NULLIF(title,''),'Untitled note') title,body,updated_at FROM notes WHERE user_id=?
+		UNION ALL
+		SELECT 'daily_note',note_date,note_date,body,updated_at FROM daily_notes WHERE user_id=?
+	) WHERE lower(body) LIKE '%changed my mind%' OR lower(body) LIKE '%no longer%' OR lower(body) LIKE '%instead of%' OR lower(body) LIKE '%revised%' ORDER BY updated_at DESC,item_id LIMIT 20`, userID, userID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	result := []deterministicInsight{}
+	for rows.Next() {
+		var itemType, itemID, title string
+		if rows.Scan(&itemType, &itemID, &title) != nil {
+			continue
+		}
+		result = append(result, deterministicInsight{ID: stableKnowledgeID("insight", "changed_thinking", itemType, itemID), Type: "changed_thinking", Title: "Thinking changed in " + title, Explanation: "Your writing contains explicit language that marks a revised position.", Window: "all_time", Confidence: 0.85, WhyDetected: "explicit change language in an authored note", Evidence: []insightEvidence{{ID: itemID, Type: itemType, Title: title}}, Actions: []string{"review", "connect"}})
+	}
+	return result
 }
 
 func (s *Service) emergingThemeInsights(ctx context.Context, userID string, now time.Time) []deterministicInsight {

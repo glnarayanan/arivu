@@ -223,6 +223,9 @@ function offlineSnapshotAllowed(path, options = {}) {
     /^\/action-items($|\?)/,
     /^\/reminders($|\?)/,
     /^\/memory-jogger($|\?)/,
+	/^\/library\/items($|\?)/,
+	/^\/knowledge-graph\/v2($|\?)/,
+	/^\/insights($|\?)/,
   ].some((pattern) => pattern.test(path));
 }
 
@@ -760,7 +763,7 @@ async function todayPage() {
       </section>
     </section>
     <section class="split">
-      ${todayList("New connections", inbox.items || [], "/library?stage=inbox", todayInboxItem)}
+      ${todayList("New captures", inbox.items || [], "/library?stage=inbox", todayInboxItem)}
       ${todayList("Continue thinking", [...openActions, ...dueReminders].slice(0, 8), "/today?view=focus", todayWorkItem)}
     </section>
     <section class="split">
@@ -4418,7 +4421,8 @@ function graphInspector(node, edges, nodes) {
     <div class="relationship-list">${relationships.map((edge) => {
       const otherID = edge.from === node.id ? edge.to : edge.from;
       const other = nodes.find((item) => item.id === otherID);
-      return `<article><p><strong>${escapeHTML(other?.title || otherID)}</strong></p><p class="meta">${escapeHTML(knowledgeTypeLabel(edge.type))} · ${Math.round(Number(edge.confidence || 0) * 100)}% confidence · ${escapeHTML(edge.provenance || "local")}</p>${edge.type !== "explicit" ? `<div class="relationship-actions"><button class="secondary" type="button" data-relationship-feedback="confirm" data-edge-id="${escapeHTML(edge.id)}" data-from="${escapeHTML(edge.from)}" data-to="${escapeHTML(edge.to)}">Confirm</button><button class="secondary" type="button" data-relationship-feedback="dismiss" data-edge-id="${escapeHTML(edge.id)}">Dismiss</button></div>` : ""}</article>`;
+      const canConfirm = [edge.from, edge.to].every((id) => ["bookmark", "note"].includes(String(id).split(":")[0]));
+      return `<article><p><strong>${escapeHTML(other?.title || otherID)}</strong></p><p class="meta">${escapeHTML(knowledgeTypeLabel(edge.type))} · ${Math.round(Number(edge.confidence || 0) * 100)}% confidence · ${escapeHTML(edge.provenance || "local")}</p>${edge.type !== "explicit" ? `<div class="relationship-actions">${canConfirm ? `<button class="secondary" type="button" data-relationship-feedback="confirm" data-edge-id="${escapeHTML(edge.id)}" data-from="${escapeHTML(edge.from)}" data-to="${escapeHTML(edge.to)}">Confirm</button>` : `<button class="secondary" type="button" data-relationship-feedback="useful" data-edge-id="${escapeHTML(edge.id)}" data-from="${escapeHTML(edge.from)}" data-to="${escapeHTML(edge.to)}">Useful</button>`}<button class="secondary" type="button" data-relationship-feedback="dismiss" data-edge-id="${escapeHTML(edge.id)}" data-from="${escapeHTML(edge.from)}" data-to="${escapeHTML(edge.to)}">Dismiss</button></div>` : ""}</article>`;
     }).join("") || `<p class="meta">No visible relationships in this focused view.</p>`}</div>`;
 }
 

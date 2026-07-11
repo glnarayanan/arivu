@@ -48,8 +48,25 @@ func (s *Service) SaveFeedback(w http.ResponseWriter, r *http.Request, user auth
 }
 
 func (s *Service) saveKnowledgeFeedback(w http.ResponseWriter, r *http.Request, user auth.User, targetType, targetID, feedback, from, to string) {
-	if !validKnowledgeFeedback(feedback) || !s.ownsKnowledgeTarget(r.Context(), user.ID, targetType, targetID) {
+	if !validKnowledgeFeedback(targetType, feedback) || targetID == "" {
 		writeError(w, http.StatusBadRequest, "Invalid feedback")
+		return
+	}
+	var relationship graphV2Edge
+	var targetOwned bool
+	if targetType == "insight" {
+		targetOwned = s.ownsInsight(r.Context(), user.ID, targetID)
+	} else {
+		relationship, targetOwned = s.knowledgeRelationshipBetween(r.Context(), user.ID, targetID, from, to)
+	}
+	if !targetOwned {
+		writeError(w, http.StatusBadRequest, "Invalid feedback")
+		return
+	}
+	fromType, fromID, fromOK := splitGraphNodeID(relationship.From)
+	toType, toID, toOK := splitGraphNodeID(relationship.To)
+	if feedback == "confirm" && (!fromOK || !toOK || (fromType != "bookmark" && fromType != "note") || (toType != "bookmark" && toType != "note")) {
+		writeError(w, http.StatusBadRequest, "Relationship cannot be confirmed as an explicit link")
 		return
 	}
 	now := time.Now().UTC()
@@ -58,49 +75,62 @@ func (s *Service) saveKnowledgeFeedback(w http.ResponseWriter, r *http.Request, 
 		snoozedUntil = now.Add(7 * 24 * time.Hour).Format(time.RFC3339)
 	}
 	formatted := now.Format(time.RFC3339)
-	_, err := s.db.ExecContext(r.Context(), `INSERT INTO knowledge_feedback(user_id,target_type,target_id,feedback,snoozed_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,target_type,target_id) DO UPDATE SET feedback=excluded.feedback,snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at`, user.ID, targetType, targetID, feedback, snoozedUntil, formatted, formatted)
+	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not save feedback")
 		return
 	}
-	if feedback == "confirm" && targetType == "relationship" && from != "" && to != "" {
-		edge, edgeOK := s.knowledgeRelationship(r.Context(), user.ID, targetID)
-		fromType, fromID, fromOK := splitGraphNodeID(from)
-		toType, toID, toOK := splitGraphNodeID(to)
-		if edgeOK && edge.From == from && edge.To == to && fromOK && toOK && (fromType == "bookmark" || fromType == "note") && (toType == "bookmark" || toType == "note") && s.reviewItemExists(r.Context(), user.ID, fromType, fromID) && s.reviewItemExists(r.Context(), user.ID, toType, toID) {
-			_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, stableKnowledgeID("link", from, to), user.ID, fromType, fromID, toType, toID, "", "confirmed", formatted)
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO knowledge_feedback(user_id,target_type,target_id,feedback,snoozed_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,target_type,target_id) DO UPDATE SET feedback=excluded.feedback,snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at`, user.ID, targetType, targetID, feedback, snoozedUntil, formatted, formatted); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not save feedback")
+		return
+	}
+	confirmedLinkCreated := false
+	if feedback == "confirm" {
+		result, linkErr := tx.ExecContext(r.Context(), `INSERT OR IGNORE INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)`, stableKnowledgeID("link", relationship.From, relationship.To), user.ID, fromType, fromID, toType, toID, "", "confirmed", formatted)
+		if linkErr != nil {
+			writeError(w, http.StatusInternalServerError, "Could not confirm relationship")
+			return
 		}
+		created, _ := result.RowsAffected()
+		confirmedLinkCreated = created > 0
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"feedback": map[string]any{"target_type": targetType, "target_id": targetID, "feedback": feedback, "snoozed_until": snoozedUntil, "updated_at": formatted}})
+	if err = tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not save feedback")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"feedback": map[string]any{"target_type": targetType, "target_id": targetID, "feedback": feedback, "snoozed_until": snoozedUntil, "confirmed_link_created": confirmedLinkCreated, "updated_at": formatted}})
 }
 
-func validKnowledgeFeedback(value string) bool {
-	return value == "useful" || value == "not_useful" || value == "snooze" || value == "dismiss" || value == "confirm"
-}
-
-func (s *Service) ownsKnowledgeTarget(ctx context.Context, userID, targetType, targetID string) bool {
-	if targetID == "" || (targetType != "insight" && targetType != "relationship") {
-		return false
-	}
+func validKnowledgeFeedback(targetType, value string) bool {
 	if targetType == "insight" {
-		for _, insight := range s.deterministicInsights(ctx, userID, false) {
-			if insight.ID == targetID {
-				return true
-			}
-		}
-		return false
+		return value == "useful" || value == "not_useful" || value == "snooze" || value == "dismiss"
 	}
-	_, ok := s.knowledgeRelationship(ctx, userID, targetID)
-	return ok
+	return targetType == "relationship" && (value == "useful" || value == "not_useful" || value == "dismiss" || value == "confirm")
 }
 
-func (s *Service) knowledgeRelationship(ctx context.Context, userID, targetID string) (graphV2Edge, bool) {
-	nodes, err := s.graphV2Nodes(ctx, userID, 200, "", "", false)
-	if err != nil {
+func (s *Service) ownsInsight(ctx context.Context, userID, targetID string) bool {
+	for _, insight := range s.deterministicInsights(ctx, userID, false) {
+		if insight.ID == targetID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) knowledgeRelationshipBetween(ctx context.Context, userID, targetID, from, to string) (graphV2Edge, bool) {
+	fromType, fromID, fromOK := splitGraphNodeID(from)
+	toType, toID, toOK := splitGraphNodeID(to)
+	if !fromOK || !toOK {
 		return graphV2Edge{}, false
 	}
-	for _, edge := range s.graphV2Edges(ctx, userID, nodes, 500, false) {
-		if edge.ID == targetID {
+	fromNode, fromOwned := s.graphV2Node(ctx, userID, fromType, fromID)
+	toNode, toOwned := s.graphV2Node(ctx, userID, toType, toID)
+	if !fromOwned || !toOwned {
+		return graphV2Edge{}, false
+	}
+	for _, edge := range s.graphV2Edges(ctx, userID, []graphV2Node{fromNode, toNode}, 32, false) {
+		if edge.ID == targetID && edge.From == from && edge.To == to {
 			return edge, true
 		}
 	}

@@ -70,7 +70,8 @@ func TestKnowledgeGraphV2KeepsOldFocusAndBoundsPayload(t *testing.T) {
 		t.Fatalf("expected focused relationship: %#v", payload)
 	}
 	edgeID := edges[0].(map[string]any)["id"].(string)
-	callKnowledgeHandler(t, service.SaveFeedback, auth.User{ID: "u1"}, http.MethodPost, "/api/feedback", `{"target_type":"relationship","target_id":"`+edgeID+`","action":"dismiss"}`)
+	edge := edges[0].(map[string]any)
+	callKnowledgeHandler(t, service.SaveFeedback, auth.User{ID: "u1"}, http.MethodPost, "/api/feedback", `{"target_type":"relationship","target_id":"`+edgeID+`","action":"dismiss","from":"`+edge["from"].(string)+`","to":"`+edge["to"].(string)+`"}`)
 	hidden := callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2?focus=bookmark:old&depth=1&node_limit=2&edge_limit=1", "")
 	if len(hidden["edges"].([]any)) != 0 {
 		t.Fatalf("dismissed relationship still returned: %#v", hidden)
@@ -108,6 +109,29 @@ func TestInsightsNeedOwnedEvidenceAndFeedbackHidesDeterministically(t *testing.T
 		if raw.(map[string]any)["id"] == targetID {
 			t.Fatalf("dismissed insight still returned: %#v", second)
 		}
+	}
+}
+
+func TestInsightFeedbackRejectsRelationshipOnlyConfirmation(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "a", "Alpha", "2026-07-10T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "b", "Beta", "2026-07-09T00:00:00Z")
+	_, _ = db.Exec(`UPDATE bookmarks SET domain='one.example' WHERE id='a'`)
+	_, _ = db.Exec(`UPDATE bookmarks SET domain='two.example' WHERE id='b'`)
+	_, _ = db.Exec(`INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES('a','u1','Systems'),('b','u1','Systems')`)
+	insights := callKnowledgeHandler(t, service.Insights, auth.User{ID: "u1"}, http.MethodGet, "/api/insights", "")["insights"].([]any)
+	targetID := insights[0].(map[string]any)["id"].(string)
+	req := httptest.NewRequest(http.MethodPost, "/api/feedback", strings.NewReader(`{"target_type":"insight","target_id":"`+targetID+`","feedback":"confirm"}`))
+	rec := httptest.NewRecorder()
+	service.SaveFeedback(rec, req, auth.User{ID: "u1"})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("confirm insight status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var count int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM knowledge_feedback WHERE user_id='u1'`).Scan(&count)
+	if count != 0 {
+		t.Fatalf("invalid confirmation persisted %d feedback rows", count)
 	}
 }
 

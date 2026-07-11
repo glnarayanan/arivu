@@ -153,6 +153,15 @@ func (s *Service) graphNeighborRefs(ctx context.Context, userID, itemType, itemI
 		}
 	}
 	if itemType == "bookmark" {
+		rows, err := s.db.QueryContext(ctx, `SELECT note_id FROM bookmark_notes WHERE user_id=? AND bookmark_id=? ORDER BY note_id`, userID, itemID)
+		if err == nil {
+			for rows.Next() {
+				var noteID string
+				_ = rows.Scan(&noteID)
+				refs = append(refs, [2]string{"note", noteID})
+			}
+			rows.Close()
+		}
 		for _, term := range []struct{ table, column, itemType string }{{"bookmark_concepts", "concept", "concept"}, {"bookmark_entities", "entity", "entity"}} {
 			rows, err := s.db.QueryContext(ctx, `SELECT `+term.column+` FROM `+term.table+` WHERE user_id=? AND bookmark_id=? ORDER BY `+term.column, userID, itemID)
 			if err == nil {
@@ -163,6 +172,17 @@ func (s *Service) graphNeighborRefs(ctx context.Context, userID, itemType, itemI
 				}
 				rows.Close()
 			}
+		}
+	}
+	if itemType == "note" {
+		rows, err := s.db.QueryContext(ctx, `SELECT bookmark_id FROM bookmark_notes WHERE user_id=? AND note_id=? ORDER BY bookmark_id`, userID, itemID)
+		if err == nil {
+			for rows.Next() {
+				var bookmarkID string
+				_ = rows.Scan(&bookmarkID)
+				refs = append(refs, [2]string{"bookmark", bookmarkID})
+			}
+			rows.Close()
 		}
 	}
 	if itemType == "concept" || itemType == "entity" {
@@ -189,7 +209,7 @@ func (s *Service) graphNeighborRefs(ctx context.Context, userID, itemType, itemI
 	if itemType == "knowledge_object" {
 		var sourceType, sourceID string
 		if s.db.QueryRowContext(ctx, `SELECT source_item_type,source_item_id FROM knowledge_objects WHERE user_id=? AND id=?`, userID, itemID).Scan(&sourceType, &sourceID) == nil && sourceID != "" {
-			refs = append(refs, [2]string{sourceType, sourceID})
+			refs = append(refs, [2]string{graphSourceType(sourceType), sourceID})
 		}
 	}
 	return refs
@@ -213,6 +233,21 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 			from, to := graphNodeID(fromType, fromID), graphNodeID(toType, toID)
 			if known[from] && known[to] {
 				edge := newGraphV2Edge("explicit", from, to, firstNonEmpty(source, "manual"), 1)
+				if !hidden[edge.ID] {
+					edges = append(edges, edge)
+				}
+			}
+		}
+		rows.Close()
+	}
+	rows, err = s.db.QueryContext(ctx, `SELECT bookmark_id,note_id FROM bookmark_notes WHERE user_id=? ORDER BY bookmark_id,note_id`, userID)
+	if err == nil {
+		for rows.Next() && len(edges) < limit {
+			var bookmarkID, noteID string
+			_ = rows.Scan(&bookmarkID, &noteID)
+			from, to := graphNodeID("bookmark", bookmarkID), graphNodeID("note", noteID)
+			if known[from] && known[to] {
+				edge := newGraphV2Edge("explicit", from, to, "bookmark_notes", 1)
 				if !hidden[edge.ID] {
 					edges = append(edges, edge)
 				}
@@ -273,7 +308,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 		for rows.Next() && len(edges) < limit {
 			var id, sourceType, sourceID string
 			_ = rows.Scan(&id, &sourceType, &sourceID)
-			from, to := graphNodeID("knowledge_object", id), graphNodeID(sourceType, sourceID)
+			from, to := graphNodeID("knowledge_object", id), graphNodeID(graphSourceType(sourceType), sourceID)
 			if known[from] && known[to] {
 				edge := newGraphV2Edge("source", from, to, "knowledge_objects.source_item_id", 1)
 				if !hidden[edge.ID] {
@@ -300,6 +335,13 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 	}
 	sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
 	return edges
+}
+
+func graphSourceType(itemType string) string {
+	if itemType == "object" {
+		return "knowledge_object"
+	}
+	return itemType
 }
 
 func newGraphV2Edge(kind, from, to, provenance string, confidence float64) graphV2Edge {
