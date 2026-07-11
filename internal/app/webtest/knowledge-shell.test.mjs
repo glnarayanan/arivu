@@ -1,0 +1,51 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+
+const app = await readFile(new URL("../web/app.js", import.meta.url), "utf8");
+const styles = await readFile(new URL("../web/styles.css", import.meta.url), "utf8");
+
+test("declares the four canonical knowledge destinations", () => {
+  for (const contract of [
+    '{ prefix: "/today", page: todayPage',
+    '{ prefix: "/library", page: libraryPage',
+    '{ prefix: "/graph", page: graphPage',
+    '{ prefix: "/insights", page: insightsPage',
+    '{ prefix: "/search", page: searchPage',
+    '["/today", "Home"]',
+    '["/library", "Library"]',
+    '["/graph", "Graph"]',
+    '["/insights", "Insights"]',
+  ]) assert.ok(app.includes(contract), `missing frontend contract: ${contract}`);
+});
+
+test("keeps legacy deep links as explicit query-preserving aliases", () => {
+  for (const route of ["dashboard", "knowledge-graph", "analytics", "inbox", "focus", "review", "board", "assistant", "objects", "evolution", "duplicates"])
+    assert.match(app, new RegExp(`prefix: ["']/${route.replace("-", "\\-")}["']`));
+  assert.ok(app.includes("function compatibilityRedirect"));
+  assert.ok(app.includes("new URLSearchParams(location.search)"));
+});
+
+test("uses additive knowledge APIs and approachable object fields", () => {
+  assert.ok(app.includes('/library/items?'));
+  assert.ok(app.includes('/knowledge-graph/v2?'));
+  assert.ok(app.includes('api("/insights?limit=40")'));
+  assert.ok(app.includes('target_type: "relationship"'));
+  assert.ok(app.includes('target_type: "insight"'));
+  assert.ok(!app.includes("Fields JSON"));
+  assert.ok(!app.includes("Fields JSON must be an object."));
+});
+
+test("ships responsive theme and accessible graph fallbacks", () => {
+  for (const contract of [
+    "@media (prefers-color-scheme: dark)",
+    ".mobile-nav",
+    ".graph-list",
+    "@media (prefers-reduced-motion: reduce)",
+  ]) assert.ok(styles.includes(contract), `missing style contract: ${contract}`);
+  assert.ok(app.includes('aria-label="Interactive knowledge graph"'));
+  assert.ok(app.includes("Accessible node list"));
+  assert.ok(app.includes("data-graph-zoom"));
+  assert.ok(app.includes('id="global-capture"'));
+  assert.ok(app.includes('href="/search"'));
+});
