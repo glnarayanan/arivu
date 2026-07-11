@@ -2468,106 +2468,8 @@ async function openObjectComposer() {
   await ui.dialog({ title: "New object", body, actions: [{ label: "Cancel", value: false, kind: "secondary" }] });
 }
 
-async function objectsPage() {
-  await requireUser();
-  const params = new URLSearchParams(location.search);
-  const selectedType = params.get("type") || "";
-  const query = params.get("q") || "";
-  const result = await api(`/objects${location.search}`);
-  const objects = result.objects || [];
-  const types = result.object_types || ["project", "person", "book", "meeting", "decision", "research_thread"];
-  setRoot(shell("Objects", `
-    <section class="split">
-      <form class="panel form" id="object-form">
-        <h2>New object</h2>
-        <div class="field"><label for="object-type">Type</label><select id="object-type">${objectTypeOptions(types, selectedType)}</select></div>
-        <div class="field"><label for="object-title">Title</label><input id="object-title" type="text" placeholder="Project, person, book, meeting, decision"></div>
-        <div class="field"><label for="object-description">Description</label><textarea id="object-description" rows="4" placeholder="What this object means and why it matters"></textarea></div>
-        <fieldset class="object-fields"><legend>Details</legend><div id="object-fields">${objectFieldsMarkup(selectedType || types[0])}</div></fieldset>
-        <div class="field"><label for="object-source-type">Source item type</label><select id="object-source-type"><option value="">None</option><option value="bookmark">Bookmark</option><option value="note">Note</option><option value="object">Object</option></select></div>
-        <div class="field"><label for="object-source-id">Source item ID</label><input id="object-source-id" type="text" placeholder="Optional bookmark, note, or object id"></div>
-        <p class="form-message" data-form-message hidden></p>
-        <button type="submit">Create object</button>
-      </form>
-      <form class="panel form" id="object-filter-form">
-        <span class="meta">Structured memory</span>
-        <h2>${objects.length} objects</h2>
-        <div class="field"><label for="object-filter-type">Filter type</label><select id="object-filter-type"><option value="">All types</option>${objectTypeOptions(types, selectedType)}</select></div>
-        <div class="field"><label for="object-filter-query">Search objects</label><input id="object-filter-query" type="search" value="${escapeHTML(query)}" placeholder="Roadmap, Alice, meeting"></div>
-        <button type="submit" class="secondary">Apply filter</button>
-      </form>
-    </section>
-    <section class="grid compact-grid">
-      ${objects.map(objectCard).join("") || emptyState({ eyebrow: "No objects", title: "Create the first object", body: "Use objects when a note needs to become a project, person, book, meeting, decision, or research thread.", tag: "article" })}
-    </section>
-  `));
-  bindObjectForms();
-}
-
 function objectTypeOptions(types, selected) {
   return types.map((type) => `<option value="${escapeHTML(type)}"${type === selected ? " selected" : ""}>${escapeHTML(type.replaceAll("_", " "))}</option>`).join("");
-}
-
-function objectCard(object) {
-  return `<article class="panel bookmark">
-    <span class="meta">${escapeHTML((object.object_type || "object").replaceAll("_", " "))} · ${escapeHTML(object.updated_at || "")}</span>
-    <h2>${escapeHTML(object.title || "Untitled object")}</h2>
-    <p>${escapeHTML(object.description || "")}</p>
-    ${objectFieldsPreview(object.fields || {})}
-    ${object.source_item_id ? `<p><a class="text-link" href="${objectSourceHref(object)}">Open source</a></p>` : ""}
-  </article>`;
-}
-
-function objectFieldsPreview(fields) {
-  const entries = Object.entries(fields || {}).filter(([, value]) => String(value || "").trim() !== "").slice(0, 6);
-  if (!entries.length) return "";
-  return `<div class="chips">${entries.map(([key, value]) => `<span>${escapeHTML(key)}: ${escapeHTML(String(value).slice(0, 80))}</span>`).join("")}</div>`;
-}
-
-function objectSourceHref(object) {
-  if (object.source_item_type === "note") return `/notes/${encodeURIComponent(object.source_item_id)}`;
-  if (object.source_item_type === "bookmark") return `/bookmark/${encodeURIComponent(object.source_item_id)}`;
-  return "/objects";
-}
-
-function bindObjectForms() {
-  const form = document.querySelector("#object-form");
-  const type = document.querySelector("#object-type");
-  type?.addEventListener("change", () => { document.querySelector("#object-fields").innerHTML = objectFieldsMarkup(type.value); });
-  form?.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const done = setButtonBusy(event.submitter, "Creating");
-    setFormMessage(form);
-    try {
-      await api("/objects", {
-        method: "POST",
-        body: JSON.stringify({
-          object_type: document.querySelector("#object-type").value,
-          title: document.querySelector("#object-title").value,
-          description: document.querySelector("#object-description").value,
-          fields: collectObjectFields(form),
-          source_item_type: document.querySelector("#object-source-type").value,
-          source_item_id: document.querySelector("#object-source-id").value,
-        }),
-      });
-      ui.toast("Object created", "success");
-      render();
-    } catch (err) {
-      setFormMessage(form, err.message);
-      ui.toast(err.message, "error");
-    } finally {
-      done();
-    }
-  });
-  document.querySelector("#object-filter-form")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const params = new URLSearchParams();
-    const type = document.querySelector("#object-filter-type").value;
-    const query = document.querySelector("#object-filter-query").value.trim();
-    if (type) params.set("type", type);
-    if (query) params.set("q", query);
-    navigate(`/objects${params.toString() ? `?${params}` : ""}`, true);
-  });
 }
 
 async function evolutionPage() {
@@ -4592,49 +4494,6 @@ function bindInsightActions() {
     } catch (err) { ui.toast(err.message, "error"); } finally { done(); }
   }));
   document.querySelectorAll("[data-insight-next='capture-note']").forEach((button) => button.addEventListener("click", openCaptureComposer));
-}
-
-async function analyticsPage() {
-  await requireUser();
-  let summary;
-  try {
-    summary = await api("/analytics/summary");
-  } catch (err) {
-    setRoot(shell("Analytics", `<section class="panel">
-      <h2>Analytics unavailable</h2>
-      <p class="meta">${escapeHTML(err.message)}</p>
-      <p class="button-row"><button type="button" class="secondary" id="analytics-retry">Retry</button></p>
-    </section>`));
-    document.querySelector("#analytics-retry")?.addEventListener("click", () => render());
-    return;
-  }
-  const stats = summary.stats || summary;
-  setRoot(shell("Analytics", `<section class="grid">
-    <div class="panel"><span class="meta">Bookmarks</span><h2>${stats.total_bookmarks || 0}</h2></div>
-    <div class="panel"><span class="meta">Collections</span><h2>${stats.total_collections || 0}</h2></div>
-    <div class="panel"><span class="meta">Unread</span><h2>${stats.unread_bookmarks || 0}</h2></div>
-    <div class="panel"><span class="meta">Read</span><h2>${stats.read_bookmarks || 0}</h2></div>
-  </section>
-  <section class="split">
-    <div class="panel"><h2>Top domains</h2>${topicList(summary.topics || [])}</div>
-    <div class="panel" id="analytics-signals"><h2>Signals</h2>${insightList(summary.insights || [])}</div>
-  </section>`));
-  api("/analytics/insights")
-    .then((insights) => {
-      const target = document.querySelector("#analytics-signals");
-      if (target) target.innerHTML = `<h2>Signals</h2>${insightList(insights.insights || summary.insights || [])}`;
-    })
-    .catch(() => {});
-}
-
-function topicList(items) {
-  if (!items.length) return `<p class="meta">No domain patterns yet.</p>`;
-  return `<div class="stack">${items.map((item) => `<p><strong>${escapeHTML(item.topic)}</strong> <span class="meta">${item.count}</span></p>`).join("")}</div>`;
-}
-
-function insightList(items) {
-  if (!items.length) return `<p class="meta">Insights appear after you save and revisit pages.</p>`;
-  return `<div class="stack">${items.map((item) => `<p><span class="meta">${escapeHTML(item.severity || "info")}</span><br>${escapeHTML(item.message || "")}</p>`).join("")}</div>`;
 }
 
 async function adminPage() {
