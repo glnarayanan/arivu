@@ -38,7 +38,11 @@ test("keeps legacy deep links as explicit query-preserving aliases", () => {
 test("uses additive knowledge APIs and approachable object fields", () => {
   assert.ok(app.includes('/library/items?'));
   assert.ok(app.includes('/knowledge-graph/v2?'));
-  assert.ok(app.includes('api("/insights?limit=40")'));
+  assert.ok(app.includes('insightQuery.set("family", family)'));
+  assert.ok(app.includes('api(`/insights?${insightQuery}`)'));
+  assert.ok(app.includes('state === "not_enough_history"'));
+  assert.ok(app.includes('state === "reprocessing_required"'));
+  assert.ok(app.includes('insight.kind === "recommendation"'));
   assert.ok(app.includes('target_type: "relationship"'));
   assert.ok(app.includes('target_type: "insight"'));
   assert.ok(!app.includes("Fields JSON"));

@@ -4446,9 +4446,11 @@ async function insightsPage() {
   await requireUser();
   const params = new URLSearchParams(location.search);
   if (params.get("legacy") === "evolution") return evolutionPage();
-  const result = await api("/insights?limit=40");
   const family = params.get("family") || "";
-  const insights = (result.insights || []).filter((insight) => !family || insight.type === family);
+  const insightQuery = new URLSearchParams({ limit: "40" });
+  if (family) insightQuery.set("family", family);
+  const result = await api(`/insights?${insightQuery}`);
+  const insights = result.insights || [];
   setRoot(shell("Insights", `
     <section class="insights-heading">
       <div><p class="lede">Patterns grounded in your own sources, with the evidence kept close.</p><p class="meta">Local detectors work without a model provider. Feedback shapes what returns.</p></div>
@@ -4457,18 +4459,25 @@ async function insightsPage() {
       </select></label>
     </section>
     <section class="insight-list" aria-live="polite">
-      ${insights.map(insightCard).join("") || emptyState({ eyebrow: "No pattern yet", title: "Insights need a little history", body: "Keep capturing and connecting. Arivu will surface patterns only when your own evidence supports them.", tag: "section" })}
+      ${insights.map(insightCard).join("") || insightEmptyState(result.state, family)}
     </section>
   `));
   document.querySelector("#insight-family")?.addEventListener("change", (event) => navigate(`/insights${event.currentTarget.value ? `?family=${encodeURIComponent(event.currentTarget.value)}` : ""}`));
   bindInsightActions();
 }
 
+function insightEmptyState(state, family) {
+  if (state === "not_enough_history") return emptyState({ eyebrow: "Not enough history", title: "Insights need a little history", body: "Keep capturing and connecting. Arivu will surface patterns only when your own evidence supports them.", tag: "section" });
+  if (state === "reprocessing_required") return emptyState({ eyebrow: "Processing needed", title: "Refresh your saved sources", body: "Some items need to be reprocessed before Arivu can derive trustworthy patterns.", tag: "section" });
+  return emptyState({ eyebrow: "No qualifying patterns", title: family ? "No patterns in this family" : "No insights yet", body: "Arivu did not find a specific, evidence-backed pattern for this view.", tag: "section" });
+}
+
 function insightCard(insight) {
   const confidence = Math.round(Number(insight.confidence || 0) * 100);
   const evidence = insight.evidence || [];
+  const isRecommendation = insight.kind === "recommendation";
   return `<article class="insight-card" data-insight-id="${escapeHTML(insight.id)}">
-    <header><div><p class="meta">${escapeHTML(knowledgeTypeLabel(insight.type))} · ${escapeHTML(insight.window || "current")}</p><h2>${escapeHTML(insight.title || "Knowledge pattern")}</h2></div><span class="confidence" title="Detector confidence">${confidence}% confidence</span></header>
+    <header><div><p class="meta">${isRecommendation ? "Recommendation · " : ""}${escapeHTML(knowledgeTypeLabel(insight.type))} · ${escapeHTML(insight.window || "current")}</p><h2>${escapeHTML(insight.title || "Knowledge pattern")}</h2></div>${isRecommendation ? "" : `<span class="confidence" title="Detector confidence">${confidence}% confidence</span>`}</header>
     <p class="insight-explanation">${escapeHTML(insight.explanation || "")}</p>
     <details><summary>Why Arivu detected this</summary><p>${escapeHTML(insight.why_detected || "Detected from the evidence below.")}</p></details>
     <div class="evidence-list" aria-label="Supporting evidence">
