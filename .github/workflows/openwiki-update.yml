@@ -22,21 +22,29 @@ jobs:
           node-version: "22"
 
       - name: Install OpenWiki
-        run: npm install --global openwiki
+        run: npm install --global openwiki@0.1.1
 
       - name: Run OpenWiki
         run: openwiki code --update --print
         env:
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          OPENWIKI_PROVIDER: openrouter
           OPENWIKI_MODEL_ID: z-ai/glm-5.2
-          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}
-          LANGCHAIN_PROJECT: openwiki
-          LANGCHAIN_TRACING_V2: "true"
+          LANGCHAIN_TRACING_V2: "false"
+
+      - name: Keep workflow configuration maintainer-controlled
+        run: |
+          git restore -- .github/workflows/openwiki-update.yml
+          git restore -- openwiki/operations/dependency-policy.md
+          git restore -- openwiki/operations/github-wiki.md
+          git clean -f -- CLAUDE.md
 
       - name: Create OpenWiki update pull request
-        uses: peter-evans/create-pull-request@v7
+        uses: peter-evans/create-pull-request@22a9089034f40e5a961c8808d113e2c98fb63676 # v7
         with:
-          add-paths: openwiki
+          add-paths: |
+            openwiki
+            AGENTS.md
           branch: openwiki/update
           commit-message: "docs: update OpenWiki"
           title: "docs: update OpenWiki"

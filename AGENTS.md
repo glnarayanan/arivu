@@ -8,6 +8,7 @@ This repository has documentation located in the /openwiki directory.
 
 Start here:
 - [OpenWiki quickstart](openwiki/quickstart.md)
+- [Product model](PRODUCT.md) and [design system](DESIGN.md) for product or UI work.
 
 OpenWiki includes repository overview, architecture notes, workflows, domain concepts, operations, integrations, testing guidance, and source maps.
 
@@ -16,6 +17,8 @@ When working in this repository, read the OpenWiki quickstart first, then follow
 ## Working Rules
 
 - Keep long-form project docs in `openwiki/`.
+- Follow `DESIGN.md` for the Brightlight-derived light-only visual system;
+  preserve the existing routes, navigation, menus, and behavior during styling.
 - Update relevant docs and `CHANGELOG.md` when behavior, setup, security, or operational guidance changes.
 - Run `gofmt` on changed Go files.
 - Run `GOCACHE=/private/tmp/arivu-build-cache go test ./...` before handoff when possible.

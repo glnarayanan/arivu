@@ -1,61 +1,66 @@
 # Second-Brain Loop
 
-Arivu's working loop is:
-
-1. Start from Today to plan the day and see the active loop.
-2. Capture a bookmark or standalone note.
-3. Triage it in Inbox by setting stage, importance, and next action.
-4. Work from Focus when an item has tasks or reminders.
-5. Let Review bring back high-signal, due, stale, or older material.
-
-## Today
-
-`/today` is the default signed-in landing page. It aggregates the existing
-Inbox, Focus, Review, recent notes, and memory-jogger surfaces without replacing
-their deeper workflows. Each day has one dated daily note at
-`/api/daily-notes/{YYYY-MM-DD}` for planning, decisions, and loose thoughts.
-Daily notes are scoped to the authenticated user and use the same web CSRF and
-write-quota protections as normal notes.
+Arivu's product loop is **Capture -> Connect -> Discover -> Learn**.
 
 ## Capture
 
-`/dashboard` captures URLs with optional quick notes, quotes, and tags. It
-keeps capture and search visible, while filters and saved-search management stay
-behind disclosures so the first screen stays focused. `/notes` captures URL-free
-thoughts. New bookmarks and notes enter Inbox.
+Capture is globally available from every authenticated screen. The adaptive
+composer accepts a link, note, quote, or file. A capture does not require a tag,
+folder, object type, workflow stage, classification result, embedding, or model
+provider.
 
-## Inbox
+Link and quote captures save through the existing bookmark endpoint and can use
+the browser's offline queue. Notes use the existing notes endpoint. Files use
+media import and become searchable notes. Browser-extension, PWA share-target,
+CLI, and agent capture contracts remain unchanged.
 
-Inbox stores stages as `inbox`, `processing`, `processed`, and `archived`.
-The embedded UI labels these as Inbox, Working, Kept, and Archived so people do
-not need to think in internal state names.
-Single-item edits use `PATCH /api/inbox/{item}`. Bulk triage uses
-`POST /api/inbox/bulk` with up to 100 `bookmark:<id>` or `note:<id>` entries.
-The bulk response includes updated and failed rows so cross-user or stale items
-do not block valid updates.
+## Connect
 
-## Notes
+Bookmark and note workspaces expose explicit links and backlinks. Explicit user
+links remain canonical durable knowledge. Graph v2 also projects source,
+concept, entity, and optional semantic-similarity relationships with provenance
+and confidence.
 
-`/notes` is the compact list. `/notes/:id` is the note workspace for editing,
-tasks, reminders, explicit links, backlinks, and linking the note to bookmarks.
-`/notes?note=<id>` remains a compatibility path and redirects to `/notes/:id`.
+Derived relationships are rebuildable. Confirming an eligible bookmark/note
+relationship creates an explicit link only after the server verifies the target
+edge and both owned endpoints. Dismissed relationship IDs are stored in
+`knowledge_feedback` and filtered from later graph responses.
 
-## Focus
+## Discover
 
-`/focus` defaults to pending open loops. Views are available at:
+Library unifies bookmarks, notes, daily notes, annotations, knowledge objects,
+entities, and concepts with cursor pagination and practical filters. Search
+retrieves saved material by text and structured context. Cited Ask synthesizes
+only from saved Arivu content.
 
-- `/focus?view=pending`
-- `/focus?view=overdue`
-- `/focus?view=today`
-- `/focus?view=upcoming`
-- `/focus?view=completed`
+Graph starts with a bounded recent or focused view. Focus expansion follows
+local relationships rather than loading an unbounded global network. The visual
+SVG and accessible node list expose the same node set.
 
-## Review
+## Learn
 
-Review prioritizes processed or processing items, high importance, explicit next
-actions, due reminders, stale action items, older unreviewed notes, and the
-resurfacing score. Each item returns `review_reasons` and `review_priority` so
-the UI can explain why it came back.
-Review cards and cited-answer citations can store recall feedback. Useful items
-rank higher, not-useful and snooze-longer items rank lower, and never-resurface
-items are omitted from future Review queues without deleting their source data.
+Insights are deterministic local patterns with supporting evidence. Current
+families are emerging themes, recurring connections, forgotten value, knowledge
+gaps, and serendipitous connections. Each insight includes an explanation,
+time window, confidence, why-detected text, owned evidence, and next actions.
+
+Useful, Not useful, Snooze, and Dismiss feedback is durable and user-scoped.
+Dismissed and active snoozed insights do not return. Optional AI remains
+available on the legacy analytics path for extra explanation, but the canonical
+Insights experience does not depend on it.
+
+## Home Contexts
+
+Home (`/today`) is the daily knowledge pulse. It keeps the dated daily note and
+surfaces new material, active work, review candidates, recent notes, and a
+memory. Focus, Review, and Board remain contextual Home views, and Inbox remains
+a contextual Library view. Their existing APIs, tasks, reminders, completion,
+snooze, and triage behavior are preserved.
+
+## No-Provider Guarantee
+
+Without any configured model provider, Arivu still saves and fetches content,
+sanitizes archives, builds local summaries, indexes text, stores notes and
+links, projects non-semantic graph relationships, generates deterministic
+insights, handles feedback, reviews material, imports/exports data, and restores
+backups. Missing embeddings simply omit semantic-similarity edges.

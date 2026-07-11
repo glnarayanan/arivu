@@ -24,17 +24,48 @@ Implemented in `/internal/app/app_test.go`.
 As shown in `/internal/app/golden_test.go`, Arivu uses stored mock datasets under `/internal/app/testdata/golden/` (such as `duplicate_groups.json`, `graph_summary.json`, `analytics_summary.json`).
 These ensure updates to rendering mechanics do not introduce drift or semantic mapping regressions.
 
+### 4. Knowledge-Surface Contracts
+
+`internal/bookmarks/knowledge_surfaces_test.go` verifies cursor stability and
+user isolation for Library, bounded focused Graph v2 payloads, owned Insight
+evidence, derivative feedback filtering, optional old-backup compatibility, and
+user-scoped knowledge-feedback export. Existing graph/analytics goldens remain
+unchanged so additive v2 work cannot silently redefine legacy endpoints.
+
+`internal/app/webtest/knowledge-shell.test.mjs` locks the five primary
+destinations, query-preserving compatibility aliases, additive endpoint usage,
+raw-JSON removal from normal object creation, global Capture/Search, the
+light-only theme contract, and the accessible graph list.
+
 ---
 
 ## Browser Smoke Checks
 
-Frontend smoke checks stay outside the checked-in dependency tree. Use the
-running Go binary plus a temporary SQLite database, then cover the flows listed
-in `../architecture/frontend-runtime.md`. For second-brain route changes, capture
-desktop and mobile screenshots for `/dashboard`, `/inbox`, `/focus`, `/review`,
-`/assistant`, `/notes`, `/notes/:id`, `/bookmark/:id`, `/settings`, and
-`/analytics`, and keep console errors empty. Theme checks should include
-primary buttons, cards, form controls, nav active state, and reader content.
+Frontend smoke checks stay outside the checked-in dependency tree. Use a running
+Go binary and temporary SQLite database, create a user, and seed enough content
+for explicit and derived relationships plus at least one deterministic insight.
+
+Cover these canonical routes:
+
+- `/today`, including Pulse, Focus, Review, and Board contexts
+- `/library`, including filters, cursor continuation, Capture, Inbox, objects,
+  and duplicate maintenance
+- `/search` in Search and Ask modes
+- `/graph` in recent and focused modes plus the accessible node list
+- `/insights`, evidence navigation, next actions, and all feedback controls
+- `/bookmark/:id`, `/notes/:id`, `/settings`, and `/admin` for an admin user
+
+Also load `/dashboard`, `/knowledge-graph`, `/analytics`, `/inbox`, `/focus`,
+`/review`, `/board`, `/assistant`, `/objects`, `/evolution`, `/duplicates`, and
+`/imports`; confirm the canonical URL and incoming query values survive.
+
+Run at desktop, tablet, and 390x844 mobile sizes with the Brightlight-derived
+light-only palette. Emulate an OS dark preference and verify the UI remains
+light. Check keyboard-only use, visible focus, route announcements, skip link,
+dialog/menu focus management, graph SVG/list parity, the Graph zoom/reset
+controls, ordinary browser/pinch zoom, reduced motion, offline capture, cached
+reads, loading/empty/failure/long-text states, no viewport overflow, WCAG AA
+contrast, and an empty completed-flow console.
 
 Annotation changes additionally need the reader selection composer checked for
 pointer and keyboard selection, quote-only save, Save failure retry,
@@ -56,6 +87,7 @@ When submitting modifications or adding enhancements to the Arivu codebase, you 
    GOCACHE=/private/tmp/arivu-build-cache go test ./...
    node --check internal/app/web/app.js
    node --check internal/app/web/sw.js
+   node --test internal/app/webtest/*.test.mjs
    node --check extension/background.js
    node --check extension/content.js
    node --check extension/popup.js

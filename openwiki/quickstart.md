@@ -16,6 +16,8 @@ Use the following section pages to explore specific areas of the repository:
 - **[Security Model](workflows/auth-security.md)**: opaque token sessions, cookie audience protection, CSRF, SSRF prevention, and backend-owned HTML sanitization.
 - **[Frontend & Extensions](architecture/frontend.md)**: embedded UI, WebExtension layout, CLI client, and asset caching.
 - **[Frontend Runtime](architecture/frontend-runtime.md)**: browser runtime rules, route behavior, and smoke checks.
+- **[Design System](../DESIGN.md)**: Brightlight-derived light-only visual
+  language and presentation-preservation rules.
 - **[Domain & Processing Workflows](domain/bookmarks-sync.md)**: semantic graph generation, collections, duplicate grouping, and direct-HTTP providers.
 - **[Second-Brain Loop](workflows/second-brain-loop.md)**: Capture, Inbox, Focus, Review, Notes, and bulk triage workflow.
 - **[Migration Guide](domain/migration-guide.md)**: legacy JSON export parser, Fernet secret decryption, validation rules, command reference, and cutover guarantees.

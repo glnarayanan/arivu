@@ -27,6 +27,17 @@ Requests pass through structured, secure middlewares configured on the main app 
 3. **Request Logger**: Standardized tracking of method, path, response status, duration, and client details.
 4. **Security Headers**: Injects fundamental defensive headers (e.g., `X-Content-Type-Options: nosniff`, strict CSP, etc.).
 
+The additive knowledge reads are registered beside existing endpoints:
+
+- `GET /api/library/items`: cursor-based unified user library.
+- `GET /api/knowledge-graph/v2`: bounded typed graph with optional focus/depth.
+- `GET /api/insights`: deterministic evidence-backed patterns.
+- `POST /api/feedback`: retains existing result feedback and additionally
+  accepts server-validated insight/relationship targets.
+
+All are wrapped in the existing web-audience authentication. Feedback remains a
+normal CSRF-protected mutation.
+
 ---
 
 ## SQLite Database Model
@@ -49,6 +60,14 @@ The full tables structure is declared in `/internal/database/schema.sql`. It mod
 - **Processing Outputs**: `ai_summaries` (from the configured model provider), `bookmark_entities`, and `bookmark_concepts`.
 - **Integrations**: `import_jobs`, `x_connections`, `oauth_states`.
 - **Durable Controls**: `settings` (encrypted provider secrets plus plain runtime settings), `rate_limits`, `audit_events`, and `jobs`.
+- **Knowledge Feedback**: `knowledge_feedback` stores user-scoped insight and
+  relationship feedback. Library rows, graph nodes/edges, and insights are
+  read-time projections rather than duplicate durable content tables.
+
+The current knowledge redesign needs no blocking startup backfill. Existing
+bookmarks, notes, daily notes, annotations, objects, entities, concepts, links,
+and embeddings become visible through projections immediately. Missing
+embeddings omit only semantic-similarity edges.
 
 `internal/runtimeconfig` resolves provider settings with this precedence:
 SQLite override, environment variable, then default. Admin API key updates write

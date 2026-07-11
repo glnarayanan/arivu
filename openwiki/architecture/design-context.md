@@ -1,46 +1,44 @@
 # Design Context
 
-This is the working design context for Arivu's embedded frontend. It is based on the current project docs and repository instructions, and should be refined when the creator gives more specific brand references.
+`PRODUCT.md` is the authoritative product model and `DESIGN.md` is the
+authoritative interface-system reference. This page is the short OpenWiki map
+for agents working in the embedded frontend.
 
-## Users
+## Product Frame
 
-Arivu is for people who self-host their own bookmarking and reading memory: technical readers, researchers, operators, and small teams who want durable control over saved web pages, summaries, search, and resurfacing. They use it while saving links, finding prior material, reviewing archived pages, and administering a small private instance.
+Arivu is a private, self-hosted second brain organized around **Capture ->
+Connect -> Discover -> Learn**. The interface must support immediate capture for
+new users while exposing connections, graph exploration, and evidence-backed
+learning patterns progressively.
 
-## Brand Personality
+The five primary destinations are Home, Library, Notes, Graph, and Insights. Capture
+and Search / Ask stay globally available. Secondary workflows remain available
+as contextual views, settings, or query-preserving compatibility routes.
 
-The interface should feel opinionated, durable, and tactile. It should project confidence in local ownership and low-dependency software rather than glossy SaaS polish. Copy should stay factual, direct, and compact.
+## Visual Direction
 
-## Aesthetic Direction
+Use the Brightlight-derived warm editorial system defined in `DESIGN.md`: a
+white and pale-sand canvas, neutral ink, coral accent, local serif heading
+stack, local sans-serif UI stack, fine dashed rules, compact radii, pill
+controls, and restrained soft shadows. The application is deliberately
+light-only and sets `color-scheme: light`; OS dark-mode preference must not
+replace the palette.
 
-The current frontend uses a warm-paper brutalist direction: ink-heavy borders, condensed display type, serif reading text, mono UI labels, and a small set of utility colors. Preserve that physical archive quality. Avoid purple gradients, glass panels, generic card grids, stock SaaS composition, and npm-heavy UI patterns.
+This is a presentation layer, not a product or information-architecture
+change. Preserve the existing routes, primary destinations, navigation, menu
+layout and options, content structure, and functionality. The licensed
+Brightlight project is a visual reference only. Do not copy or ship its Astro
+runtime, Tailwind setup, JavaScript, font files, images, or other assets.
 
-The brutalist system should stay calm on dense app surfaces. Use hard borders and tactile shadows for orientation, but reserve the heaviest weight for primary work surfaces. Secondary tools should sit behind native disclosure panels instead of competing with capture, reader, Focus, or Review work.
+## Implementation Rules
 
-## Quality Bar
-
-Treat the embedded browser UI as flagship polish for a self-hosted app: small enough to remain dependency-free, but finished enough that interaction states, keyboard paths, empty states, loading feedback, and mobile layouts feel intentional.
-
-## Design Principles
-
-- Keep the shipped frontend dependency-free and native-browser-first.
-- Use strong hierarchy, visible state, and direct labels over decorative complexity.
-- Make controls reliable under keyboard, touch, slow network, long text, and narrow viewport conditions.
-- Reinforce the warm archive aesthetic through tokens and layout rhythm, not one-off styling.
-- Prefer compact, useful product copy over marketing language.
-- Keep mobile navigation compact enough that the current work surface appears quickly; use horizontal overflow or grouped controls rather than tall stacked route menus.
-
-## Interface System
-
-The embedded frontend keeps its design system inside the dependency-free assets:
-
-- `styles.css` defines semantic OKLCH color roles for action, information,
-  success, danger, attention, neutral surfaces, and focus. Reuse these roles
-  instead of adding route-specific colors.
-- Shared dimensions cover border weight, native control height, reader width,
-  and reading measure. Heavy borders and offset shadows belong to primary work
-  surfaces; supporting panels remain flat.
-- `app.js` owns shared native-browser patterns such as dialogs, menus, tabs,
-  toasts, form feedback, busy buttons, and escaped empty states. Extend these
-  primitives when a pattern repeats rather than copying route-specific markup.
-- Color never carries state alone: semantic surfaces retain labels, roles, and
-  visible control text, with contrast kept at WCAG AA or better.
+- Keep `internal/app/web` dependency-free and native-browser-first.
+- Implement the visual system with first-party HTML, CSS, SVG, and browser
+  JavaScript; use local font stacks with platform fallbacks.
+- Extend shared dialogs, menus, tabs, toasts, busy buttons, inline messages,
+  empty states, and route cleanup instead of duplicating patterns.
+- Preserve keyboard, touch, slow-network, offline, loading, empty, failure,
+  narrow viewport, long-content, and reduced-motion behavior.
+- Keep body and placeholder contrast at WCAG AA or better.
+- Every visual graph must retain the equivalent accessible node list.
+- Raw JSON is not a normal object creation or editing control.

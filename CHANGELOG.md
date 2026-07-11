@@ -32,6 +32,25 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Promoted Notes to the primary desktop and mobile navigation and removed its
+  duplicate profile-menu entry so the core writing workspace is always visible.
+- Added the knowledge-centered Home, Library, Notes, Graph, Insights, and Search / Ask
+  experience around the Capture -> Connect -> Discover -> Learn loop, while
+  preserving legacy deep links as query-aware compatibility routes.
+- Added cursor-based `/api/library/items`, bounded typed
+  `/api/knowledge-graph/v2`, and evidence-backed `/api/insights` endpoints with
+  strict user scoping, deterministic ordering, focused graph expansion,
+  provenance, confidence, and durable relationship/insight feedback.
+- Reworked the complete embedded interface with a Brightlight-derived,
+  light-only warm editorial system: white and sand surfaces, coral accents,
+  serif headings, sans-serif UI text, dashed rules, compact radii, pill
+  controls, and restrained shadows. This changes look and feel only; routes,
+  navigation, menus, options, content hierarchy, and functionality remain
+  unchanged. OFL-licensed Geist and Noto Serif fonts are served first-party;
+  the Astro/Tailwind reference and its licensed assets are not shipped.
+- Added `knowledge_feedback` backup/restore support so useful, not-useful,
+  snoozed, dismissed, and confirmed derivative feedback survives export while
+  inferred relationships remain rebuildable.
 - Added per-bookmark reprocessing from the reader while preserving manual data
   and the previous archive until refreshed content is ready.
 - Added inline reader annotation capture with optional notes, selection-derived
@@ -242,6 +261,13 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- Hardened scheduled OpenWiki updates by disabling unauthenticated LangSmith
+  tracing, selecting OpenRouter explicitly, pinning the generator and
+  pull-request action, and preventing generated output from rewriting its own
+  privileged workflow or policy documentation while still capturing ordinary
+  `openwiki/` and `AGENTS.md` edits.
+- Library pagination now HTML-escapes user-controlled filter parameters before
+  inserting the next-page URL into the embedded frontend, preventing DOM XSS.
 - Web CSRF checks now bind the submitted cookie/header token to the authenticated
   session's stored CSRF hash.
 - Runtime X OAuth redirect URI settings are validated for both Admin overrides

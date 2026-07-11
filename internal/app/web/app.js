@@ -34,24 +34,36 @@ const routes = [
   { prefix: "/reset-password", page: resetPasswordPage, access: "public" },
   { prefix: "/accept-invite", page: acceptInvitePage, access: "public" },
   { prefix: "/today", page: todayPage, access: "protected" },
-  { prefix: "/dashboard", page: dashboardPage, access: "protected" },
+  { prefix: "/library", page: libraryPage, access: "protected" },
+  { prefix: "/graph", page: graphPage, access: "protected" },
+  { prefix: "/insights", page: insightsPage, access: "protected" },
+  { prefix: "/search", page: searchPage, access: "protected" },
+  { prefix: "/dashboard", page: () => compatibilityRedirect("/library", { view: "capture" }), access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
-  { prefix: "/inbox", page: inboxPage, access: "protected" },
-  { prefix: "/focus", page: focusPage, access: "protected" },
-  { prefix: "/assistant", page: assistantPage, access: "protected" },
+  { prefix: "/inbox", page: () => compatibilityRedirect("/library", { view: "inbox", stage: "inbox" }), access: "protected" },
+  { prefix: "/focus", page: () => compatibilityRedirect("/today", { view: "focus" }), access: "protected" },
+  { prefix: "/assistant", page: () => compatibilityRedirect("/search", { mode: "ask", review: "actions" }), access: "protected" },
   { prefix: "/notes/", page: notesPage, access: "protected" },
   { prefix: "/notes", page: notesPage, access: "protected" },
-  { prefix: "/objects", page: objectsPage, access: "protected" },
-  { prefix: "/evolution", page: evolutionPage, access: "protected" },
-  { prefix: "/board", page: boardPage, access: "protected" },
-  { prefix: "/review", page: reviewPage, access: "protected" },
-  { prefix: "/duplicates", page: duplicatesPage, access: "protected" },
+  { prefix: "/objects", page: () => compatibilityRedirect("/library", { type: "knowledge_object" }), access: "protected" },
+  { prefix: "/evolution", page: () => compatibilityRedirect("/insights", { family: "changed_thinking", legacy: "evolution" }), access: "protected" },
+  { prefix: "/board", page: () => compatibilityRedirect("/today", { view: "board" }), access: "protected" },
+  { prefix: "/review", page: () => compatibilityRedirect("/today", { view: "review" }), access: "protected" },
+  { prefix: "/duplicates", page: () => compatibilityRedirect("/library", { management: "duplicates" }), access: "protected" },
   { prefix: "/settings", page: settingsPage, access: "protected" },
   { prefix: "/imports", page: () => navigate("/settings?section=import", true), access: "protected" },
-  { prefix: "/knowledge-graph", page: graphPage, access: "protected" },
-  { prefix: "/analytics", page: analyticsPage, access: "protected" },
+  { prefix: "/knowledge-graph", page: () => compatibilityRedirect("/graph"), access: "protected" },
+  { prefix: "/analytics", page: () => compatibilityRedirect("/insights"), access: "protected" },
   { prefix: "/admin", page: adminPage, access: "protected" },
 ];
+
+function compatibilityRedirect(path, defaults = {}) {
+  const params = new URLSearchParams(location.search);
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (!params.has(key)) params.set(key, value);
+  });
+  navigate(`${path}${params.size ? `?${params}` : ""}`, true);
+}
 
 async function api(path, options = {}) {
   const { retried = false, ...requestOptions } = options;
@@ -211,6 +223,9 @@ function offlineSnapshotAllowed(path, options = {}) {
     /^\/action-items($|\?)/,
     /^\/reminders($|\?)/,
     /^\/memory-jogger($|\?)/,
+	/^\/library\/items($|\?)/,
+	/^\/knowledge-graph\/v2($|\?)/,
+	/^\/insights($|\?)/,
   ].some((pattern) => pattern.test(path));
 }
 
@@ -504,46 +519,51 @@ function navigate(path, replace = false) {
   render();
 }
 
+function primaryNavActive(href) {
+  return location.pathname === href || location.pathname.startsWith(`${href}/`) || (href === "/library" && location.pathname.startsWith("/bookmark/"));
+}
+
 function shell(title, content) {
   const nav = [
-    ["/today", "Today"],
-    ["/dashboard", "Bookmarks"],
-    ["/inbox", "Inbox"],
-    ["/focus", "Focus"],
-    ["/assistant", "Assistant"],
+    ["/today", "Home"],
+    ["/library", "Library"],
     ["/notes", "Notes"],
-    ["/objects", "Objects"],
-    ["/board", "Board"],
-    ["/review", "Review"],
-    ["/evolution", "Evolution"],
-    ["/knowledge-graph", "Graph"],
-    ["/analytics", "Analytics"],
-    ["/duplicates", "Duplicates"],
-    ["/settings", "Settings"],
-    ["/admin", "Admin"],
-  ].filter(([href]) => href !== "/admin" || state.user?.is_admin);
+    ["/graph", "Graph"],
+    ["/insights", "Insights"],
+  ];
   return `
     <a class="skip-link" href="#main-content">Skip to content</a>
     <div class="shell">
       <aside class="sidebar">
-        <p class="brand">Arivu</p>
+        <a class="brand" href="/today" aria-label="Arivu home">Arivu</a>
         <nav class="nav" aria-label="Primary">
           ${nav.map(([href, label]) => {
-            const active = location.pathname.startsWith(href) || (href === "/dashboard" && location.pathname.startsWith("/bookmark/"));
+            const active = primaryNavActive(href);
             return `<a href="${href}"${active ? ` class="active" aria-current="page"` : ""}>${label}</a>`;
           }).join("")}
         </nav>
       </aside>
       <main class="main" id="main-content" tabindex="-1" aria-labelledby="route-title">
         <div class="topbar">
-          <h1 class="headline" id="route-title">${escapeHTML(title)}</h1>
+          <div>
+            <p class="workspace-label">Private knowledge workspace</p>
+            <h1 class="headline" id="route-title">${escapeHTML(title)}</h1>
+          </div>
           <div class="top-actions">
-            <button id="global-actions" class="secondary" type="button">Actions</button>
-            <button id="logout" class="secondary" type="button">Log out</button>
+            <button id="global-capture" type="button">Capture</button>
+            <a class="button secondary" href="/search">Search / Ask</a>
+            <button id="global-actions" class="secondary" type="button">More</button>
+            <button id="profile-menu" class="icon-button" type="button" aria-label="Open profile and settings menu">${escapeHTML((state.user?.name || state.user?.email || "A").slice(0, 1).toUpperCase())}</button>
           </div>
         </div>
         ${content}
       </main>
+      <nav class="mobile-nav" aria-label="Primary mobile">
+        ${nav.map(([href, label]) => {
+          const active = primaryNavActive(href);
+          return `<a href="${href}"${active ? ` class="active" aria-current="page"` : ""}>${label}</a>`;
+        }).join("")}
+      </nav>
     </div>
   `;
 }
@@ -703,6 +723,10 @@ async function acceptInvitePage() {
 
 async function todayPage() {
   await requireUser();
+  const view = new URLSearchParams(location.search).get("view");
+  if (view === "focus") return focusPage();
+  if (view === "review") return reviewPage();
+  if (view === "board") return boardPage();
   const date = localDateKey();
   const [daily, inbox, actions, reminders, review, memory, notes] = await Promise.all([
     api(`/daily-notes/${date}`),
@@ -716,7 +740,13 @@ async function todayPage() {
   const openActions = (actions.action_items || []).filter((item) => item.status !== "completed").slice(0, 6);
   const dueReminders = (reminders.reminders || []).filter((item) => item.status !== "completed" && ["overdue", "today"].includes(item.due_state)).slice(0, 6);
   const note = daily.daily_note || { body: "" };
-  setRoot(shell("Today", `
+  setRoot(shell("Home", `
+    <nav class="view-tabs" aria-label="Home views">
+      <a href="/today" aria-current="page">Pulse</a>
+      <a href="/today?view=focus">Focus</a>
+      <a href="/today?view=review">Review</a>
+      <a href="/today?view=board">Board</a>
+    </nav>
     <section class="split">
       <form class="panel form" id="daily-note-form">
         <span class="meta">${escapeHTML(date)}</span>
@@ -726,23 +756,23 @@ async function todayPage() {
         <button type="submit">Save daily note</button>
       </form>
       <section class="panel">
-        <span class="meta">Operating loop</span>
-        <h2>${Number((inbox.counts || {}).inbox || 0)} in Inbox · ${openActions.length + dueReminders.length} due now · ${(review.items || []).length} ready to review</h2>
-        <p>Capture what arrived, decide what deserves attention, finish due work, then revisit one useful older item.</p>
+        <span class="meta">Knowledge pulse</span>
+        <h2>${Number((inbox.counts || {}).inbox || 0)} new · ${openActions.length + dueReminders.length} active · ${(review.items || []).length} worth revisiting</h2>
+        <p>Continue a thread, revisit a useful memory, and notice what your recent material is beginning to connect.</p>
         <div class="chips">
-          <a href="/dashboard">Capture</a>
-          <a href="/inbox">Triage</a>
-          <a href="/focus">Work</a>
-          <a href="/review">Review</a>
+          <a href="/library?view=capture">Capture</a>
+          <a href="/library?stage=inbox">Triage</a>
+          <a href="/today?view=focus">Continue</a>
+          <a href="/today?view=review">Review</a>
         </div>
       </section>
     </section>
     <section class="split">
-      ${todayList("Triage", inbox.items || [], "/inbox", todayInboxItem)}
-      ${todayList("Work", [...openActions, ...dueReminders].slice(0, 8), "/focus", todayWorkItem)}
+      ${todayList("New captures", inbox.items || [], "/library?stage=inbox", todayInboxItem)}
+      ${todayList("Continue thinking", [...openActions, ...dueReminders].slice(0, 8), "/today?view=focus", todayWorkItem)}
     </section>
     <section class="split">
-      ${todayList("Review", review.items || [], "/review", todayReviewItem)}
+      ${todayList("Worth revisiting", review.items || [], "/today?view=review", todayReviewItem)}
       <section class="panel">
         <h2>Recent notes</h2>
         ${todayListBody((notes.notes || []).slice(0, 5), todayNoteItem)}
@@ -753,11 +783,11 @@ async function todayPage() {
       ${memoryCard(memory)}
       <section class="panel">
         <h2>Fast capture</h2>
-        <p>Use the bookmark cockpit when a URL needs to enter the system, or create a standalone note when the thought stands alone.</p>
+        <p>Save a link, note, quote, or file without deciding where it belongs first.</p>
         <div class="chips">
-          <a href="/dashboard">Save URL</a>
+          <a href="/library?view=capture">Capture</a>
           <a href="/notes">New note</a>
-          <a href="/assistant">Assistant</a>
+          <a href="/search?mode=ask">Ask Arivu</a>
         </div>
       </section>
     </section>
@@ -840,6 +870,233 @@ function currentItemRef() {
   const note = location.pathname.match(/^\/notes\/([^/]+)/);
   if (note) return { type: "note", id: decodeURIComponent(note[1]) };
   return null;
+}
+
+async function libraryPage() {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  if (params.get("management") === "duplicates") return duplicatesPage();
+  if (params.get("view") === "capture") return dashboardPage();
+  if (params.get("view") === "inbox") return inboxPage();
+  const request = new URLSearchParams(params);
+  request.delete("view");
+  request.delete("management");
+  if (request.has("search") && !request.has("q")) request.set("q", request.get("search"));
+  request.delete("search");
+  if (!request.has("limit")) request.set("limit", "48");
+  const result = await api(`/library/items?${request}`);
+  const items = result.items || [];
+  setRoot(shell("Library", `
+    <section class="library-heading">
+      <div>
+        <p class="lede">Everything you have captured, connected, or developed lives here.</p>
+        <p class="meta">${items.length} items in this view${result.next_cursor ? " · more available" : ""}</p>
+      </div>
+      <div class="button-row">
+        <button type="button" id="library-capture">Capture</button>
+        <button type="button" class="secondary" id="library-new-object">New object</button>
+      </div>
+    </section>
+    <form class="library-filters" role="search" id="library-filter-form">
+      <div class="field library-query"><label for="library-query">Search library</label><input id="library-query" name="q" type="search" value="${escapeHTML(params.get("q") || "")}" placeholder="Title, text, or topic"></div>
+      <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(["bookmark", "note", "daily_note", "annotation", "knowledge_object", "entity", "concept"], params.get("type"), "All types")}</select></div>
+      <div class="field"><label for="library-stage">Stage</label><select id="library-stage" name="stage">${libraryFilterOptions(["inbox", "processing", "processed", "archived"], params.get("stage"), "Any stage")}</select></div>
+      <div class="field"><label for="library-connection">Connections</label><select id="library-connection" name="connection">${libraryFilterOptions(["connected", "unconnected"], params.get("connection"), "Any state")}</select></div>
+      <div class="field"><label for="library-topic">Topic</label><input id="library-topic" name="topic" value="${escapeHTML(params.get("topic") || "")}" placeholder="Topic"></div>
+      <div class="field"><label for="library-source">Source</label><input id="library-source" name="source" value="${escapeHTML(params.get("source") || "")}" placeholder="Source"></div>
+      <div class="field"><label for="library-date-from">From</label><input id="library-date-from" name="date_from" type="date" value="${escapeHTML(params.get("date_from") || "")}"></div>
+      <div class="field"><label for="library-date-to">To</label><input id="library-date-to" name="date_to" type="date" value="${escapeHTML(params.get("date_to") || "")}"></div>
+      <button type="submit" class="secondary">Apply</button>
+    </form>
+    <section class="library-list" aria-label="Library items">
+      ${items.map(libraryItem).join("") || emptyState({ eyebrow: "A clear desk", title: "Your library is ready", body: "Capture a link, note, quote, or file. Arivu will keep it even before enrichment or organization.", tag: "section" })}
+    </section>
+    ${result.next_cursor ? `<p class="pagination"><a class="button secondary" href="/library?${escapeHTML(libraryNextParams(params, result.next_cursor))}">Load more</a></p>` : ""}
+  `));
+  document.querySelector("#library-capture")?.addEventListener("click", openCaptureComposer);
+  document.querySelector("#library-new-object")?.addEventListener("click", openObjectComposer);
+  document.querySelector("#library-filter-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const next = new URLSearchParams(new FormData(event.currentTarget));
+    for (const [key, value] of [...next]) if (!String(value).trim()) next.delete(key);
+    navigate(`/library${next.size ? `?${next}` : ""}`);
+  });
+}
+
+function libraryFilterOptions(values, selected, emptyLabel) {
+  return `<option value="">${escapeHTML(emptyLabel)}</option>${values.map((value) => `<option value="${escapeHTML(value)}"${selected === value ? " selected" : ""}>${escapeHTML(knowledgeTypeLabel(value))}</option>`).join("")}`;
+}
+
+function libraryItem(item) {
+  const href = knowledgeItemHref(item.type, item.id, item.title);
+  return `<article class="library-row">
+    <div class="library-kind" data-kind="${escapeHTML(item.type || "item")}">${escapeHTML(knowledgeTypeLabel(item.type))}</div>
+    <div class="library-copy">
+      <h2><a href="${href}">${escapeHTML(item.title || "Untitled")}</a></h2>
+      <p>${escapeHTML(String(item.body || "").slice(0, 220))}</p>
+      <p class="meta">${[item.source, stageLabel(item.stage || ""), item.connection, formatDate(item.updated_at)].filter(Boolean).map(escapeHTML).join(" · ")}</p>
+    </div>
+    <a class="row-open" href="${href}" aria-label="Open ${escapeHTML(item.title || knowledgeTypeLabel(item.type))}">Open</a>
+  </article>`;
+}
+
+function knowledgeTypeLabel(value = "item") {
+  return String(value).replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function knowledgeItemHref(type, id, title = "") {
+  if (type === "bookmark") return `/bookmark/${encodeURIComponent(id)}`;
+  if (type === "note") return `/notes/${encodeURIComponent(id)}`;
+  if (type === "daily_note") return `/today?date=${encodeURIComponent(id)}`;
+  if (type === "entity" || type === "concept") return `/graph?focus=${encodeURIComponent(`${type}:${id}`)}`;
+  return `/library?type=${encodeURIComponent(type || "")}&q=${encodeURIComponent(title || id)}`;
+}
+
+function libraryNextParams(params, cursor) {
+  const next = new URLSearchParams(params);
+  next.set("cursor", cursor);
+  next.delete("view");
+  return next.toString();
+}
+
+async function searchPage() {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  if (params.get("review") === "actions") return assistantPage();
+  const query = params.get("q") || params.get("search") || "";
+  const ask = params.get("mode") === "ask" || params.get("answer") === "1";
+  let result = { results: [] };
+  if (query) result = await api(`${ask ? "/search/answer" : "/search/items"}?q=${encodeURIComponent(query)}`);
+  const results = result.results || result.items || result.citations || [];
+  setRoot(shell("Search / Ask", `
+    <form class="search-workspace" role="search" id="knowledge-search-form">
+      <label for="knowledge-search">Search your knowledge</label>
+      <div class="search-line">
+        <input id="knowledge-search" type="search" value="${escapeHTML(query)}" placeholder="Find a source, trace a connection, or ask a question" autofocus>
+        <button type="submit" name="mode" value="search" class="secondary">Search</button>
+        <button type="submit" name="mode" value="ask">Ask</button>
+      </div>
+      <p class="meta">Ask answers only from material saved in this Arivu instance and keeps links back to the evidence.</p>
+    </form>
+    ${ask && result.answer ? `<section class="answer-surface"><h2>Answer</h2><p>${escapeHTML(result.answer)}</p></section>` : ""}
+    <section class="search-results" aria-live="polite" aria-label="Search results">
+      ${results.map(searchResultItem).join("") || (query ? emptyState({ eyebrow: "No match", title: "Try a broader phrase", body: "Search checks titles, saved text, notes, tags, and explicit link context.", tag: "section" }) : emptyState({ eyebrow: "Ready", title: "Start with what you remember", body: "A phrase, source, person, or question is enough.", tag: "section" }))}
+    </section>
+  `));
+  document.querySelector("#knowledge-search-form")?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = document.querySelector("#knowledge-search").value.trim();
+    const mode = event.submitter?.value || "search";
+    navigate(`/search?q=${encodeURIComponent(value)}${mode === "ask" ? "&mode=ask" : ""}`);
+  });
+}
+
+function searchResultItem(item) {
+  const type = item.type || item.item_type || "bookmark";
+  const id = item.id || item.item_id;
+  const href = item.href || knowledgeItemHref(type, id, item.title);
+  return `<article class="search-result">
+    <p class="meta">${escapeHTML(knowledgeTypeLabel(type))}${item.source ? ` · ${escapeHTML(item.source)}` : ""}</p>
+    <h2><a href="${href}">${escapeHTML(item.title || "Untitled")}</a></h2>
+    <p>${escapeHTML(item.snippet || item.body || "")}</p>
+    ${(item.why_shown || []).length ? `<p class="meta">Why this appeared: ${item.why_shown.map(escapeHTML).join(", ")}</p>` : ""}
+  </article>`;
+}
+
+async function openCaptureComposer() {
+  const body = document.createElement("div");
+  body.innerHTML = `
+    <form class="form capture-composer" id="capture-composer-form">
+      <div class="field">
+        <label for="capture-kind">What are you capturing?</label>
+        <select id="capture-kind">
+          <option value="url">Link</option>
+          <option value="note">Note</option>
+          <option value="quote">Quote</option>
+          <option value="file">File</option>
+        </select>
+      </div>
+      <div data-capture-fields="url quote">
+        <div class="field"><label for="capture-url">Source URL</label><input id="capture-url" type="url" placeholder="https://example.com/article"></div>
+      </div>
+      <div data-capture-fields="note file">
+        <div class="field"><label for="capture-title">Title</label><input id="capture-title" type="text" placeholder="A useful working title"></div>
+      </div>
+      <div data-capture-fields="quote" hidden>
+        <div class="field"><label for="capture-quote">Quote</label><textarea id="capture-quote" rows="4" placeholder="Paste the passage you want to remember"></textarea></div>
+      </div>
+      <div data-capture-fields="note" hidden>
+        <div class="field"><label for="capture-note-body">Note</label><textarea id="capture-note-body" rows="6" placeholder="Start writing. You can connect it later."></textarea></div>
+      </div>
+      <div data-capture-fields="url quote">
+        <div class="field"><label for="capture-context">Context</label><textarea id="capture-context" rows="3" placeholder="Why this matters, optional"></textarea></div>
+      </div>
+      <div data-capture-fields="file" hidden>
+        <div class="field"><label for="capture-file">File</label><input id="capture-file" name="file" type="file" accept=".epub,.pdf,.txt,.md,.html,.htm,image/*"></div>
+      </div>
+      <p class="form-message" data-form-message hidden></p>
+      <button type="submit">Save to Arivu</button>
+    </form>`;
+  const form = body.querySelector("form");
+  const kind = body.querySelector("#capture-kind");
+  const shared = sharedCaptureParams();
+  body.querySelector("#capture-url").value = shared.url || "";
+  body.querySelector("#capture-context").value = shared.note || "";
+  const sync = () => body.querySelectorAll("[data-capture-fields]").forEach((group) => {
+    group.hidden = !group.dataset.captureFields.split(" ").includes(kind.value);
+  });
+  kind.addEventListener("change", sync);
+  sync();
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Saving");
+    setFormMessage(form);
+    try {
+      let href = "/library";
+      if (kind.value === "note") {
+        const result = await api("/notes", { method: "POST", body: JSON.stringify({ title: body.querySelector("#capture-title").value, body: body.querySelector("#capture-note-body").value }) });
+        href = `/notes/${result.note.id}`;
+      } else if (kind.value === "file") {
+        const data = new FormData();
+        data.set("title", body.querySelector("#capture-title").value);
+        const file = body.querySelector("#capture-file").files[0];
+        if (!file) throw new Error("Choose a file to import.");
+        data.set("file", file);
+        const result = await api("/media/import", { method: "POST", body: data });
+        href = result.note?.id ? `/notes/${result.note.id}` : "/library?type=note";
+      } else {
+        const url = body.querySelector("#capture-url").value.trim();
+        if (!url) throw new Error("Source URL is required.");
+        const payload = {
+          url,
+          note: body.querySelector("#capture-context").value,
+          quote: kind.value === "quote" ? body.querySelector("#capture-quote").value : "",
+        };
+        let result;
+        try {
+          result = await api("/bookmarks", { method: "POST", body: JSON.stringify(payload) });
+        } catch (err) {
+          if (!navigator.onLine || err.message.includes("couldn't reach Arivu")) {
+            queueOfflineBookmark(payload);
+            document.querySelector("[data-dialog-close]")?.click();
+            ui.toast("Capture queued offline", "success");
+            navigate("/library", true);
+            return;
+          }
+          throw err;
+        }
+        href = `/bookmark/${result.bookmark.id}`;
+      }
+      document.querySelector("[data-dialog-close]")?.click();
+      ui.toast("Captured", "success");
+      navigate(href, true);
+    } catch (err) {
+      setFormMessage(form, err.message);
+    } finally {
+      done();
+    }
+  });
+  await ui.dialog({ title: "Capture", body, actions: [{ label: "Cancel", value: false, kind: "secondary" }] });
 }
 
 async function openCommandPalette() {
@@ -2169,112 +2426,58 @@ async function deleteStandaloneNote(button) {
   }
 }
 
-async function objectsPage() {
-  await requireUser();
-  const params = new URLSearchParams(location.search);
-  const selectedType = params.get("type") || "";
-  const query = params.get("q") || "";
-  const result = await api(`/objects${location.search}`);
-  const objects = result.objects || [];
-  const types = result.object_types || ["project", "person", "book", "meeting", "decision", "research_thread"];
-  setRoot(shell("Objects", `
-    <section class="split">
-      <form class="panel form" id="object-form">
-        <h2>New object</h2>
-        <div class="field"><label for="object-type">Type</label><select id="object-type">${objectTypeOptions(types, selectedType)}</select></div>
-        <div class="field"><label for="object-title">Title</label><input id="object-title" type="text" placeholder="Project, person, book, meeting, decision"></div>
-        <div class="field"><label for="object-description">Description</label><textarea id="object-description" rows="4" placeholder="What this object means and why it matters"></textarea></div>
-        <div class="field"><label for="object-fields">Fields JSON</label><textarea id="object-fields" rows="5" spellcheck="false" placeholder='{"status":"active","owner":"me"}'></textarea></div>
-        <div class="field"><label for="object-source-type">Source item type</label><select id="object-source-type"><option value="">None</option><option value="bookmark">Bookmark</option><option value="note">Note</option><option value="object">Object</option></select></div>
-        <div class="field"><label for="object-source-id">Source item ID</label><input id="object-source-id" type="text" placeholder="Optional bookmark, note, or object id"></div>
-        <p class="form-message" data-form-message hidden></p>
-        <button type="submit">Create object</button>
-      </form>
-      <form class="panel form" id="object-filter-form">
-        <span class="meta">Structured memory</span>
-        <h2>${objects.length} objects</h2>
-        <div class="field"><label for="object-filter-type">Filter type</label><select id="object-filter-type"><option value="">All types</option>${objectTypeOptions(types, selectedType)}</select></div>
-        <div class="field"><label for="object-filter-query">Search objects</label><input id="object-filter-query" type="search" value="${escapeHTML(query)}" placeholder="Roadmap, Alice, meeting"></div>
-        <button type="submit" class="secondary">Apply filter</button>
-      </form>
-    </section>
-    <section class="grid compact-grid">
-      ${objects.map(objectCard).join("") || emptyState({ eyebrow: "No objects", title: "Create the first object", body: "Use objects when a note needs to become a project, person, book, meeting, decision, or research thread.", tag: "article" })}
-    </section>
-  `));
-  bindObjectForms();
+const objectFieldSets = {
+  project: [{ key: "status", label: "Status", type: "select", options: ["active", "paused", "complete"] }, { key: "outcome", label: "Desired outcome" }],
+  person: [{ key: "role", label: "Role or relationship" }, { key: "contact", label: "Contact note" }],
+  book: [{ key: "author", label: "Author" }, { key: "status", label: "Reading status", type: "select", options: ["to read", "reading", "finished"] }],
+  meeting: [{ key: "date", label: "Meeting date", type: "datetime-local" }, { key: "attendees", label: "Attendees" }],
+  decision: [{ key: "decision", label: "Decision" }, { key: "rationale", label: "Rationale" }],
+  research_thread: [{ key: "question", label: "Research question" }, { key: "status", label: "Status", type: "select", options: ["open", "developing", "resolved"] }],
+};
+
+function objectFieldsMarkup(type) {
+  const fields = objectFieldSets[type] || [];
+  return fields.map((field) => `<div class="field"><label for="object-field-${field.key}">${escapeHTML(field.label)}</label>${field.type === "select" ? `<select id="object-field-${field.key}" data-object-field="${field.key}">${field.options.map((option) => `<option value="${escapeHTML(option)}">${escapeHTML(knowledgeTypeLabel(option))}</option>`).join("")}</select>` : `<input id="object-field-${field.key}" data-object-field="${field.key}" type="${field.type || "text"}">`}</div>`).join("");
 }
 
-function objectTypeOptions(types, selected) {
-  return types.map((type) => `<option value="${escapeHTML(type)}"${type === selected ? " selected" : ""}>${escapeHTML(type.replaceAll("_", " "))}</option>`).join("");
+function collectObjectFields(root = document) {
+  return Object.fromEntries([...root.querySelectorAll("[data-object-field]")].map((field) => [field.dataset.objectField, field.value.trim()]).filter(([, value]) => value));
 }
 
-function objectCard(object) {
-  return `<article class="panel bookmark">
-    <span class="meta">${escapeHTML((object.object_type || "object").replaceAll("_", " "))} · ${escapeHTML(object.updated_at || "")}</span>
-    <h2>${escapeHTML(object.title || "Untitled object")}</h2>
-    <p>${escapeHTML(object.description || "")}</p>
-    ${objectFieldsPreview(object.fields || {})}
-    ${object.source_item_id ? `<p><a class="text-link" href="${objectSourceHref(object)}">Open source</a></p>` : ""}
-  </article>`;
-}
-
-function objectFieldsPreview(fields) {
-  const entries = Object.entries(fields || {}).filter(([, value]) => String(value || "").trim() !== "").slice(0, 6);
-  if (!entries.length) return "";
-  return `<div class="chips">${entries.map(([key, value]) => `<span>${escapeHTML(key)}: ${escapeHTML(String(value).slice(0, 80))}</span>`).join("")}</div>`;
-}
-
-function objectSourceHref(object) {
-  if (object.source_item_type === "note") return `/notes/${encodeURIComponent(object.source_item_id)}`;
-  if (object.source_item_type === "bookmark") return `/bookmark/${encodeURIComponent(object.source_item_id)}`;
-  return "/objects";
-}
-
-function bindObjectForms() {
-  const form = document.querySelector("#object-form");
-  form?.addEventListener("submit", async (event) => {
+async function openObjectComposer() {
+  const body = document.createElement("div");
+  body.innerHTML = `<form class="form" id="object-composer-form">
+    <div class="field"><label for="object-composer-type">Type</label><select id="object-composer-type">${objectTypeOptions(Object.keys(objectFieldSets), "project")}</select></div>
+    <div class="field"><label for="object-composer-title">Title</label><input id="object-composer-title" required></div>
+    <div class="field"><label for="object-composer-description">Description</label><textarea id="object-composer-description" rows="4"></textarea></div>
+    <fieldset class="object-fields"><legend>Details</legend><div id="object-composer-fields"></div></fieldset>
+    <p class="form-message" data-form-message hidden></p>
+    <button type="submit">Create object</button>
+  </form>`;
+  const form = body.querySelector("form");
+  const type = body.querySelector("#object-composer-type");
+  const renderFields = () => { body.querySelector("#object-composer-fields").innerHTML = objectFieldsMarkup(type.value); };
+  type.addEventListener("change", renderFields);
+  renderFields();
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Creating");
-    setFormMessage(form);
     try {
-      await api("/objects", {
-        method: "POST",
-        body: JSON.stringify({
-          object_type: document.querySelector("#object-type").value,
-          title: document.querySelector("#object-title").value,
-          description: document.querySelector("#object-description").value,
-          fields: parseObjectFields(document.querySelector("#object-fields").value),
-          source_item_type: document.querySelector("#object-source-type").value,
-          source_item_id: document.querySelector("#object-source-id").value,
-        }),
-      });
+      await api("/objects", { method: "POST", body: JSON.stringify({ object_type: type.value, title: body.querySelector("#object-composer-title").value, description: body.querySelector("#object-composer-description").value, fields: collectObjectFields(body) }) });
+      document.querySelector("[data-dialog-close]")?.click();
       ui.toast("Object created", "success");
-      render();
+      navigate("/library?type=knowledge_object", true);
     } catch (err) {
       setFormMessage(form, err.message);
-      ui.toast(err.message, "error");
     } finally {
       done();
     }
   });
-  document.querySelector("#object-filter-form")?.addEventListener("submit", (event) => {
-    event.preventDefault();
-    const params = new URLSearchParams();
-    const type = document.querySelector("#object-filter-type").value;
-    const query = document.querySelector("#object-filter-query").value.trim();
-    if (type) params.set("type", type);
-    if (query) params.set("q", query);
-    navigate(`/objects${params.toString() ? `?${params}` : ""}`, true);
-  });
+  await ui.dialog({ title: "New object", body, actions: [{ label: "Cancel", value: false, kind: "secondary" }] });
 }
 
-function parseObjectFields(raw) {
-  const text = raw.trim();
-  if (!text) return {};
-  const parsed = JSON.parse(text);
-  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") throw new Error("Fields JSON must be an object.");
-  return parsed;
+function objectTypeOptions(types, selected) {
+  return types.map((type) => `<option value="${escapeHTML(type)}"${type === selected ? " selected" : ""}>${escapeHTML(type.replaceAll("_", " "))}</option>`).join("");
 }
 
 async function evolutionPage() {
@@ -4105,80 +4308,201 @@ function duplicateGroup(group) {
 async function graphPage() {
   await requireUser();
   const params = new URLSearchParams(location.search);
-  const query = params.get("query") || "";
-  const graph = await api("/knowledge-graph/explore?limit=60");
-  const search = query ? await api(`/knowledge-graph/search?query=${encodeURIComponent(query)}&limit=12`).catch(() => ({ results: [] })) : null;
-  setRoot(shell("Knowledge graph", `
-    <form class="toolbar" role="search" id="graph-search">
-      <label class="sr-only" for="graph-query">Search graph</label>
-      <input id="graph-query" type="search" placeholder="Search concepts, entities, or meaning" value="${escapeHTML(query)}">
-      <button class="secondary" type="submit">Search</button>
-    </form>
-    <section class="grid">
-      <div class="panel"><span class="meta">Bookmarks</span><h2>${graph.total_bookmarks || 0}</h2></div>
-      <div class="panel"><span class="meta">Entities</span><h2>${graph.total_entities || 0}</h2></div>
-      <div class="panel"><span class="meta">Concepts</span><h2>${graph.total_concepts || 0}</h2></div>
+  const focus = params.get("focus") || "";
+  const graph = await api(`/knowledge-graph/v2?node_limit=48&edge_limit=160&depth=1${focus ? `&focus=${encodeURIComponent(focus)}` : ""}`);
+  const nodes = (graph.nodes || []).slice(0, 48);
+  const edges = (graph.edges || []).filter((edge) => nodes.some((node) => node.id === edge.from) && nodes.some((node) => node.id === edge.to)).slice(0, 160);
+  const positions = graphPositions(nodes);
+  setRoot(shell("Graph", `
+    <section class="graph-intro">
+      <div><p class="lede">Explore how sources, notes, people, concepts, and highlights relate.</p><p class="meta">A focused, bounded view · ${nodes.length} nodes · ${edges.length} relationships${graph.truncated ? " · expand intentionally" : ""}</p></div>
+      <form class="graph-focus" id="graph-focus-form">
+        <label for="graph-focus">Focus node</label>
+        <select id="graph-focus"><option value="">Recent knowledge</option>${nodes.map((node) => `<option value="${escapeHTML(node.id)}"${focus === node.id ? " selected" : ""}>${escapeHTML(node.title || node.id)}</option>`).join("")}</select>
+        <button type="submit" class="secondary">Focus</button>
+      </form>
     </section>
-    <section class="split">
-      <div class="panel"><h2>Concepts</h2>${termCloud(graph.concepts || [])}</div>
-      <div class="panel"><h2>Entities</h2>${termCloud(graph.entities || [])}</div>
+    <section class="graph-legend" aria-label="Graph legend">
+      ${[...new Set(nodes.map((node) => node.type))].map((type) => `<span data-kind="${escapeHTML(type)}"><i aria-hidden="true"></i>${escapeHTML(knowledgeTypeLabel(type))}</span>`).join("")}
+      <span><i class="edge-explicit" aria-hidden="true"></i>Explicit</span>
+      <span><i class="edge-inferred" aria-hidden="true"></i>Derived</span>
     </section>
-    ${search ? `<section class="panel"><h2>Search results</h2>${relatedList(search.results || [])}</section>` : ""}
-    <section class="panel"><h2>Recent graph nodes</h2>${relatedList(graph.bookmarks || [])}</section>
+    <div class="graph-controls" role="group" aria-label="Graph view controls">
+      <button type="button" class="secondary" data-graph-zoom="out">Zoom out</button>
+      <button type="button" class="secondary" data-graph-zoom="reset">Reset view</button>
+      <button type="button" class="secondary" data-graph-zoom="in">Zoom in</button>
+    </div>
+    <section class="graph-workspace">
+      <div class="graph-canvas" role="region" aria-label="Interactive knowledge graph" tabindex="0">
+        ${graphSVG(nodes, edges, positions)}
+      </div>
+      <aside class="graph-inspector" id="graph-inspector" aria-live="polite">${graphInspector(nodes[0], edges, nodes)}</aside>
+    </section>
+    <details class="graph-list" open>
+      <summary>Accessible node list</summary>
+      <p class="meta">This list contains the same nodes as the visual graph and supports full keyboard navigation.</p>
+      <ul>${nodes.map((node) => `<li><button type="button" class="graph-list-node" data-graph-node="${escapeHTML(node.id)}"><span>${escapeHTML(node.title || node.id)}</span><small>${escapeHTML(knowledgeTypeLabel(node.type))}</small></button></li>`).join("")}</ul>
+    </details>
   `));
-  document.querySelector("#graph-search").addEventListener("submit", (event) => {
+  document.querySelector("#graph-focus-form").addEventListener("submit", (event) => {
     event.preventDefault();
-    const value = document.querySelector("#graph-query").value.trim();
-    navigate(`/knowledge-graph${value ? `?query=${encodeURIComponent(value)}` : ""}`);
+    const value = document.querySelector("#graph-focus").value;
+    navigate(`/graph${value ? `?focus=${encodeURIComponent(value)}` : ""}`);
   });
+  bindGraphNodes(nodes, edges);
+  bindGraphViewport();
 }
 
-function termCloud(terms) {
-  if (!terms.length) return `<p class="meta">Terms appear after enrichment.</p>`;
-  return `<div class="chips term-cloud">${terms.slice(0, 30).map((term) => `<span>${escapeHTML(term)}</span>`).join("")}</div>`;
+function bindGraphViewport() {
+  const canvas = document.querySelector(".graph-canvas");
+  const svg = canvas?.querySelector("svg");
+  if (!canvas || !svg) return;
+  let zoom = 1;
+  const apply = () => {
+    svg.style.width = `${zoom * 100}%`;
+    svg.style.height = `${zoom * 100}%`;
+    canvas.scrollTo({ left: (canvas.scrollWidth - canvas.clientWidth) / 2, top: (canvas.scrollHeight - canvas.clientHeight) / 2, behavior: "smooth" });
+  };
+  document.querySelectorAll("[data-graph-zoom]").forEach((button) => button.addEventListener("click", () => {
+    const action = button.dataset.graphZoom;
+    zoom = action === "reset" ? 1 : Math.min(2, Math.max(1, zoom + (action === "in" ? .25 : -.25)));
+    apply();
+  }));
 }
 
-async function analyticsPage() {
+function graphPositions(nodes) {
+  const center = { x: 480, y: 300 };
+  return Object.fromEntries(nodes.map((node, index) => {
+    if (index === 0) return [node.id, center];
+    const angle = index * 2.399963;
+    const ring = Math.ceil(Math.sqrt(index));
+    const radius = Math.min(250, 58 + ring * 34);
+    return [node.id, { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius }];
+  }));
+}
+
+function graphSVG(nodes, edges, positions) {
+  if (!nodes.length) return emptyState({ eyebrow: "No graph yet", title: "Capture something to begin", body: "Nodes and relationships appear here as your library grows.", panel: false });
+  return `<svg viewBox="0 0 960 600" aria-labelledby="graph-svg-title graph-svg-description">
+    <title id="graph-svg-title">Knowledge graph</title>
+    <desc id="graph-svg-description">A bounded visual map of ${nodes.length} knowledge nodes and ${edges.length} relationships. Use Tab to inspect nodes or use the equivalent list below.</desc>
+    <g class="graph-edges">${edges.map((edge) => {
+      const from = positions[edge.from]; const to = positions[edge.to];
+      if (!from || !to) return "";
+      return `<line x1="${from.x}" y1="${from.y}" x2="${to.x}" y2="${to.y}" class="${edge.type === "explicit" ? "explicit" : "inferred"}" data-edge="${escapeHTML(edge.id)}"><title>${escapeHTML(knowledgeTypeLabel(edge.type))}, ${Math.round(Number(edge.confidence || 0) * 100)}% confidence</title></line>`;
+    }).join("")}</g>
+    <g class="graph-nodes">${nodes.map((node) => {
+      const point = positions[node.id];
+      return `<g class="graph-node" data-kind="${escapeHTML(node.type)}" data-graph-node="${escapeHTML(node.id)}" tabindex="0" role="button" aria-label="${escapeHTML(`${node.title || node.id}, ${knowledgeTypeLabel(node.type)}`)}" transform="translate(${point.x} ${point.y})"><circle r="${node === nodes[0] ? 12 : 8}"></circle><text y="-15">${escapeHTML(String(node.title || node.id).slice(0, 24))}</text></g>`;
+    }).join("")}</g>
+  </svg>`;
+}
+
+function bindGraphNodes(nodes, edges) {
+  const select = (id) => {
+    const node = nodes.find((item) => item.id === id);
+    if (!node) return;
+    document.querySelectorAll("[data-graph-node]").forEach((item) => item.classList.toggle("selected", item.dataset.graphNode === id));
+    document.querySelector("#graph-inspector").innerHTML = graphInspector(node, edges, nodes);
+    bindRelationshipFeedback();
+  };
+  document.querySelectorAll("[data-graph-node]").forEach((item) => {
+    item.addEventListener("click", () => select(item.dataset.graphNode));
+    item.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(item.dataset.graphNode); }
+    });
+  });
+  if (nodes[0]) select(nodes[0].id);
+}
+
+function graphInspector(node, edges, nodes) {
+  if (!node) return emptyState({ eyebrow: "No selection", title: "Choose a node", body: "Select a node in the graph or accessible list.", panel: false });
+  const relationships = edges.filter((edge) => edge.from === node.id || edge.to === node.id);
+  return `<p class="meta">${escapeHTML(knowledgeTypeLabel(node.type))}</p>
+    <h2>${escapeHTML(node.title || node.id)}</h2>
+    <p>${escapeHTML(node.summary || "No summary yet.")}</p>
+    <p><a class="text-link" href="${knowledgeItemHref(node.type, node.source_id, node.title)}">Open item</a></p>
+    <h3>Relationships</h3>
+    <div class="relationship-list">${relationships.map((edge) => {
+      const otherID = edge.from === node.id ? edge.to : edge.from;
+      const other = nodes.find((item) => item.id === otherID);
+      const canConfirm = [edge.from, edge.to].every((id) => ["bookmark", "note"].includes(String(id).split(":")[0]));
+      return `<article><p><strong>${escapeHTML(other?.title || otherID)}</strong></p><p class="meta">${escapeHTML(knowledgeTypeLabel(edge.type))} · ${Math.round(Number(edge.confidence || 0) * 100)}% confidence · ${escapeHTML(edge.provenance || "local")}</p>${edge.type !== "explicit" ? `<div class="relationship-actions">${canConfirm ? `<button class="secondary" type="button" data-relationship-feedback="confirm" data-edge-id="${escapeHTML(edge.id)}" data-from="${escapeHTML(edge.from)}" data-to="${escapeHTML(edge.to)}">Confirm</button>` : `<button class="secondary" type="button" data-relationship-feedback="useful" data-edge-id="${escapeHTML(edge.id)}" data-from="${escapeHTML(edge.from)}" data-to="${escapeHTML(edge.to)}">Useful</button>`}<button class="secondary" type="button" data-relationship-feedback="dismiss" data-edge-id="${escapeHTML(edge.id)}" data-from="${escapeHTML(edge.from)}" data-to="${escapeHTML(edge.to)}">Dismiss</button></div>` : ""}</article>`;
+    }).join("") || `<p class="meta">No visible relationships in this focused view.</p>`}</div>`;
+}
+
+function bindRelationshipFeedback() {
+  document.querySelectorAll("[data-relationship-feedback]").forEach((button) => button.addEventListener("click", async () => {
+    const done = setButtonBusy(button, "Saving");
+    try {
+      await api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "relationship", target_id: button.dataset.edgeId, feedback: button.dataset.relationshipFeedback, from: button.dataset.from || "", to: button.dataset.to || "" }) });
+      ui.toast(button.dataset.relationshipFeedback === "confirm" ? "Connection confirmed" : "Suggestion dismissed", "success");
+      if (button.dataset.relationshipFeedback === "dismiss") button.closest("article")?.remove();
+    } catch (err) { ui.toast(err.message, "error"); } finally { done(); }
+  }));
+}
+
+async function insightsPage() {
   await requireUser();
-  let summary;
-  try {
-    summary = await api("/analytics/summary");
-  } catch (err) {
-    setRoot(shell("Analytics", `<section class="panel">
-      <h2>Analytics unavailable</h2>
-      <p class="meta">${escapeHTML(err.message)}</p>
-      <p class="button-row"><button type="button" class="secondary" id="analytics-retry">Retry</button></p>
-    </section>`));
-    document.querySelector("#analytics-retry")?.addEventListener("click", () => render());
-    return;
-  }
-  const stats = summary.stats || summary;
-  setRoot(shell("Analytics", `<section class="grid">
-    <div class="panel"><span class="meta">Bookmarks</span><h2>${stats.total_bookmarks || 0}</h2></div>
-    <div class="panel"><span class="meta">Collections</span><h2>${stats.total_collections || 0}</h2></div>
-    <div class="panel"><span class="meta">Unread</span><h2>${stats.unread_bookmarks || 0}</h2></div>
-    <div class="panel"><span class="meta">Read</span><h2>${stats.read_bookmarks || 0}</h2></div>
-  </section>
-  <section class="split">
-    <div class="panel"><h2>Top domains</h2>${topicList(summary.topics || [])}</div>
-    <div class="panel" id="analytics-signals"><h2>Signals</h2>${insightList(summary.insights || [])}</div>
-  </section>`));
-  api("/analytics/insights")
-    .then((insights) => {
-      const target = document.querySelector("#analytics-signals");
-      if (target) target.innerHTML = `<h2>Signals</h2>${insightList(insights.insights || summary.insights || [])}`;
-    })
-    .catch(() => {});
+  const params = new URLSearchParams(location.search);
+  if (params.get("legacy") === "evolution") return evolutionPage();
+  const result = await api("/insights?limit=40");
+  const family = params.get("family") || "";
+  const insights = (result.insights || []).filter((insight) => !family || insight.type === family);
+  setRoot(shell("Insights", `
+    <section class="insights-heading">
+      <div><p class="lede">Patterns grounded in your own sources, with the evidence kept close.</p><p class="meta">Local detectors work without a model provider. Feedback shapes what returns.</p></div>
+      <label for="insight-family">Pattern family<select id="insight-family">
+        ${libraryFilterOptions(["emerging_theme", "recurring_connection", "changed_thinking", "knowledge_gap", "forgotten_value", "serendipitous_connection"], family, "All insights")}
+      </select></label>
+    </section>
+    <section class="insight-list" aria-live="polite">
+      ${insights.map(insightCard).join("") || emptyState({ eyebrow: "No pattern yet", title: "Insights need a little history", body: "Keep capturing and connecting. Arivu will surface patterns only when your own evidence supports them.", tag: "section" })}
+    </section>
+  `));
+  document.querySelector("#insight-family")?.addEventListener("change", (event) => navigate(`/insights${event.currentTarget.value ? `?family=${encodeURIComponent(event.currentTarget.value)}` : ""}`));
+  bindInsightActions();
 }
 
-function topicList(items) {
-  if (!items.length) return `<p class="meta">No domain patterns yet.</p>`;
-  return `<div class="stack">${items.map((item) => `<p><strong>${escapeHTML(item.topic)}</strong> <span class="meta">${item.count}</span></p>`).join("")}</div>`;
+function insightCard(insight) {
+  const confidence = Math.round(Number(insight.confidence || 0) * 100);
+  const evidence = insight.evidence || [];
+  return `<article class="insight-card" data-insight-id="${escapeHTML(insight.id)}">
+    <header><div><p class="meta">${escapeHTML(knowledgeTypeLabel(insight.type))} · ${escapeHTML(insight.window || "current")}</p><h2>${escapeHTML(insight.title || "Knowledge pattern")}</h2></div><span class="confidence" title="Detector confidence">${confidence}% confidence</span></header>
+    <p class="insight-explanation">${escapeHTML(insight.explanation || "")}</p>
+    <details><summary>Why Arivu detected this</summary><p>${escapeHTML(insight.why_detected || "Detected from the evidence below.")}</p></details>
+    <div class="evidence-list" aria-label="Supporting evidence">
+      ${evidence.map((item) => `<a href="${knowledgeItemHref(item.type, item.id, item.title)}"><span>${escapeHTML(item.title || item.id)}</span><small>${escapeHTML(knowledgeTypeLabel(item.type))}</small></a>`).join("")}
+    </div>
+    <div class="insight-actions">
+      ${(insight.actions || []).slice(0, 2).map((action) => insightNextAction(action, evidence[0])).join("")}
+      <span class="action-spacer"></span>
+      <button type="button" class="secondary" data-insight-feedback="useful">Useful</button>
+      <button type="button" class="secondary" data-insight-feedback="not_useful">Not useful</button>
+      <button type="button" class="secondary" data-insight-feedback="snooze">Snooze</button>
+      <button type="button" class="secondary" data-insight-feedback="dismiss">Dismiss</button>
+    </div>
+  </article>`;
 }
 
-function insightList(items) {
-  if (!items.length) return `<p class="meta">Insights appear after you save and revisit pages.</p>`;
-  return `<div class="stack">${items.map((item) => `<p><span class="meta">${escapeHTML(item.severity || "info")}</span><br>${escapeHTML(item.message || "")}</p>`).join("")}</div>`;
+function insightNextAction(action, evidence) {
+  if (action === "create_note") return `<button type="button" data-insight-next="capture-note">Create note</button>`;
+  if (action === "connect" && evidence) return `<a class="button" href="/graph?focus=${encodeURIComponent(`${evidence.type}:${evidence.id}`)}">Explore connection</a>`;
+  if (action === "snooze") return "";
+  return evidence ? `<a class="button" href="${knowledgeItemHref(evidence.type, evidence.id, evidence.title)}">Review evidence</a>` : "";
+}
+
+function bindInsightActions() {
+  document.querySelectorAll("[data-insight-feedback]").forEach((button) => button.addEventListener("click", async () => {
+    const card = button.closest("[data-insight-id]");
+    const done = setButtonBusy(button, "Saving");
+    try {
+      await api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "insight", target_id: card.dataset.insightId, feedback: button.dataset.insightFeedback }) });
+      ui.toast("Insight feedback saved", "success");
+      if (button.dataset.insightFeedback === "dismiss" || button.dataset.insightFeedback === "snooze") card.remove();
+    } catch (err) { ui.toast(err.message, "error"); } finally { done(); }
+  }));
+  document.querySelectorAll("[data-insight-next='capture-note']").forEach((button) => button.addEventListener("click", openCaptureComposer));
 }
 
 async function adminPage() {
@@ -4482,7 +4806,7 @@ async function render() {
     if (route?.access === "protected") await requireUser();
     await page();
     syncRouteAccessibility();
-    document.querySelector("#global-actions")?.addEventListener("click", openCommandPalette);
+    bindGlobalShellActions();
     ui.on(document, "keydown", (event) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
@@ -4503,6 +4827,24 @@ async function render() {
     state.pendingRoutes = Math.max(0, state.pendingRoutes - 1);
     if (state.pendingRoutes === 0) document.body.classList.remove("is-routing");
   }
+}
+
+function bindGlobalShellActions() {
+  document.querySelector("#global-capture")?.addEventListener("click", openCaptureComposer);
+  document.querySelector("#global-actions")?.addEventListener("click", openCommandPalette);
+  const profile = document.querySelector("#profile-menu");
+  if (!profile) return;
+  const items = [
+    { label: "Imports and exports", action: () => navigate("/settings?section=import") },
+    { label: "Settings", action: () => navigate("/settings") },
+  ];
+  if (state.user?.is_admin) items.push({ label: "Administration", action: () => navigate("/admin") });
+  items.push({ label: "Log out", action: async () => {
+    await api("/auth/logout", { method: "POST" }).catch(() => {});
+    state.user = null;
+    navigate("/auth", true);
+  } });
+  ui.menu(profile, items);
 }
 
 function routeMatches(route) {

@@ -144,6 +144,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search/answer", a.withUser(a.bookmarks.SearchAnswer))
 	mux.HandleFunc("POST /api/search/rebuild", a.withUserQuota(quotaSearchRebuild, a.bookmarks.RebuildSearch))
 	mux.HandleFunc("POST /api/feedback", a.withUserQuota(quotaFeedback, a.bookmarks.SaveFeedback))
+	mux.HandleFunc("GET /api/library/items", a.withUser(a.bookmarks.LibraryItems))
+	mux.HandleFunc("GET /api/knowledge-graph/v2", a.withUser(a.bookmarks.KnowledgeGraphV2))
+	mux.HandleFunc("GET /api/insights", a.withUser(a.bookmarks.Insights))
 	mux.HandleFunc("GET /api/collections", a.withUser(a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/collections", a.withUser(a.bookmarks.CreateCollection))
 	mux.HandleFunc("POST /api/collections/{id}/add", a.withUser(a.bookmarks.AddToCollection))
@@ -197,6 +200,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/cli/bookmarks", a.withAudienceQuota("cli", quotaBookmarkCreate, a.bookmarks.Create))
 	mux.HandleFunc("POST /api/cli/bookmarks/preview", a.withAudienceQuota("cli", quotaBookmarkPreview, a.bookmarks.Preview))
 	mux.HandleFunc("GET /api/agent/search", a.withAudience("cli", a.bookmarks.SearchItems))
+	mux.HandleFunc("GET /api/agent/library/items", a.withAudience("cli", a.bookmarks.LibraryItems))
+	mux.HandleFunc("GET /api/agent/knowledge-graph/v2", a.withAudience("cli", a.bookmarks.KnowledgeGraphV2))
+	mux.HandleFunc("GET /api/agent/insights", a.withAudience("cli", a.bookmarks.Insights))
+	mux.HandleFunc("POST /api/agent/feedback", a.withAudienceQuota("cli", quotaFeedback, a.bookmarks.SaveFeedback))
 	mux.HandleFunc("GET /api/agent/bookmarks/{id}", a.withAudience("cli", a.bookmarks.Get))
 	mux.HandleFunc("GET /api/agent/notes/{id}", a.withAudience("cli", a.bookmarks.GetNote))
 	mux.HandleFunc("POST /api/agent/notes", a.withAudienceQuota("cli", quotaNotesWrite, a.bookmarks.CreateNote))
@@ -377,6 +384,8 @@ func serveAsset(w http.ResponseWriter, r *http.Request, name string, data []byte
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case strings.HasSuffix(name, ".svg"):
 		w.Header().Set("Content-Type", "image/svg+xml")
+	case strings.HasSuffix(name, ".woff2"):
+		w.Header().Set("Content-Type", "font/woff2")
 	case strings.HasSuffix(name, ".webmanifest"):
 		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 	default:

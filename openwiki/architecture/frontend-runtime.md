@@ -1,190 +1,113 @@
 # Frontend Runtime
 
-The rewrite frontend is a dependency-free browser SPA served from the Go binary.
+The embedded frontend is a dependency-free browser SPA served by the Go binary.
+See `DESIGN.md` for its authoritative visual and interaction rules.
 
-## Modules
+## Router And Shell
 
-- `index.html`: root document and script/style references.
-- `styles.css`: design tokens, brutalist layout, responsive rules, and reduced-motion handling.
-- `app.js`: router, API client, auth flow, primary screens, and local UI state.
-- `service-worker-register.mjs`: CSP-approved, independently testable browser
-  lifecycle registration for `sw.js`.
-- `favicon.svg`: small embedded SVG icon served by both `/favicon.svg` and
-  legacy `/favicon.ico` requests.
-- `manifest.webmanifest`: installable PWA metadata and GET share-target
-  definition for mobile/browser capture into `/dashboard`.
-- `sw.js`: service worker that caches the app shell and bypasses `/api/*`
-  requests so authenticated data is never cached by the browser worker.
-- `app.js` UI primitives: toasts, modal dialogs, destructive confirmations,
-  focus trapping, menu roving focus, settings tabs, escape handling, and route
-  cleanup for global listeners. Repeated no-content views use the escaped
-  `emptyState` renderer, and provider/admin configuration rows use the shared
-  `settingsStatusRows` renderer.
+Routes declare public or protected access before rendering. Same-origin links
+use history navigation; route changes update the document title, announce the
+active surface, expose loading progress, and restore focus to main content.
 
-## Runtime Rules
+The primary shell contains Home, Library, Notes, Graph, and Insights. Desktop
+uses a left rail, tablet a compact rail, and mobile a fixed five-item bottom
+bar. Capture and Search / Ask remain visible globally. More opens the existing
+command palette and the profile control opens imports/exports, Settings,
+Administration for admins, and logout.
 
-- Navigation uses same-origin links intercepted by the router.
-- Routes declare public or protected access before rendering. Public auth-adjacent
-  routes such as `/reset-password` and `/accept-invite` do not call
-  `/api/auth/me`.
-- Embedded static assets use content ETags and `Cache-Control:
-  public, max-age=0, must-revalidate`, so repeat visits can revalidate JS, CSS,
-  and SVG assets with 304 responses instead of downloading the full bodies.
-- The SPA shell document uses `Cache-Control: no-cache` so route fallbacks stay
-  fresh across binary deploys.
-- API calls use `fetch` with `credentials: "include"`.
-- CSRF headers are injected from the `csrf_token` cookie when present.
-- A single refresh retry is attempted after a protected API route returns 401.
-- Authenticated GET reads for saved pages, notes, Today data, Review, Inbox,
-  work queues, reminders, memory jogger, and typed search write bounded
-  `localStorage` snapshots after successful online responses. If a later fetch
-  fails, the API helper returns the latest local snapshot and announces that the
-  UI is showing a recent offline copy. Auth, writes, and admin reads are not
-  served from this cache.
-- Interactive controls are native elements unless custom behavior is required.
-- Route changes expose a top progress marker while async page work is pending.
-- Route changes update the document title, announce the active route, and move
-  focus to the main content after internal navigation or browser history
-  navigation.
-- The Actions button and `Cmd/Ctrl+K` open the command palette. Palette commands
-  reuse existing bookmark, note, search, action item, reminder, link, and
-  link-target APIs; current-item commands appear only on bookmark and note
-  detail routes.
-- Form actions disable the initiating button and swap to specific busy labels.
-- Form failures render inline messages linked to the affected fields with
-  `aria-describedby`.
-- Toasts use semantic tones for success and error feedback; error toasts use
-  assertive alert semantics.
-- Interface colors use semantic OKLCH roles: orange for primary action, blue
-  for information, green for success, red for danger, and gold for attention.
-  Shared line, control-height, reader-width, and reading-measure tokens keep
-  repeated primitives consistent.
-- The authenticated shell includes a skip link and marks the active nav item with
-  `aria-current="page"`.
-- `/today` is the default signed-in route. It reads `/api/daily-notes/{date}`,
-  `/api/inbox`, `/api/action-items`, `/api/reminders`, `/api/review`,
-  `/api/memory-jogger`, and `/api/notes`, then saves the dated daily note with
-  `PUT /api/daily-notes/{date}`.
-- `/dashboard` pre-fills the save form from PWA share-target `title`, `text`,
-  and `url` query parameters. The URL field prefers the explicit `url`
-  parameter, then falls back to the first URL found in shared text.
-- If dashboard capture cannot reach the server, the browser stores only the URL,
-  quick note, tags, and queued timestamp in local storage, then replays those
-  saves through `/api/bookmarks` after the signed-in browser is online again.
-- Daily notes, dashboard quick notes, standalone notes, and bookmark-linked
-  notes expose browser-native dictation when Web Speech recognition is
-  available. Audio stays in the browser/platform recognizer; Arivu only receives
-  the resulting text after the normal save action.
-- Dashboard retrieval supports query, tag, domain, source, read-status, and
-  saved-date range filters, saving the current search, replaying saved searches,
-  and a cited answer panel sourced only from matching saved items. Cited answers
-  synthesize from saved summaries, highlights, snippets, and standalone notes
-  while keeping citations back to the source items. Bookmark-only filters such
-  as tag, domain, source, and read status keep results bookmark-scoped.
-- Cited-answer citations and Review cards expose feedback controls that call
-  `POST /api/feedback`. Result metadata includes why-shown labels, freshness
-  score, and current feedback state.
-- `/notes` is the compact standalone-note list. `/notes/:id` is the full note
-  workspace for editing, action items, reminders, explicit links, backlinks,
-  note-to-note links, and note-to-bookmark links. Link selectors call
-  `/api/link-targets` for slim id/title target rows instead of loading full note
-  bodies or bookmark archive content. `/notes?note=<id>` redirects to
-  `/notes/:id` for compatibility.
-- `/objects` lists and creates typed knowledge objects with small JSON fields
-  and optional source item links. `/board` renders the fixed Today board from
-  `/api/today-board`, and `/evolution` queries `/api/evolution` to line up a
-  topic across daily notes, bookmarks, notes, decisions, meetings, and objects.
-- Settings import/export uses native controls: paste supported export content,
-  submit it to `/api/bookmarks/import`, inspect recent import jobs with fetched,
-  AI-processed, failed, completed status counters, native progress bars, source
-  report chips, and bounded item provenance for the import just submitted,
-  upload document/media imports through `/api/media/import`, paste ICS calendar
-  exports through `/api/calendar/import`, download or restore full JSON backups
-  with second-brain data, or download CSV, browser HTML, and Markdown bookmark
-  interchange exports. Obsidian ZIP export downloads vault-ready bookmark and
-  note folders with explicit graph links as wikilinks from the same export
-  route.
-- Settings tags uses native forms to create primary tags and add aliases to
-  existing tags through the normalized tag APIs.
-- Settings profile uses the existing profile and password-change routes. The
-  API Keys tab is rendered only for admins, uses the existing admin key
-  status/update routes, and exposes generic Model Provider, Model, API Key, and
-  Base URL runtime settings.
-- Settings connections exposes X status, connect, sync, and disconnect controls
-  through the existing X OAuth and sync routes. When X redirects back to
-  `/settings?section=connections&code=...&state=...`, the browser posts the
-  callback to the existing backend route, cleans the URL, refreshes status, and
-  keeps callback errors visible above the current connection state.
-- `/admin` exposes overview, API usage, user management, system, activity,
-  collections, and audit sections for admin users.
-- Extension popup capture includes collection, quick note, and comma-separated
-  tag fields. The off-by-default inline-annotation setting requests optional
-  HTTP(S) access from its user gesture, dynamically registers an external-page
-  selection overlay, and unregisters it when disabled. Selected-text
-  context-menu saves use the extension annotation endpoint; page, link, and
-  keyboard saves keep their regular bookmark behavior.
-- Bookmark save responses include `job_id`; the dashboard shows a short
-  processing status before navigating to the saved bookmark.
-- Bookmark detail is now reader-first: sanitized archived HTML, summaries,
-  tags, and source controls stay up top; workflow state gets one next-step
-  panel; annotations, notes, links, tasks, reminders, and related items live in
-  disclosure groups. A non-empty selection wholly inside archived reader content
-  opens an accessible annotation composer with an optional note. It captures the
-  selection before focus moves, keeps save failures open for retry, uses a
-  bottom-anchored layout on narrow screens, stores a text-quote selector, and
-  refreshes the saved-annotation count after success. Escape and Cancel dismiss
-  it; the disclosure form remains the fallback for manual capture and tags.
-  Existing reader annotations can jump to matching source text, be edited, or
-  be deleted inline. External extension captures save a quote but have no source
-  selector, so they cannot promise a jump until archived content matches.
-- `/focus` keeps the pending default and adds overdue, today, upcoming, and
-  completed views over action items and reminders.
-- `/review` includes the daily memory card from `/api/memory-jogger`, the
-  priority-sorted review queue from `/api/review`, complete and snooze actions,
-  reason labels, priority metadata, and inline task/reminder controls.
-  Standalone notes open in `/notes/:id` and do not expose bookmark-only archive
-  controls.
-- `/review`, `/duplicates`, `/knowledge-graph`, and `/analytics` are real
-  product routes, not placeholders. Analytics renders from the combined
-  `stats`/`topics`/`patterns`/`insights` summary envelope on first paint, updates
-  optional AI insights asynchronously, and must show an in-page error state when
-  the required summary request fails.
-- Custom dialogs use `role="dialog"`, `aria-modal`, focus restoration, Escape
-  close, and tab containment.
-- Menus use `aria-haspopup`, `aria-expanded`, `role="menu"`, roving
-  `role="menuitem"` focus, Arrow key movement, and Escape close.
-- Tabs use `role="tablist"`, `role="tab"`, `role="tabpanel"`, Arrow/Home/End
-  keyboard behavior, and hidden inactive panels.
-- Bookmark grid children use `content-visibility: auto` with an intrinsic size
-  hint so long saved-item lists skip offscreen rendering work.
-- Archived page HTML is inserted only after backend sanitization.
+Legacy product routes run through `compatibilityRedirect`, which preserves the
+incoming query string and supplies only missing canonical-view defaults. This is
+load-bearing for saved deep links and the PWA share target.
 
-## Browser Smoke Checks
+## API Client And Offline Behavior
 
-- Restart the Go server after frontend CSS or JS edits; assets are embedded in
-  the running binary.
-- Use a temporary SQLite database and `SIGNUPS_ENABLED=true` when checking
-  first-run browser flows.
-- Cover `/auth`, `/dashboard`, `/analytics`, `/inbox`, `/focus`, `/review`,
-  `/assistant`, `/notes`, `/notes/:id`, `/bookmark/:id`, and `/settings` at
-  desktop and 390x844 mobile sizes after second-brain route or theme changes.
-- Keep console warning/error collection empty during completed checks.
-- Run `node --test internal/app/webtest/service-worker-register.test.mjs` after
-  changing service-worker startup or browser lifecycle behavior.
-- Confirm the document width does not exceed the viewport at 390x844; the
-  primary navigation should scroll within its own strip instead of widening
-  the page.
-- Keep screenshot artifacts out of the repository unless a test needs them.
-- For annotation work, verify pointer and keyboard selections, quote-only saves,
-  failed-save retry, Escape/Cancel, reader source jumps, the manual disclosure
-  fallback, and the bottom-anchored 390x844 composer. Extension checks also
-  cover permission-off behavior, Arivu-origin exclusion, explicit-save payloads,
-  context-menu routing, token expiry cleanup, and cancellation without a
-  request.
+The client uses same-origin `fetch` with credentials, injects the readable CSRF
+cookie into mutating requests, and attempts one session refresh after a 401.
+Errors use inline form messages or semantic toasts.
 
-## Ongoing Frontend Verification
+Successful authenticated reads write bounded local snapshots for supported
+existing surfaces. When a later read cannot reach Arivu, those views may show a
+recent offline copy. Link and quote capture continue using the bounded offline
+bookmark queue; note and file writes still require the server.
 
-- Keep source-contract tests in `/internal/app/app_test.go` aligned with every
-  route-level UI capability that is not yet covered by a dedicated browser test.
-- Re-run browser smoke checks whenever route structure, dense controls, or
-  keyboard shortcuts change.
+The service worker caches the app shell, bundled webfonts, and canonical route documents but
+bypasses `/api/*`. Online shell requests revalidate so deployments do not leave
+stale JavaScript active.
+
+## Knowledge Surfaces
+
+### Home
+
+`/today` combines the dated daily note with Inbox counts, open tasks/reminders,
+review candidates, recent notes, and memory-jogger content. `view=focus`,
+`view=review`, and `view=board` preserve the deeper existing workflows inside
+the Home destination.
+
+### Library
+
+`/library` calls `/api/library/items` with a default page size of 48. Filters map
+directly to the additive API. Cursor links retain active filters. The Library
+Capture action opens the adaptive composer; the compatible Dashboard and Inbox
+views retain their richer existing controls.
+
+Object creation presents native fields selected by object type. It serializes
+those values into the existing `fields` API object without exposing a raw JSON
+editor in normal use.
+
+### Search / Ask
+
+`/search` uses `/api/search/items` for typed retrieval and `/api/search/answer`
+for cited Ask. It preserves why-shown metadata and links results back to their
+source workspace.
+
+### Graph
+
+`/graph` requests up to 48 nodes and 160 edges from
+`/api/knowledge-graph/v2`; server limits remain authoritative. A focus selector
+requests depth-one expansion. The SVG distinguishes node types and explicit vs
+derived edges, while the inspector exposes provenance and confidence.
+
+SVG nodes are keyboard-selectable. The open `Accessible node list` contains the
+same nodes as ordinary buttons and does not require interpreting the visual
+map. On constrained screens the canvas scrolls and the inspector moves below
+it. Normal browser and touch zoom remain enabled. The graph also provides
+bounded Zoom out, Reset, and Zoom in controls for focused canvas navigation.
+
+### Insights
+
+`/insights` requests deterministic patterns and may filter them client-side by
+family. Cards show title, explanation, detector window, confidence,
+why-detected text, owned evidence, and relevant next actions. Feedback posts to
+`/api/feedback` with an insight target.
+
+Relationship Confirm/Dismiss uses the same endpoint with a relationship target.
+Confirm can promote a server-verified bookmark/note derivative into an explicit
+link; the browser does not construct a trusted edge by itself.
+
+## Shared Interaction Rules
+
+- Presentation uses the Brightlight-derived white/sand, coral, serif/sans,
+  dashed-rule visual system without changing component behavior or hierarchy.
+- Forms retain labels, inline errors, native validity, and specific busy states.
+- Dialogs trap focus, close with Escape, and restore focus.
+- Menus use ARIA menu semantics and roving keyboard focus.
+- Tabs use tablist/tab/tabpanel semantics and Arrow/Home/End behavior.
+- Toasts announce success politely and errors assertively.
+- Archived third-party HTML appears only after backend sanitization.
+- `color-scheme: light` keeps the deliberate light-only palette active even
+  when the operating system requests dark appearance.
+- `prefers-reduced-motion` disables nonessential transitions and animation.
+
+## Browser Smoke Matrix
+
+Use a temporary SQLite database with signups enabled. Check authenticated Home,
+Library, Notes, Search / Ask, Graph, Insights, bookmark detail, note detail, Settings,
+and every compatibility route.
+
+Run desktop, tablet, and 390x844 mobile passes with the light-only palette.
+Repeat at least one pass while the operating system or emulated media requests
+dark appearance and confirm Arivu stays light. Include keyboard-only navigation,
+graph/list equivalence, reduced motion, offline capture, cached reads,
+empty/loading/failure states, long text, no horizontal overflow, and an empty
+completed-flow console. Browser screenshots remain temporary review artifacts
+unless a regression test requires them.

@@ -28,6 +28,15 @@ the generated pages changed.
 The sync is intentionally curated. It publishes the public pages in the map
 above instead of dumping every `openwiki/` page into the GitHub Wiki.
 
+The separate `.github/workflows/openwiki-update.yml` schedule runs the pinned
+OpenWiki CLI against `main` and uses a pinned `peter-evans/create-pull-request`
+action to propose generated `openwiki/` and `AGENTS.md` changes on the
+`openwiki/update` branch. OpenWiki does not rewrite its own privileged workflow,
+its workflow policy documentation, or the repository's unused `CLAUDE.md`
+entrypoint, and optional LangSmith tracing is disabled. Major changes on an
+unmerged branch are therefore documented in that branch; they reach the public
+wiki through the normal `main` sync after merge.
+
 ## Manual Publish
 
 Clone the wiki repository next to the app repository:

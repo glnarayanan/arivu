@@ -27,6 +27,9 @@ COOKIE_SECURE=false
 - The app is a single Go module with the server, embedded frontend, workers, CLI commands, and migration tooling.
 - The canonical Go module path is `github.com/glnarayanan/arivu`. Forks can build with that path unchanged; rename it only when maintaining an independent distribution.
 - The shipped frontend lives under `internal/app/web` and should remain dependency-free.
+- UI changes must follow `DESIGN.md`: preserve existing routes, navigation,
+  menus, and behavior; use the Brightlight-derived light-only system without
+  importing Astro, Tailwind, remote fonts, or reference-theme assets.
 - SQLite is the persistence layer. Keep foreign keys, WAL behavior, and user-scoped predicates intact.
 - Web, CLI, and extension sessions are audience-scoped. Do not let non-web tokens reach web or admin handlers.
 - Server-side outbound fetches must use `internal/safefetch` so SSRF controls stay centralized.

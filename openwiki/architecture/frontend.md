@@ -1,103 +1,95 @@
-# Frontend & Extensions
+# Frontend And Capture Clients
 
-Arivu embeds all user interface assets within the standalone Go binary, presenting a seamless and lightweight experience that does not require node_modules or independent build configurations.
+Arivu embeds a dependency-free browser SPA in the Go binary and ships companion
+WebExtension and CLI capture clients. Production does not require Node.js or a
+separate frontend build.
 
----
+## Embedded Web Application
 
-## Embedded Web Console
+Assets live under `internal/app/web/` and are embedded with `go:embed`.
 
-The UI assets are located in `/internal/app/web/` and are embedded directly into the Go server runtime binary using standard Go virtual filesystem constructs (`go:embed`).
+- `index.html`: accessible root document, light warm-sand `#fcfcf9`
+  theme-color metadata, app mount, route progress indicator, and toast region.
+- `app.js`: client router, authenticated shell, API client, canonical and
+  compatibility routes, shared UI primitives, and product screens.
+- `styles.css`: Brightlight-derived light-only warm editorial tokens, responsive
+  shell, component states, graph semantics, and reduced-motion handling.
+- `manifest.webmanifest`: install metadata, matching light-only `#fcfcf9`
+  background/theme colors, and the compatible GET share target into
+  `/dashboard`.
+- `sw.js`: app-shell and first-party font cache; `/api/*` remains network-only.
+- `service-worker-register.mjs`: CSP-compatible registration lifecycle.
 
-### Assets
-- `index.html`: The main console markup. Offers an accessible, clean document tree.
-- `app.js`: Vanilla browser JavaScript modules implementing reactive client routing, form submissions, settings orchestration, and API connection.
-- `styles.css`: Hardened stylesheet implementing structural layouts with support for theme scaling.
-- `favicon.svg`: Icon asset.
-- `manifest.webmanifest`: PWA metadata plus a GET share target for mobile/browser capture into the dashboard.
-- `sw.js`: app-shell cache for offline startup; `/api/*` is network-only.
+The visual reference changes presentation only. Existing routes, navigation,
+menu layout and options, content hierarchy, and interactions remain unchanged.
+The shipped assets do not contain Brightlight's Astro components, Tailwind
+configuration, scripts, font binaries, or images. Arivu independently bundles
+official OFL-licensed Geist and Noto Serif WOFF2 files with license notices; the
+browser client remains first-party and dependency-free.
 
-### Product Routes
+## Canonical Product Routes
 
-- `/today`: default signed-in cockpit with the dated daily note, Inbox count,
-  due/open work loops, Review items, recent notes, memory jogger, and links into
-  the deeper Capture, Inbox, Focus, Review, Notes, and Assistant routes.
-- `/dashboard`: capture-first cockpit for URL saves, quick notes, manual tags,
-  PWA share-target prefill, visible processing status, saved-page search,
-  voice dictation into the quick note, collapsible filters, and collapsible
-  saved-search management.
-- `/inbox`: capture triage for bookmarks and notes, with per-item stage,
-  priority, next action controls, inline action items, bulk selection, and
-  keyboard triage for stage changes.
-- `/focus`: daily work surface combining action items and reminders with links
-  back to their source items plus quick reminder completion, snooze, and delete
-  actions. Views include pending, overdue, today, upcoming, and completed.
-- `/assistant`: guided planner for inert assistant drafts plus pending
-  proposals for allowlisted actions, with payload/result inspection and
-  explicit execute/reject controls. Draft cards expose the source item and JSON
-  payload before they can be queued as proposals.
-- `/bookmark/:id`: sanitized reader-first workspace with summaries, read
-  state, tags, a compact next-step workflow panel, a non-modal selection
-  composer for saved quotes and optional notes, and collapsed workbench
-  groups for annotations, linked notes, explicit note links/backlinks, action
-  items, reminders, related items, and review actions. Reminder controls include
-  timezone-aware due times, recurrence, in-app/email channel selection, inline
-  edits, snooze, completion, and deletion. Link selectors use slim
-  `/api/link-targets` reads rather than full archive rows.
-- Command palette: the global Actions button and `Cmd/Ctrl+K` expose route
-  jumps, capture, note creation, search/cited answer, and current-item task,
-  reminder, and link creation through existing APIs.
-- `/notes`: compact standalone-note list. `/notes/:id` is the full note
-  workspace for editing, action items, reminders, explicit links, backlinks,
-  note-to-note links, and note-to-bookmark links. Reminder controls match
-  bookmark reminder controls. Note link selectors also use `/api/link-targets`.
-  `/notes?note=<id>` redirects to `/notes/:id` for compatibility.
-- `/review`: daily review queue with complete and snooze actions, "why this
-  came back" reason labels, priority metadata, and inline task/reminder
-  controls. Review and cited-answer cards expose recall feedback controls that
-  persist through `/api/feedback`.
-- `/duplicates`: duplicate groups and merge workflow.
-- `/knowledge-graph`: entity and concept overview from local extraction and optional provider embeddings.
-- `/analytics`: summary counts, topics, and actionable insight signals.
+- `/today`: Home knowledge pulse and contextual Focus, Review, and Board views.
+- `/library`: unified, cursor-based browsing of bookmarks, notes, daily notes,
+  annotations, knowledge objects, entities, and concepts. Filters cover type,
+  topic, source, stage, date, and connection state.
+- `/graph`: bounded typed graph from `/api/knowledge-graph/v2`, with focused
+  expansion, provenance, confidence, inspector, SVG keyboard selection, and an
+  equivalent accessible node list.
+- `/insights`: deterministic, evidence-backed learning patterns with time
+  window, confidence, detection rationale, evidence links, next actions, and
+  feedback.
+- `/search`: keyword retrieval and cited Ask over saved Arivu content.
+- `/bookmark/:id` and `/notes/:id`: existing detailed knowledge workspaces with
+  annotations, tasks, reminders, explicit links, backlinks, and related items.
+- `/settings` and `/admin`: account, import/export, providers, connections, and
+  administrator controls.
 
-### Asset Caching Performance
-As detailed in `/internal/app/app.go`, static asset handlers set content ETags:
-- `index.html` and SPA fallbacks use `Cache-Control: no-cache` so deploys can refresh the shell.
-- JavaScript, CSS, SVG, and favicon responses use `Cache-Control: public, max-age=0, must-revalidate` so repeat visits can revalidate and receive `304 Not Modified`.
+The authenticated shell exposes exactly Home, Library, Notes, Graph, and
+Insights as primary navigation. Capture and Search / Ask are persistent global
+actions. Imports/exports, settings, and administration live under the profile
+or contextual controls. The existing More / `Cmd/Ctrl+K` command palette
+remains.
 
----
+## Compatibility Routes
+
+The client copies the incoming query parameters before replacing the URL with a
+canonical destination:
+
+- `/dashboard` -> `/library?view=capture`
+- `/knowledge-graph` -> `/graph`
+- `/analytics` -> `/insights`
+- `/inbox` -> `/library?view=inbox&stage=inbox`
+- `/focus`, `/review`, `/board` -> matching `/today?view=...` contexts
+- `/assistant` -> `/search?mode=ask&review=actions`
+- `/objects` -> `/library?type=knowledge_object`
+- `/evolution` -> the changed-thinking Insights context with the existing
+  evolution view retained
+- `/duplicates` -> `/library?management=duplicates`
+- `/imports` -> `/settings?section=import`
+
+PWA share URLs continue targeting `/dashboard`; the compatibility redirect
+preserves shared `title`, `text`, and `url` parameters before capture renders.
 
 ## Companion Browser Extension
 
-The `/extension/` directory houses a companion, cross-browser compatible WebExtension.
+The Manifest V3 extension in `extension/` keeps extension tokens in its worker
+and supports action clicks, context menus, keyboard saves, popup capture, and
+opt-in selected-text annotations. Page/link saves post to
+`POST /api/extension/bookmarks`; selected text posts `{url,title,quote,note}` to
+`POST /api/extension/annotations`. Both endpoints require an extension-audience
+token. Arivu-origin pages continue using the native reader annotation composer.
 
-### Manifest Layout
-Declared in `manifest.json` as a Manifest V3 extension, providing integrations:
-- `background.js`: Keeps extension tokens in the worker, handles action clicks,
-  context-menu saves, keyboard command saves, selected-text annotation capture,
-  secure token relay, and dynamic content-script registration.
-- `content.js`: Injected scripts to extract selected page content and trigger seamless "Save in Arivu" operations from local tabs.
-- `popup.html` & `popup.js`: Mini utility panel allowing users to connect their active local server instance, preserve page title, capture notes/tags/collections, and open the saved item or Inbox immediately after capture.
-- `selection-overlay.js`: Off-by-default external-page selection composer. The
-  popup requests optional HTTP(S) access only after the user enables it; the
-  worker registers this script dynamically and unregisters it when disabled
-  without removing unrelated self-hosted API permissions. The script excludes
-  Arivu's configured origin so the native reader composer remains the only
-  capture UI there.
+## CLI And Agent Interfaces
 
-Selected external text posts `{url,title,quote,note}` to
-`POST /api/extension/annotations` with an extension-audience token. The server
-gets or creates the current user's exact-URL bookmark atomically, adds the
-annotation, queues enrichment only for a newly created bookmark, and returns
-the bookmark, annotation, creation flag, and optional job ID. External captures
-intentionally store no source selector in v1.
+`arivu login`, `save`, `list`, and `search` reuse CLI-audience sessions stored in
+the user's config directory. The additive knowledge APIs do not change these
+contracts. Agent routes continue supporting scoped search, bookmark/note reads,
+note creation, tasks, reminders, and decision recording.
 
----
+## Asset Delivery
 
-## CLI Integration Client
-
-The compiled Arivu binary incorporates client interfaces to manage bookmarks securely directly from shell prompts.
-
-When users call `./arivu login --email ... --password ...`, `/cmd/arivu/main.go`
-stores the returned CLI tokens in the user's config directory. Later
-`./arivu save`, `./arivu list`, and `./arivu search` calls reuse that saved
-profile.
+The SPA shell uses `Cache-Control: no-cache`. Static assets expose ETags and
+revalidate. The service worker pre-caches the canonical knowledge routes and the
+legacy Dashboard share target, deletes stale cache versions on activation, and
+never caches authenticated API responses.
