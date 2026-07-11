@@ -36,13 +36,16 @@ test("uses additive knowledge APIs and approachable object fields", () => {
   assert.ok(!app.includes("Fields JSON must be an object."));
 });
 
-test("ships responsive theme and accessible graph fallbacks", () => {
+test("ships a responsive light-only theme and accessible graph fallbacks", () => {
   for (const contract of [
-    "@media (prefers-color-scheme: dark)",
+    "color-scheme: light",
+	"/fonts/geist-variable.woff2",
+	"/fonts/noto-serif-variable-latin.woff2",
     ".mobile-nav",
     ".graph-list",
     "@media (prefers-reduced-motion: reduce)",
   ]) assert.ok(styles.includes(contract), `missing style contract: ${contract}`);
+  assert.ok(!styles.includes("prefers-color-scheme: dark"));
   assert.ok(app.includes('aria-label="Interactive knowledge graph"'));
   assert.ok(app.includes("Accessible node list"));
   assert.ok(app.includes("data-graph-zoom"));

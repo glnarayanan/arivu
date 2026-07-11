@@ -3027,7 +3027,7 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 		t.Fatalf("service worker cache-control = %q", got)
 	}
 	workerBody := readBody(serviceWorker)
-	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v3"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, `cache: "no-cache"`) || !strings.Contains(workerBody, "/api/") {
+	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v4"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, `"/fonts/geist-variable.woff2"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, `cache: "no-cache"`) || !strings.Contains(workerBody, "/api/") {
 		t.Fatalf("service worker missing shell cache/API bypass: %q", workerBody)
 	}
 }

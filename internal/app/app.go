@@ -384,6 +384,8 @@ func serveAsset(w http.ResponseWriter, r *http.Request, name string, data []byte
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case strings.HasSuffix(name, ".svg"):
 		w.Header().Set("Content-Type", "image/svg+xml")
+	case strings.HasSuffix(name, ".woff2"):
+		w.Header().Set("Content-Type", "font/woff2")
 	case strings.HasSuffix(name, ".webmanifest"):
 		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 	default:
