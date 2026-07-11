@@ -24,6 +24,7 @@ migration-manifest.json
 .cache/
 .codegraph/
 .impeccable/
+.reference/
 openwiki/.last-update.json
 
 # Temporary planning artifacts
