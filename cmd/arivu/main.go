@@ -23,6 +23,7 @@ import (
 	"github.com/glnarayanan/arivu/internal/config"
 	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/migrate"
+	"github.com/glnarayanan/arivu/internal/qualityops"
 )
 
 func main() {
@@ -40,6 +41,12 @@ func main() {
 		case "admin":
 			runAdmin(os.Args[2:])
 			return
+		case "quality":
+			runQuality(os.Args[2:])
+			return
+		case "reprocess":
+			runReprocess(os.Args[2:])
+			return
 		case "login":
 			runLogin(os.Args[2:])
 			return
@@ -56,6 +63,60 @@ func main() {
 	}
 
 	runServe(os.Args[1:])
+}
+
+func runQuality(args []string) {
+	if len(args) == 0 || args[0] != "audit" {
+		log.Fatal("usage: arivu quality audit --db arivu.sqlite3 --format json")
+	}
+	fs := flag.NewFlagSet("quality audit", flag.ExitOnError)
+	dbPath := fs.String("db", envDefault("ARIVU_DB", "arivu.sqlite3"), "SQLite database path")
+	format := fs.String("format", "json", "Output format: json or text")
+	userID := fs.String("user-id", "", "Limit aggregate audit results to one user ID")
+	_ = fs.Parse(args[1:])
+	report, err := qualityops.Audit(context.Background(), qualityops.AuditOptions{DBPath: *dbPath, UserID: *userID})
+	if err != nil {
+		log.Fatal(err)
+	}
+	raw, err := qualityops.MarshalReport(report, *format)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Println(string(raw))
+}
+
+func runReprocess(args []string) {
+	fs := flag.NewFlagSet("reprocess", flag.ExitOnError)
+	dbPath := fs.String("db", envDefault("ARIVU_DB", "arivu.sqlite3"), "SQLite database path")
+	backup := fs.String("backup", "", "Verified backup directory or SQLite database file (required with --apply)")
+	userID := fs.String("user-id", "", "Reprocess one user's bookmarks")
+	allUsers := fs.Bool("all-users", false, "Reprocess every user's bookmarks")
+	confirmAll := fs.Bool("confirm-all-users", false, "Confirm the intentionally broad --all-users mutation")
+	batchSize := fs.Int("batch-size", 25, "Maximum durable jobs to enqueue (1-100)")
+	staleVersion := fs.Bool("stale-version", false, "Select bookmarks behind current pipeline versions")
+	dryRun := fs.Bool("dry-run", false, "Explicitly request the default read-only preview")
+	apply := fs.Bool("apply", false, "Queue the verified reprocessing batch")
+	_ = fs.Parse(args)
+	if !*staleVersion {
+		log.Fatal("--stale-version is required")
+	}
+	if *dryRun && *apply {
+		log.Fatal("--dry-run and --apply are mutually exclusive")
+	}
+	result, err := qualityops.Reprocess(context.Background(), qualityops.ReprocessOptions{
+		DBPath:          *dbPath,
+		BackupPath:      *backup,
+		UserID:          *userID,
+		AllUsers:        *allUsers,
+		ConfirmAllUsers: *confirmAll,
+		BatchSize:       *batchSize,
+		Apply:           *apply,
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	raw, _ := json.MarshalIndent(result, "", "  ")
+	fmt.Println(string(raw))
 }
 
 func runServe(args []string) {

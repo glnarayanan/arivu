@@ -12,22 +12,28 @@ import (
 
 func (s *Service) SaveFeedback(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body struct {
-		ItemType   string `json:"item_type"`
-		ItemID     string `json:"item_id"`
-		Surface    string `json:"surface"`
-		Feedback   string `json:"feedback"`
-		Action     string `json:"action"`
-		TargetType string `json:"target_type"`
-		TargetID   string `json:"target_id"`
-		From       string `json:"from"`
-		To         string `json:"to"`
+		ItemType   string   `json:"item_type"`
+		ItemID     string   `json:"item_id"`
+		Surface    string   `json:"surface"`
+		Feedback   string   `json:"feedback"`
+		Action     string   `json:"action"`
+		TargetType string   `json:"target_type"`
+		TargetID   string   `json:"target_id"`
+		TargetIDs  []string `json:"target_ids"`
+		Reason     string   `json:"reason"`
+		From       string   `json:"from"`
+		To         string   `json:"to"`
 	}
 	if err := decodeJSON(r, &body); err != nil {
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
+	if strings.TrimSpace(body.TargetType) == "insight_impression" {
+		s.saveInsightImpressions(w, r, user, body.TargetIDs)
+		return
+	}
 	if targetType := strings.TrimSpace(body.TargetType); targetType != "" {
-		s.saveKnowledgeFeedback(w, r, user, targetType, strings.TrimSpace(body.TargetID), firstNonEmpty(strings.TrimSpace(body.Action), strings.TrimSpace(body.Feedback)), strings.TrimSpace(body.From), strings.TrimSpace(body.To))
+		s.saveKnowledgeFeedback(w, r, user, targetType, strings.TrimSpace(body.TargetID), firstNonEmpty(strings.TrimSpace(body.Action), strings.TrimSpace(body.Feedback)), strings.TrimSpace(body.Reason), strings.TrimSpace(body.From), strings.TrimSpace(body.To))
 		return
 	}
 	itemType := strings.TrimSpace(body.ItemType)
@@ -47,15 +53,22 @@ func (s *Service) SaveFeedback(w http.ResponseWriter, r *http.Request, user auth
 	writeJSON(w, http.StatusOK, map[string]any{"feedback": map[string]any{"item_type": itemType, "item_id": itemID, "surface": surface, "feedback": feedback, "updated_at": now}})
 }
 
-func (s *Service) saveKnowledgeFeedback(w http.ResponseWriter, r *http.Request, user auth.User, targetType, targetID, feedback, from, to string) {
+func (s *Service) saveKnowledgeFeedback(w http.ResponseWriter, r *http.Request, user auth.User, targetType, targetID, feedback, reason, from, to string) {
 	if !validKnowledgeFeedback(targetType, feedback) || targetID == "" {
 		writeError(w, http.StatusBadRequest, "Invalid feedback")
 		return
 	}
+	if feedback != "not_useful" {
+		reason = ""
+	} else if reason != "" && !validInsightFeedbackReason(reason) {
+		writeError(w, http.StatusBadRequest, "Invalid feedback reason")
+		return
+	}
 	var relationship graphV2Edge
 	var targetOwned bool
+	var ownedInsight deterministicInsight
 	if targetType == "insight" {
-		targetOwned = s.ownsInsight(r.Context(), user.ID, targetID)
+		ownedInsight, targetOwned = s.ownedInsight(r.Context(), user.ID, targetID)
 	} else {
 		relationship, targetOwned = s.knowledgeRelationshipBetween(r.Context(), user.ID, targetID, from, to)
 	}
@@ -81,7 +94,7 @@ func (s *Service) saveKnowledgeFeedback(w http.ResponseWriter, r *http.Request, 
 		return
 	}
 	defer tx.Rollback()
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO knowledge_feedback(user_id,target_type,target_id,feedback,snoozed_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,target_type,target_id) DO UPDATE SET feedback=excluded.feedback,snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at`, user.ID, targetType, targetID, feedback, snoozedUntil, formatted, formatted); err != nil {
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO knowledge_feedback(user_id,target_type,target_id,feedback,detector_family,detector_version,reason,snoozed_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(user_id,target_type,target_id) DO UPDATE SET feedback=excluded.feedback,detector_family=excluded.detector_family,detector_version=excluded.detector_version,reason=excluded.reason,snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at`, user.ID, targetType, targetID, feedback, ownedInsight.Type, ownedInsight.DetectorVersion, reason, snoozedUntil, formatted, formatted); err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not save feedback")
 		return
 	}
@@ -109,13 +122,64 @@ func validKnowledgeFeedback(targetType, value string) bool {
 	return targetType == "relationship" && (value == "useful" || value == "not_useful" || value == "dismiss" || value == "confirm")
 }
 
-func (s *Service) ownsInsight(ctx context.Context, userID, targetID string) bool {
+func (s *Service) ownedInsight(ctx context.Context, userID, targetID string) (deterministicInsight, bool) {
 	for _, insight := range s.deterministicInsights(ctx, userID, false) {
 		if insight.ID == targetID {
-			return true
+			return insight, true
 		}
 	}
-	return false
+	return deterministicInsight{}, false
+}
+
+func (s *Service) ownsInsight(ctx context.Context, userID, targetID string) bool {
+	_, ok := s.ownedInsight(ctx, userID, targetID)
+	return ok
+}
+
+func validInsightFeedbackReason(reason string) bool {
+	switch reason {
+	case "", "unsupported", "obvious", "generic", "wrong_connection", "stale", "bad_source":
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Service) saveInsightImpressions(w http.ResponseWriter, r *http.Request, user auth.User, targetIDs []string) {
+	if len(targetIDs) == 0 || len(targetIDs) > 100 {
+		writeError(w, http.StatusBadRequest, "Invalid impressions")
+		return
+	}
+	owned := map[string]deterministicInsight{}
+	for _, insight := range s.deterministicInsights(r.Context(), user.ID, false) {
+		owned[insight.ID] = insight
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not save impressions")
+		return
+	}
+	defer tx.Rollback()
+	seen := map[string]bool{}
+	count := 0
+	for _, targetID := range targetIDs {
+		insight, ok := owned[strings.TrimSpace(targetID)]
+		if !ok || seen[insight.ID] {
+			continue
+		}
+		seen[insight.ID] = true
+		if _, err := tx.ExecContext(r.Context(), `INSERT INTO insight_impressions(user_id,insight_id,detector_family,detector_version,first_seen_at,last_seen_at,impression_count) VALUES(?,?,?,?,?,?,1) ON CONFLICT(user_id,insight_id,detector_version) DO UPDATE SET last_seen_at=excluded.last_seen_at,impression_count=insight_impressions.impression_count+1`, user.ID, insight.ID, insight.Type, insight.DetectorVersion, now, now); err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not save impressions")
+			return
+		}
+		count++
+	}
+	if count == 0 || tx.Commit() != nil {
+		writeError(w, http.StatusBadRequest, "Invalid impressions")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"recorded": count})
 }
 
 func (s *Service) knowledgeRelationshipBetween(ctx context.Context, userID, targetID, from, to string) (graphV2Edge, bool) {

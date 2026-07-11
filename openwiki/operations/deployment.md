@@ -154,6 +154,38 @@ Gemini-backed paths. OpenCode-style client or proxy setups should use Custom.
 
 ## Backup, Restore, And Upgrade Safety
 
+### Quality audit and safe repair
+
+Audit is read-only and redacted: output contains aggregate counts, versions,
+statuses, and reason codes, never URLs, titles, source text, authors, bookmark
+IDs, or the full database path.
+
+```bash
+arivu quality audit --db /var/lib/arivu/arivu.sqlite3 --format json
+arivu reprocess --db /var/lib/arivu/arivu.sqlite3 --stale-version --dry-run --user-id USER_ID
+```
+
+Apply requires explicit scope, a distinct integrity-checked installer backup
+whose protected manual-data fingerprint matches the live database, and a batch
+size from 1 to 100.
+
+```bash
+BACKUP_DIR=$(sudo arivu-installer backup)
+sudo arivu reprocess \
+  --db /var/lib/arivu/arivu.sqlite3 \
+  --stale-version \
+  --user-id USER_ID \
+  --backup "$BACKUP_DIR" \
+  --batch-size 25 \
+  --apply
+```
+
+`--all-users` additionally requires `--confirm-all-users`. Repeating the same
+command reuses the durable run and queues only the next untracked batch.
+Queueing does not delete active summaries or semantics. Review a stratified
+15-20 item sample and the acceptance report before continuing. Stop queueing if
+quality gates fail; restore the verified installer backup for rollback.
+
 `arivu-installer backup` fails if the primary SQLite database is missing and
 uses a SQLite-consistent snapshot instead of raw-copying a live WAL database.
 

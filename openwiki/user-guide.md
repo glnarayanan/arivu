@@ -136,6 +136,11 @@ menu. Non-admin users do not see provider-secret controls. Admin provider fields
 remain generic: Model Provider, Model, API Key, and Base URL. Local/keyless
 providers remain supported.
 
+Arivu keeps source evidence separate from generated artifacts. Short captures
+may have only a short summary, and incomplete captures may have none. A missing
+summary is preferable to unsupported expansion. Highlights quote their source;
+generated entities and concepts must have supporting evidence.
+
 CLI and agent audience routes keep scoped bookmark capture/search, saved-item
 reads, notes, tasks, reminders, and decisions. Web, CLI, and extension tokens
 cannot cross audience boundaries.

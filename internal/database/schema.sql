@@ -58,6 +58,15 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   x_author_name TEXT,
   x_tweet_url TEXT,
   x_metrics_json TEXT,
+  canonical_url TEXT NOT NULL DEFAULT '',
+  content_kind TEXT NOT NULL DEFAULT '',
+  source_published_at TEXT,
+  source_author_id TEXT,
+  source_publisher_key TEXT,
+  processed_at TEXT,
+  fetch_version TEXT NOT NULL DEFAULT '',
+  summary_version TEXT NOT NULL DEFAULT '',
+  enrichment_version TEXT NOT NULL DEFAULT '',
   embedding BLOB,
   embedding_model TEXT,
   embedding_dim INTEGER NOT NULL DEFAULT 0,
@@ -74,6 +83,38 @@ CREATE TABLE IF NOT EXISTS bookmarks (
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_created ON bookmarks(user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_domain ON bookmarks(user_id, domain);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_source ON bookmarks(user_id, source);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_id_user ON bookmarks(id, user_id);
+
+CREATE TABLE IF NOT EXISTS bookmark_evidence (
+  id TEXT PRIMARY KEY,
+  bookmark_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  evidence_kind TEXT NOT NULL,
+  evidence_origin TEXT NOT NULL,
+  authority INTEGER NOT NULL DEFAULT 0,
+  content_text TEXT NOT NULL DEFAULT '',
+  sanitized_html TEXT NOT NULL DEFAULT '',
+  canonical_url TEXT NOT NULL DEFAULT '',
+  author_id TEXT NOT NULL DEFAULT '',
+  publisher_key TEXT NOT NULL DEFAULT '',
+  published_at TEXT,
+  extraction_method TEXT NOT NULL DEFAULT '',
+  content_hash TEXT NOT NULL DEFAULT '',
+  quality_status TEXT NOT NULL DEFAULT 'failed',
+  quality_reasons_json TEXT NOT NULL DEFAULT '[]',
+  extractor_version TEXT NOT NULL DEFAULT '',
+  is_selected INTEGER NOT NULL DEFAULT 0 CHECK(is_selected IN (0,1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  FOREIGN KEY(bookmark_id, user_id) REFERENCES bookmarks(id, user_id) ON DELETE CASCADE,
+  UNIQUE(bookmark_id, evidence_kind, content_hash, extractor_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_user_bookmark ON bookmark_evidence(user_id, bookmark_id, authority DESC);
+CREATE INDEX IF NOT EXISTS idx_evidence_user_published ON bookmark_evidence(user_id, published_at DESC) WHERE published_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_evidence_user_quality_version ON bookmark_evidence(user_id, quality_status, extractor_version);
+CREATE INDEX IF NOT EXISTS idx_evidence_content_hash ON bookmark_evidence(content_hash) WHERE content_hash != '';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_selected_bookmark ON bookmark_evidence(bookmark_id) WHERE is_selected = 1;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
   title,
@@ -117,6 +158,9 @@ CREATE TABLE IF NOT EXISTS knowledge_feedback (
   target_type TEXT NOT NULL CHECK(target_type IN ('insight','relationship')),
   target_id TEXT NOT NULL,
   feedback TEXT NOT NULL CHECK(feedback IN ('useful','not_useful','snooze','dismiss','confirm')),
+  detector_family TEXT NOT NULL DEFAULT '',
+  detector_version TEXT NOT NULL DEFAULT '',
+  reason TEXT NOT NULL DEFAULT '',
   snoozed_until TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL,
@@ -124,6 +168,19 @@ CREATE TABLE IF NOT EXISTS knowledge_feedback (
 );
 
 CREATE INDEX IF NOT EXISTS idx_knowledge_feedback_target ON knowledge_feedback(user_id, target_type, target_id, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS insight_impressions (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  insight_id TEXT NOT NULL,
+  detector_family TEXT NOT NULL,
+  detector_version TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  impression_count INTEGER NOT NULL DEFAULT 1,
+  PRIMARY KEY(user_id, insight_id, detector_version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_insight_impressions_detector ON insight_impressions(user_id, detector_family, detector_version, last_seen_at DESC);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
   user_id UNINDEXED,
@@ -147,6 +204,15 @@ CREATE TABLE IF NOT EXISTS ai_summaries (
   highlights_json TEXT NOT NULL DEFAULT '[]',
   suggested_tags_json TEXT NOT NULL DEFAULT '[]',
   processing_status TEXT NOT NULL DEFAULT 'pending',
+  provider TEXT NOT NULL DEFAULT '',
+  model TEXT NOT NULL DEFAULT '',
+  prompt_version TEXT NOT NULL DEFAULT '',
+  validator_version TEXT NOT NULL DEFAULT '',
+  evidence_hash TEXT NOT NULL DEFAULT '',
+  validation_status TEXT NOT NULL DEFAULT '',
+  validation_reasons_json TEXT NOT NULL DEFAULT '[]',
+  highlight_spans_json TEXT NOT NULL DEFAULT '[]',
+  generated_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -376,6 +442,15 @@ CREATE TABLE IF NOT EXISTS bookmark_entities (
   bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   entity TEXT NOT NULL,
+  normalized_key TEXT NOT NULL DEFAULT '',
+  entity_type TEXT NOT NULL DEFAULT '',
+  confidence REAL NOT NULL DEFAULT 0,
+  extraction_method TEXT NOT NULL DEFAULT '',
+  evidence_id TEXT,
+  evidence_text TEXT NOT NULL DEFAULT '',
+  evidence_start INTEGER NOT NULL DEFAULT 0,
+  evidence_end INTEGER NOT NULL DEFAULT 0,
+  enrichment_version TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(bookmark_id, entity)
 );
 
@@ -383,6 +458,14 @@ CREATE TABLE IF NOT EXISTS bookmark_concepts (
   bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   concept TEXT NOT NULL,
+  normalized_key TEXT NOT NULL DEFAULT '',
+  confidence REAL NOT NULL DEFAULT 0,
+  extraction_method TEXT NOT NULL DEFAULT '',
+  evidence_id TEXT,
+  evidence_text TEXT NOT NULL DEFAULT '',
+  evidence_start INTEGER NOT NULL DEFAULT 0,
+  evidence_end INTEGER NOT NULL DEFAULT 0,
+  enrichment_version TEXT NOT NULL DEFAULT '',
   PRIMARY KEY(bookmark_id, concept)
 );
 
@@ -480,3 +563,44 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_ready ON jobs(status, run_after, priority);
+
+CREATE TABLE IF NOT EXISTS quality_reprocess_runs (
+  id TEXT PRIMARY KEY,
+  scope_type TEXT NOT NULL CHECK(scope_type IN ('user','all')),
+  scope_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+  target_fetch_version TEXT NOT NULL,
+  target_summary_version TEXT NOT NULL,
+  target_enrichment_version TEXT NOT NULL,
+  backup_sha256 TEXT NOT NULL DEFAULT '',
+  protected_digest TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL CHECK(status IN ('planned','queued','running','completed','partial','failed')) DEFAULT 'planned',
+  total_candidates INTEGER NOT NULL DEFAULT 0,
+  queued_count INTEGER NOT NULL DEFAULT 0,
+  completed_count INTEGER NOT NULL DEFAULT 0,
+  partial_count INTEGER NOT NULL DEFAULT 0,
+  failed_count INTEGER NOT NULL DEFAULT 0,
+  skipped_count INTEGER NOT NULL DEFAULT 0,
+  preserved_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_quality_reprocess_runs_scope ON quality_reprocess_runs(scope_type, scope_user_id, status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS quality_reprocess_items (
+  run_id TEXT NOT NULL REFERENCES quality_reprocess_runs(id) ON DELETE CASCADE,
+  bookmark_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+  status TEXT NOT NULL CHECK(status IN ('eligible','queued','processing','completed','partial','failed','skipped')) DEFAULT 'eligible',
+  reason TEXT NOT NULL DEFAULT '',
+  expected_evidence_hash TEXT NOT NULL DEFAULT '',
+  last_error TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(run_id, bookmark_id),
+  FOREIGN KEY(bookmark_id, user_id) REFERENCES bookmarks(id, user_id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_reprocess_items_job ON quality_reprocess_items(job_id) WHERE job_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_quality_reprocess_items_status ON quality_reprocess_items(run_id, status, updated_at);

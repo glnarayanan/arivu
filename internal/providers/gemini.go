@@ -195,10 +195,40 @@ func (c GeminiClient) generate(ctx context.Context, operation string, prompt str
 }
 
 func (c GeminiClient) generateGemini(ctx context.Context, prompt string) (string, error) {
+	return c.generateGeminiWithSchema(ctx, prompt, nil)
+}
+
+func (c GeminiClient) generateStructured(ctx context.Context, operation, prompt string, schema map[string]any, promptLimit int) (result string, err error) {
+	defer func() { c.record(operation, err) }()
+	provider := c.provider()
+	if c.APIKey == "" && !provider.APIKeyOptional {
+		return "", ErrNotConfigured
+	}
+	if promptLimit > 0 && len(prompt) > promptLimit {
+		prompt = prompt[:promptLimit]
+	}
+	if provider.Style == ProviderStyleGemini {
+		return c.generateGeminiWithSchema(ctx, prompt, schema)
+	}
+	switch provider.Style {
+	case ProviderStyleAnthropic:
+		return c.generateAnthropic(ctx, prompt)
+	default:
+		return c.generateOpenAICompatible(ctx, prompt)
+	}
+}
+
+func (c GeminiClient) generateGeminiWithSchema(ctx context.Context, prompt string, schema map[string]any) (string, error) {
 	body := map[string]any{
 		"contents": []map[string]any{{
 			"parts": []map[string]string{{"text": prompt}},
 		}},
+	}
+	if schema != nil {
+		body["generation_config"] = map[string]any{
+			"response_mime_type": "application/json",
+			"response_schema":    schema,
+		}
 	}
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(body); err != nil {

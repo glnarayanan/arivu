@@ -2,6 +2,7 @@ package safefetch
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -133,19 +134,34 @@ func TestExtractDescriptionReadsStandardAndOpenGraphMetadata(t *testing.T) {
 }
 
 func TestContentQualityMarksEmptyAndDiscussionOnlyExtractionsPartial(t *testing.T) {
-	for _, text := range []string{
-		"",
-		"Discussion about this post. Reply Share No posts Ready for more?",
-	} {
-		if got := contentQuality(text); got != QualityPartial {
-			t.Fatalf("contentQuality(%q) = %q, want %q", text, got, QualityPartial)
-		}
+	if got := Assess("article_extraction", "article", "", ""); got.Status != QualityFailed {
+		t.Fatalf("empty assessment = %#v", got)
 	}
-	if got := contentQuality("A concise release note explains the change, the reason for it, and how readers should use the new behavior safely in their workflow."); got != QualityComplete {
-		t.Fatalf("meaningful short content quality = %q, want %q", got, QualityComplete)
+	if got := Assess("article_extraction", "article", "Post", "Discussion about this post. Reply Share No posts Ready for more?"); got.Status != QualityPartial || got.Reasons[0] != "social_chrome" {
+		t.Fatalf("discussion assessment = %#v", got)
 	}
-	if got := contentQuality("Fixed login redirect handling."); got != QualityComplete {
-		t.Fatalf("concise content quality = %q, want %q", got, QualityComplete)
+	if got := Assess("article_extraction", "article", "Release", "Fixed login redirect handling."); got.Status != QualityPartial || got.Reasons[0] != "too_little_article_text" {
+		t.Fatalf("short article assessment = %#v", got)
+	}
+	if got := Assess("x_api", "x_post", "", "Fixed login redirect handling."); got.Status != QualityComplete {
+		t.Fatalf("authoritative short post assessment = %#v", got)
+	}
+}
+
+func TestExtractionBoundaryDecodesEntitiesExactlyOnce(t *testing.T) {
+	input := `<html><head><title>R&amp;D &quot;Notes&quot; &#x27;Today&#x27; — 東京</title><meta name="description" content="A &amp; B &amp;quot;literal&amp;quot;"></head><body><article><p>Useful body copy with enough words to qualify as a complete article extraction result.</p></article></body></html>`
+	if got := ExtractTitle(input); got != `R&D "Notes" 'Today' — 東京` {
+		t.Fatalf("title = %q", got)
+	}
+	if got := ExtractDescription(input); got != `A & B &quot;literal&quot;` {
+		t.Fatalf("description was decoded more than once: %q", got)
+	}
+}
+
+func TestFailureReasonPreservesStructuredUpstreamStatus(t *testing.T) {
+	err := &FetchError{Reason: "upstream_http_401", Err: errors.New("upstream status 401")}
+	if got := FailureReason(err); got != "upstream_http_401" {
+		t.Fatalf("FailureReason() = %q", got)
 	}
 }
 

@@ -3416,18 +3416,31 @@ func TestXOAuthStatusSyncAndDisconnect(t *testing.T) {
 			if got := req.Header.Get("Authorization"); got != "Bearer x-access" {
 				t.Fatalf("bookmarks auth = %q", got)
 			}
+			for _, field := range []string{"created_at", "note_tweet", "referenced_tweets", "attachments"} {
+				if !strings.Contains(req.URL.Query().Get("tweet.fields"), field) {
+					t.Fatalf("tweet.fields missing %q: %q", field, req.URL.Query().Get("tweet.fields"))
+				}
+			}
 			return jsonResponse(http.StatusOK, map[string]any{
 				"data": []map[string]any{{
-					"id":        "tweet-1",
-					"text":      "A useful saved link",
-					"author_id": "x-user",
-					"entities":  map[string]any{"urls": []map[string]any{{"expanded_url": "https://example.com/article?utm_source=x"}}},
+					"id":                "tweet-1",
+					"text":              "A truncated saved link",
+					"author_id":         "x-user",
+					"created_at":        "2026-07-10T04:00:00Z",
+					"note_tweet":        map[string]any{"text": "The complete long-form post text from the X API."},
+					"entities":          map[string]any{"urls": []map[string]any{{"expanded_url": "https://example.com/article?utm_source=x"}}},
+					"referenced_tweets": []map[string]any{{"type": "quoted", "id": "tweet-2"}},
+					"attachments":       map[string]any{"media_keys": []string{"media-1"}},
 					"public_metrics": map[string]any{
 						"like_count": 3,
 					},
 				}},
-				"includes": map[string]any{"users": []map[string]any{{"id": "x-user", "username": "arivu", "name": "Arivu"}}},
-				"meta":     map[string]any{},
+				"includes": map[string]any{
+					"users":  []map[string]any{{"id": "x-user", "username": "arivu", "name": "Arivu"}, {"id": "author-2", "username": "quoted", "name": "Quoted"}},
+					"tweets": []map[string]any{{"id": "tweet-2", "text": "Quoted API context", "author_id": "author-2", "created_at": "2026-07-09T04:00:00Z"}},
+					"media":  []map[string]any{{"media_key": "media-1", "type": "photo", "alt_text": "A useful architecture diagram"}},
+				},
+				"meta": map[string]any{},
 			}), nil
 		case "/2/oauth2/revoke":
 			return jsonResponse(http.StatusOK, map[string]any{"revoked": true}), nil
@@ -3514,6 +3527,17 @@ func TestXOAuthStatusSyncAndDisconnect(t *testing.T) {
 	list.Body.Close()
 	if len(bookmarks) != 1 || bookmarks[0]["source"] != "x" {
 		t.Fatalf("unexpected x bookmarks: %#v", bookmarks)
+	}
+	var bookmarkID, textContent, contentKind, publishedAt, publisherKey string
+	if err := a.db.QueryRow(`SELECT id,text_content,content_kind,COALESCE(source_published_at,''),source_publisher_key FROM bookmarks WHERE source='x'`).Scan(&bookmarkID, &textContent, &contentKind, &publishedAt, &publisherKey); err != nil {
+		t.Fatalf("query X provenance: %v", err)
+	}
+	if textContent != "The complete long-form post text from the X API." || contentKind != "x_article" || publishedAt != "2026-07-10T04:00:00Z" || publisherKey != "x:x-user" {
+		t.Fatalf("X provenance = text=%q kind=%q published=%q publisher=%q", textContent, contentKind, publishedAt, publisherKey)
+	}
+	var evidenceCount int
+	if err := a.db.QueryRow(`SELECT COUNT(*) FROM bookmark_evidence WHERE bookmark_id=? AND evidence_origin='x_api'`, bookmarkID).Scan(&evidenceCount); err != nil || evidenceCount != 3 {
+		t.Fatalf("X evidence count = %d err=%v", evidenceCount, err)
 	}
 
 	disconnect := adminRequest(t, handler, http.MethodPost, "/api/auth/x/disconnect", `{}`, accessCookie, csrfCookie)

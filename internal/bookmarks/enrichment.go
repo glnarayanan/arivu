@@ -2,11 +2,10 @@ package bookmarks
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
-	"sort"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/glnarayanan/arivu/internal/providers"
 )
@@ -15,20 +14,27 @@ type enrichment struct {
 	Bullets    []string
 	Highlights []string
 	Tags       []string
-	Entities   []string
-	Concepts   []string
+	Entities   []providers.SemanticTerm
+	Concepts   []providers.SemanticTerm
 	Embedding  []float64
 }
 
-func (s *Service) enrichText(ctx context.Context, bookmarkID, userID, title, description, text string) enrichment {
+func (s *Service) enrichText(ctx context.Context, bookmarkID, userID, title, description, text string, semanticResults ...providers.SemanticResult) enrichment {
 	body := strings.TrimSpace(title + "\n" + description + "\n" + text)
-	tags := keyTerms(body, 8)
 	result := enrichment{
 		Bullets:    bulletSummary(text, 4),
 		Highlights: highlightSentences(text, 5),
-		Tags:       tags,
-		Entities:   titleTerms(title, body, 10),
-		Concepts:   tags,
+		Tags:       []string{},
+		Entities:   []providers.SemanticTerm{},
+		Concepts:   []providers.SemanticTerm{},
+	}
+	if len(semanticResults) > 0 {
+		validated := providers.ValidateSemantics(providers.SemanticRequest{
+			EvidenceText:  text,
+			QualityStatus: providers.QualityComplete,
+		}, semanticResults[0])
+		result.Entities = validated.Entities
+		result.Concepts = validated.Concepts
 	}
 	if embedding, err := s.aiClient(ctx).GenerateEmbedding(ctx, body); err == nil && len(embedding) > 0 {
 		result.Embedding = embedding
@@ -38,103 +44,58 @@ func (s *Service) enrichText(ctx context.Context, bookmarkID, userID, title, des
 
 func (s *Service) storeEnrichment(ctx context.Context, bookmarkID, userID string, item enrichment, keepAISummary bool) {
 	now := nowString()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return
+	}
+	defer tx.Rollback()
 	if !keepAISummary {
 		bullets, _ := json.Marshal(item.Bullets)
 		highlights, _ := json.Marshal(item.Highlights)
 		tags, _ := json.Marshal(item.Tags)
-		_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET bullet_points_json=?,highlights_json=?,suggested_tags_json=?,updated_at=? WHERE bookmark_id=? AND user_id=?`, string(bullets), string(highlights), string(tags), now, bookmarkID, userID)
+		if _, err := tx.ExecContext(ctx, `UPDATE ai_summaries SET bullet_points_json=?,highlights_json=?,suggested_tags_json=?,updated_at=? WHERE bookmark_id=? AND user_id=?`, string(bullets), string(highlights), string(tags), now, bookmarkID, userID); err != nil {
+			return
+		}
 	}
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM bookmark_entities WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID)
-	_, _ = s.db.ExecContext(ctx, `DELETE FROM bookmark_concepts WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID)
+	if err := s.replaceGeneratedEnrichmentTx(ctx, tx, bookmarkID, userID, "", item); err != nil {
+		return
+	}
+	_ = tx.Commit()
+}
+
+func (s *Service) replaceGeneratedEnrichmentTx(ctx context.Context, tx *sql.Tx, bookmarkID, userID, evidenceID string, item enrichment) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_entities WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_concepts WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_tags WHERE bookmark_id=? AND user_id=? AND source='enrichment'`, bookmarkID, userID); err != nil {
+		return err
+	}
 	for _, entity := range item.Entities {
-		_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_entities(bookmark_id,user_id,entity) VALUES(?,?,?)`, bookmarkID, userID, entity)
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_entities(bookmark_id,user_id,entity,normalized_key,entity_type,confidence,extraction_method,evidence_id,evidence_text,evidence_start,evidence_end,enrichment_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, entity.Label, entity.NormalizedKey, entity.Type, entity.Confidence, entity.Method, nullableStringValue(evidenceID), entity.Evidence, entity.EvidenceStart, entity.EvidenceEnd, entity.Version); err != nil {
+			return err
+		}
 	}
 	for _, concept := range item.Concepts {
-		_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES(?,?,?)`, bookmarkID, userID, concept)
-		_ = s.attachTag(ctx, userID, bookmarkID, concept, "enrichment")
+		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_concepts(bookmark_id,user_id,concept,normalized_key,confidence,extraction_method,evidence_id,evidence_text,evidence_start,evidence_end,enrichment_version) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, concept.Label, concept.NormalizedKey, concept.Confidence, concept.Method, nullableStringValue(evidenceID), concept.Evidence, concept.EvidenceStart, concept.EvidenceEnd, concept.Version); err != nil {
+			return err
+		}
 	}
 	if len(item.Embedding) > 0 {
 		raw, _ := json.Marshal(item.Embedding)
-		_, _ = s.db.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=?,updated_at=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), "gemini/"+providers.GeminiEmbeddingModel, now, bookmarkID, userID)
+		if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), "gemini/"+providers.GeminiEmbeddingModel, bookmarkID, userID); err != nil {
+			return err
+		}
 	}
+	return nil
 }
 
 func (s *Service) bookmarkOwner(ctx context.Context, bookmarkID string) (string, bool) {
 	var userID string
 	err := s.db.QueryRowContext(ctx, `SELECT user_id FROM bookmarks WHERE id=?`, bookmarkID).Scan(&userID)
 	return userID, err == nil
-}
-
-func keyTerms(text string, limit int) []string {
-	counts := map[string]int{}
-	for _, token := range tokenizeWords(text) {
-		if len(token) < 3 || stopWords[token] {
-			continue
-		}
-		counts[token]++
-	}
-	return topTerms(counts, limit)
-}
-
-func titleTerms(title, fallbackText string, limit int) []string {
-	counts := map[string]int{}
-	for _, token := range tokenizeWords(title) {
-		if len(token) >= 3 && !stopWords[token] {
-			counts[token] += 3
-		}
-	}
-	if len(counts) == 0 {
-		for _, token := range tokenizeWords(fallbackText) {
-			if len(token) >= 3 && !stopWords[token] {
-				counts[token]++
-			}
-		}
-	}
-	return titleCaseTerms(topTerms(counts, limit))
-}
-
-func topTerms(counts map[string]int, limit int) []string {
-	type pair struct {
-		term  string
-		count int
-	}
-	items := make([]pair, 0, len(counts))
-	for term, count := range counts {
-		items = append(items, pair{term: term, count: count})
-	}
-	sort.SliceStable(items, func(i, j int) bool {
-		if items[i].count == items[j].count {
-			return items[i].term < items[j].term
-		}
-		return items[i].count > items[j].count
-	})
-	if len(items) > limit {
-		items = items[:limit]
-	}
-	result := make([]string, 0, len(items))
-	for _, item := range items {
-		result = append(result, item.term)
-	}
-	return result
-}
-
-func tokenizeWords(text string) []string {
-	var out []string
-	var b strings.Builder
-	for _, r := range strings.ToLower(text) {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			b.WriteRune(r)
-			continue
-		}
-		if b.Len() > 0 {
-			out = append(out, b.String())
-			b.Reset()
-		}
-	}
-	if b.Len() > 0 {
-		out = append(out, b.String())
-	}
-	return out
 }
 
 func bulletSummary(text string, limit int) []string {
@@ -173,26 +134,6 @@ func splitSentences(text string) []string {
 	})
 }
 
-func titleCaseTerms(values []string) []string {
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		if value == "" {
-			continue
-		}
-		result = append(result, strings.ToUpper(value[:1])+value[1:])
-	}
-	return result
-}
-
 func nowString() string {
 	return time.Now().UTC().Format(time.RFC3339)
-}
-
-var stopWords = map[string]bool{
-	"about": true, "after": true, "again": true, "also": true, "and": true, "are": true, "because": true, "been": true,
-	"but": true, "can": true, "could": true, "does": true, "for": true, "from": true, "has": true, "have": true,
-	"into": true, "its": true, "more": true, "not": true, "one": true, "our": true, "out": true, "over": true,
-	"that": true, "the": true, "their": true, "then": true, "there": true, "these": true, "this": true, "through": true,
-	"was": true, "were": true, "what": true, "when": true, "where": true, "which": true, "with": true, "would": true,
-	"you": true, "your": true,
 }

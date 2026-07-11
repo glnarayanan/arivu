@@ -64,6 +64,10 @@ The `arivu` command suite acts as both a web server and a local CLI manager:
 # Validate a legacy JSON export
 ./arivu migrate --json-export /path/to/legacy-export --out migration-manifest.json --dry-run
 
+# Audit quality and preview stale-version repair without modifying SQLite
+./arivu quality audit --db arivu.sqlite3 --format json
+./arivu reprocess --db arivu.sqlite3 --stale-version --dry-run
+
 # CLI login
 ./arivu login --email you@example.com --password 'replace-me'
 

@@ -21,6 +21,13 @@ single Go binary with SQLite, and remains useful without an AI provider.
 Explicit user links are canonical. Derived relationships and insights are
 rebuildable. Feedback about those derivatives is durable and user-scoped.
 
+Source evidence is the captured or fetched material used to derive reader text,
+summaries, semantics, and insights. A summary may paraphrase that evidence; a
+highlight is an extractive source span. Entities are typed named things,
+concepts are supported ideas, and analytical insights require qualifying
+multi-item evidence. Forgotten-value and knowledge-gap cards are
+recommendations, not analytical confidence claims.
+
 ## Primary Experience
 
 The authenticated interface has five primary destinations:
@@ -72,6 +79,11 @@ patterns. Tasks and reminders support knowledge work but do not define it.
   graph structure, and deterministic insights continue without a provider.
 - Optional providers may improve summaries, embeddings, explanations, and
   synthesis; they must not invent unsupported evidence.
+- Short or incomplete evidence may produce a short summary or no generated
+  summary. Failed and metadata-only evidence never produces synthetic claims.
+- Source-native evidence outranks generic scraping and remains separate from
+  linked-article evidence. Capture, publication, processing, and update times
+  remain distinct.
 - Every query and derivative is scoped to the authenticated user.
 - Archived HTML is sanitized server-side and outbound fetching remains
   SSRF-shielded.
