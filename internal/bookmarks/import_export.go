@@ -220,6 +220,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreReminders(ctx, userID, backup["reminders"], oldBookmarks, oldNotes, now)
 	s.restoreActionItems(ctx, userID, backup["action_items"], oldBookmarks, oldNotes, now)
 	s.restoreResultFeedback(ctx, userID, backup["result_feedback"], oldBookmarks, oldNotes, now)
+	s.restoreKnowledgeFeedback(ctx, userID, backup["knowledge_feedback"], now)
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	s.refreshSearchIndex(ctx, userID)
@@ -644,22 +645,23 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		bookmark["notes"] = s.bookmarkNotes(ctx, userID, id)
 	}
 	return map[string]any{
-		"version":           1,
-		"exported_at":       time.Now().UTC().Format(time.RFC3339),
-		"bookmarks":         bookmarks,
-		"notes":             s.exportStandaloneNotes(ctx, userID),
-		"daily_notes":       s.exportDailyNotes(ctx, userID),
-		"knowledge_objects": s.exportKnowledgeObjects(ctx, userID),
-		"tags":              s.exportTags(ctx, userID),
-		"saved_searches":    s.exportSavedSearches(ctx, userID),
-		"import_jobs":       s.exportImportJobs(ctx, userID),
-		"import_sources":    s.exportImportSources(ctx, userID),
-		"review_events":     s.exportReviewEvents(ctx, userID),
-		"item_states":       s.exportItemStates(ctx, userID),
-		"item_links":        s.exportItemLinks(ctx, userID),
-		"reminders":         s.exportReminders(ctx, userID),
-		"action_items":      s.exportActionItems(ctx, userID),
-		"result_feedback":   s.exportResultFeedback(ctx, userID),
+		"version":            1,
+		"exported_at":        time.Now().UTC().Format(time.RFC3339),
+		"bookmarks":          bookmarks,
+		"notes":              s.exportStandaloneNotes(ctx, userID),
+		"daily_notes":        s.exportDailyNotes(ctx, userID),
+		"knowledge_objects":  s.exportKnowledgeObjects(ctx, userID),
+		"tags":               s.exportTags(ctx, userID),
+		"saved_searches":     s.exportSavedSearches(ctx, userID),
+		"import_jobs":        s.exportImportJobs(ctx, userID),
+		"import_sources":     s.exportImportSources(ctx, userID),
+		"review_events":      s.exportReviewEvents(ctx, userID),
+		"item_states":        s.exportItemStates(ctx, userID),
+		"item_links":         s.exportItemLinks(ctx, userID),
+		"reminders":          s.exportReminders(ctx, userID),
+		"action_items":       s.exportActionItems(ctx, userID),
+		"result_feedback":    s.exportResultFeedback(ctx, userID),
+		"knowledge_feedback": s.exportKnowledgeFeedback(ctx, userID),
 	}, nil
 }
 
@@ -877,6 +879,43 @@ func (s *Service) exportResultFeedback(ctx context.Context, userID string) []map
 		items = append(items, map[string]any{"item_type": itemType, "item_id": itemID, "surface": surface, "feedback": feedback, "created_at": created, "updated_at": updated})
 	}
 	return items
+}
+
+func (s *Service) exportKnowledgeFeedback(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT target_type,target_id,feedback,COALESCE(snoozed_until,''),created_at,updated_at FROM knowledge_feedback WHERE user_id=? ORDER BY updated_at DESC,target_type,target_id`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var targetType, targetID, feedback, snoozedUntil, created, updated string
+		_ = rows.Scan(&targetType, &targetID, &feedback, &snoozedUntil, &created, &updated)
+		items = append(items, map[string]any{"target_type": targetType, "target_id": targetID, "feedback": feedback, "snoozed_until": snoozedUntil, "created_at": created, "updated_at": updated})
+	}
+	return items
+}
+
+func (s *Service) restoreKnowledgeFeedback(ctx context.Context, userID string, raw any, now string) {
+	for _, rawItem := range listValue(raw) {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		targetType := stringValue(item["target_type"])
+		targetID := stringValue(item["target_id"])
+		feedback := stringValue(item["feedback"])
+		if targetID == "" || (targetType != "insight" && targetType != "relationship") || !validKnowledgeFeedback(feedback) {
+			continue
+		}
+		created := fallback(stringValue(item["created_at"]), now)
+		updated := fallback(stringValue(item["updated_at"]), now)
+		var snoozed any
+		if value := stringValue(item["snoozed_until"]); value != "" {
+			snoozed = value
+		}
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO knowledge_feedback(user_id,target_type,target_id,feedback,snoozed_until,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,target_type,target_id) DO UPDATE SET feedback=excluded.feedback,snoozed_until=excluded.snoozed_until,updated_at=excluded.updated_at`, userID, targetType, targetID, feedback, snoozed, created, updated)
+	}
 }
 
 func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {

@@ -112,6 +112,19 @@ CREATE TABLE IF NOT EXISTS result_feedback (
 
 CREATE INDEX IF NOT EXISTS idx_result_feedback_item ON result_feedback(user_id, item_type, item_id);
 
+CREATE TABLE IF NOT EXISTS knowledge_feedback (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  target_type TEXT NOT NULL CHECK(target_type IN ('insight','relationship')),
+  target_id TEXT NOT NULL,
+  feedback TEXT NOT NULL CHECK(feedback IN ('useful','not_useful','snooze','dismiss','confirm')),
+  snoozed_until TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, target_type, target_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_knowledge_feedback_target ON knowledge_feedback(user_id, target_type, target_id, updated_at DESC);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS search_fts USING fts5(
   user_id UNINDEXED,
   item_type UNINDEXED,
