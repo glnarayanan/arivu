@@ -32,6 +32,8 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- Added per-bookmark reprocessing from the reader while preserving manual data
+  and the previous archive until refreshed content is ready.
 - Added inline reader annotation capture with optional notes, selection-derived
   text-quote selectors, retryable errors, Escape/Cancel behavior, and a
   narrow-screen bottom composer while preserving the manual annotation form.
@@ -97,6 +99,9 @@ All notable changes to this project will be documented in this file.
   notes, standalone notes, and bookmark-linked notes.
 - Improved import trust signals with clearer supported-format copy and native
   progress bars over existing import job counters.
+- Hardened article extraction for Substack-style newsletter markup, excluded
+  discussion sections, retained page descriptions, and surfaced partial
+  extraction instead of silently treating comment-only content as complete.
 - Added Settings and API media import for EPUB/PDF/text/HTML/Markdown files,
   pasted transcripts, pasted OCR text, and optional Gemini-backed image OCR,
   saving each import as a searchable `media:*` note.

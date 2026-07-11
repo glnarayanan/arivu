@@ -8,7 +8,7 @@ Arivu is not just a bookmark vault; it is a knowledge engine that processes URL 
 
 Saving a bookmark initiates several processing stages to build a structured graph:
 
-1. **Extraction**: The `safefetch` engine validates the URL, fetches safe page contents, drops page chrome and script/style data, prefers readable article/main content, and removes leading banner copy from normalized text when the article title identifies a later content boundary. It stores sanitized article markup plus normalized article text.
+1. **Extraction**: The `safefetch` engine validates the URL, fetches safe page contents, drops page chrome and script/style data, prefers readable article/main content, and removes leading banner copy from normalized text when the article title identifies a later content boundary. Semantic post containers such as Substack's available post body are preferred over discussion sections, while newsletter-named `<article>` elements remain eligible content. Standard or Open Graph descriptions are retained. Empty and comment-only results are stored with a `partial` enrichment status instead of being presented as complete extraction.
 2. **Analysis**: Clean text drives deterministic reading time, local summaries, highlight candidates, suggested tags, entities, and concepts. A successful model-provider response retains its structured one-sentence summary, long-form explanation, bullets, highlights, and suggested tags; deterministic values fill those fields only when AI is unavailable. Gemini deployments generate semantic vectors through `gemini-embedding-2`; other providers retain local graph enrichment without embeddings.
 3. **Graph Relationships**:
    - Establishes linkages between bookmarks and distinct parsed keywords.
@@ -40,6 +40,10 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Bookmark detail is reader-first, with one next-step workflow panel and
   disclosure groups for annotations, linked notes, explicit links, tasks,
   reminders, related items, and review completion.
+- Bookmark detail can requeue extraction for the current URL. Reprocessing
+  keeps the existing archive and generated context available while queued, then
+  replaces derived content only after a successful refresh. The bookmark,
+  annotations, notes, manual tags, and collection membership remain intact.
 - Reader annotations store text-quote selector metadata when captured from the
   sanitized page selection, so saved highlights can jump back to matching source
   text when the archive still contains that passage.

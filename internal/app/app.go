@@ -127,6 +127,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/bookmarks/merge", a.withUser(a.bookmarks.Merge))
 	mux.HandleFunc("GET /api/bookmarks/{id}", a.withUser(a.bookmarks.Get))
 	mux.HandleFunc("DELETE /api/bookmarks/{id}", a.withUser(a.bookmarks.Delete))
+	mux.HandleFunc("POST /api/bookmarks/{id}/reprocess", a.withUserQuota(quotaBookmarkCreate, a.bookmarks.Reprocess))
 	mux.HandleFunc("PATCH /api/bookmarks/{id}/read-status", a.withUser(a.bookmarks.ReadStatus))
 	mux.HandleFunc("POST /api/bookmarks/{id}/accessed", a.withUser(a.bookmarks.Accessed))
 	mux.HandleFunc("POST /api/bookmarks/{id}/annotations", a.withUser(a.bookmarks.CreateAnnotation))

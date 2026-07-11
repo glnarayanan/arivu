@@ -155,6 +155,80 @@ func TestImportJobProgressIgnoresRetryableProcessFailures(t *testing.T) {
 	if status != "failed" {
 		t.Fatalf("summary status = %q, want failed", status)
 	}
+	_, _ = db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='pending' WHERE bookmark_id='bookmark-1'`)
+	service.RecordJobTerminalFailure(ctx, "bookmark.process", `{"bookmark_id":"bookmark-1"}`)
+	if err := db.QueryRowContext(ctx, `SELECT processing_status FROM ai_summaries WHERE bookmark_id='bookmark-1'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" {
+		t.Fatalf("reprocess summary status = %q, want failed", status)
+	}
+}
+
+func TestPartialExtractionCountsAsImportFailureWithoutRetry(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.ExecContext(ctx, `INSERT INTO users(id,email,name,created_at,updated_at) VALUES(?,?,?,?,?)`, "user-1", "one@example.com", "One", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "bookmark-1", "user-1", "https://example.com/post", "Post", "example.com", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "summary-1", "bookmark-1", "user-1", "partial", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO import_jobs(id,user_id,total_bookmarks,status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "import-1", "user-1", 1, "processing", now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+
+	if err := service.finishBookmarkProcess(ctx, "bookmark-1", "import-1", errPartialExtraction); err != nil {
+		t.Fatalf("partial extraction should complete without retry: %v", err)
+	}
+	assertImportCounters(t, db, "import-1", 0, 0, 1, "completed")
+}
+
+func TestReprocessQueuesExistingBookmarkWithoutDeletingManualData(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.ExecContext(ctx, `INSERT INTO users(id,email,name,created_at,updated_at) VALUES(?,?,?,?,?)`, "user-1", "one@example.com", "One", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,description,domain,sanitized_html,text_content,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, "bookmark-1", "user-1", "https://example.com/post", "Manual title", "Old description", "example.com", "<p>Old content</p>", "Old content", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, "summary-1", "bookmark-1", "user-1", "Old summary", "completed", now, now)
+	_, _ = db.ExecContext(ctx, `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, "annotation-1", "user-1", "bookmark-1", "Keep this quote", "Keep this note", "{}", "[]", now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	req := httptest.NewRequest(http.MethodPost, "/api/bookmarks/bookmark-1/reprocess", nil)
+	req.SetPathValue("id", "bookmark-1")
+	rec := httptest.NewRecorder()
+
+	service.Reprocess(rec, req, auth.User{ID: "user-1"})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	var response map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil || response["job_id"] == "" {
+		t.Fatalf("missing reprocess job: %s", rec.Body.String())
+	}
+	var status, summary string
+	if err := db.QueryRowContext(ctx, `SELECT processing_status,COALESCE(one_sentence,'') FROM ai_summaries WHERE bookmark_id=?`, "bookmark-1").Scan(&status, &summary); err != nil {
+		t.Fatal(err)
+	}
+	if status != "pending" || summary != "Old summary" {
+		t.Fatalf("summary state = %q/%q, want pending with previous summary preserved", status, summary)
+	}
+	var annotations int
+	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM annotations WHERE bookmark_id=?`, "bookmark-1").Scan(&annotations)
+	if annotations != 1 {
+		t.Fatalf("annotations = %d, want preserved", annotations)
+	}
+	rec = httptest.NewRecorder()
+	service.Reprocess(rec, req, auth.User{ID: "user-1"})
+	var queuedJobs int
+	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM jobs WHERE user_id=? AND type='bookmark.process'`, "user-1").Scan(&queuedJobs)
+	if queuedJobs != 1 {
+		t.Fatalf("queued jobs = %d, want repeated reprocess requests deduplicated", queuedJobs)
+	}
 }
 
 func assertImportCounters(t *testing.T, db *sql.DB, id string, fetched int, processed int, failed int, status string) {
