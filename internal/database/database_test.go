@@ -85,6 +85,11 @@ func TestMigrateAddsEvidenceProvenanceToLegacyDatabase(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name='insight_impressions'`).Scan(&table); err != nil {
 		t.Fatalf("insight_impressions table missing: %v", err)
 	}
+	for _, tableName := range []string{"quality_reprocess_runs", "quality_reprocess_items"} {
+		if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name=?`, tableName).Scan(&table); err != nil {
+			t.Fatalf("%s table missing: %v", tableName, err)
+		}
+	}
 	for _, index := range []string{"idx_bookmarks_user_published", "idx_bookmarks_user_pipeline_versions", "idx_evidence_user_bookmark", "idx_evidence_user_published", "idx_evidence_user_quality_version"} {
 		if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='index' AND name=?`, index).Scan(&table); err != nil {
 			t.Errorf("required index %s missing: %v", index, err)

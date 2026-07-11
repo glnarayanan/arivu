@@ -77,6 +77,57 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureInsightFeedback(ctx, db); err != nil {
 		return err
 	}
+	if err := ensureQualityOperations(ctx, db); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ensureQualityOperations(ctx context.Context, db *sql.DB) error {
+	statements := []string{
+		`CREATE TABLE IF NOT EXISTS quality_reprocess_runs (
+			id TEXT PRIMARY KEY,
+			scope_type TEXT NOT NULL CHECK(scope_type IN ('user','all')),
+			scope_user_id TEXT REFERENCES users(id) ON DELETE SET NULL,
+			target_fetch_version TEXT NOT NULL,
+			target_summary_version TEXT NOT NULL,
+			target_enrichment_version TEXT NOT NULL,
+			backup_sha256 TEXT NOT NULL DEFAULT '',
+			protected_digest TEXT NOT NULL DEFAULT '',
+			status TEXT NOT NULL CHECK(status IN ('planned','queued','running','completed','partial','failed')) DEFAULT 'planned',
+			total_candidates INTEGER NOT NULL DEFAULT 0,
+			queued_count INTEGER NOT NULL DEFAULT 0,
+			completed_count INTEGER NOT NULL DEFAULT 0,
+			partial_count INTEGER NOT NULL DEFAULT 0,
+			failed_count INTEGER NOT NULL DEFAULT 0,
+			skipped_count INTEGER NOT NULL DEFAULT 0,
+			preserved_count INTEGER NOT NULL DEFAULT 0,
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_quality_reprocess_runs_scope ON quality_reprocess_runs(scope_type, scope_user_id, status, updated_at DESC)`,
+		`CREATE TABLE IF NOT EXISTS quality_reprocess_items (
+			run_id TEXT NOT NULL REFERENCES quality_reprocess_runs(id) ON DELETE CASCADE,
+			bookmark_id TEXT NOT NULL,
+			user_id TEXT NOT NULL,
+			job_id TEXT REFERENCES jobs(id) ON DELETE SET NULL,
+			status TEXT NOT NULL CHECK(status IN ('eligible','queued','processing','completed','partial','failed','skipped')) DEFAULT 'eligible',
+			reason TEXT NOT NULL DEFAULT '',
+			expected_evidence_hash TEXT NOT NULL DEFAULT '',
+			last_error TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL,
+			updated_at TEXT NOT NULL,
+			PRIMARY KEY(run_id, bookmark_id),
+			FOREIGN KEY(bookmark_id, user_id) REFERENCES bookmarks(id, user_id) ON DELETE CASCADE
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_reprocess_items_job ON quality_reprocess_items(job_id) WHERE job_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_quality_reprocess_items_status ON quality_reprocess_items(run_id, status, updated_at)`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("quality operations migration: %w", err)
+		}
+	}
 	return nil
 }
 

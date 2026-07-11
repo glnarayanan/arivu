@@ -30,6 +30,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- Added privacy-safe aggregate quality auditing and an explicit, dry-run-first
+  reprocessing CLI with scope guards, verified backup matching, bounded durable
+  batches, and idempotent run tracking.
+- Added a 30-case synthetic quality corpus covering evidence, summary
+  faithfulness, semantic precision, extraction failures, unusual text, and
+  prompt injection without production bookmark contents.
+
+### Changed
+
+- Documented evidence provenance, bounded summary and semantic guarantees,
+  insight-versus-recommendation semantics, and staged backup/repair/rollback.
+
 ## [1.1.0] - 2026-07-11
 
 ### Added
