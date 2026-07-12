@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	stdhtml "html"
 	"io"
 	"net/http"
 	"net/url"
@@ -358,7 +359,9 @@ func (a *App) repairExistingXBookmark(r *http.Request, userID, bookmarkID string
 	if err := a.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? AND evidence_kind='source_post' AND evidence_origin='x_api' AND extractor_version='x-api-v1' AND content_text=? AND quality_status=?`, bookmarkID, userID, projection.SourceText, projection.QualityStatus).Scan(&currentEvidence); err != nil {
 		return false, err
 	}
-	projectionRotten := currentText != projection.SourceText || strings.Contains(currentTitle, "&quot;") || strings.Contains(currentDescription, "&quot;") || strings.Contains(strings.ToLower(currentTitle), "https://t.co") || strings.Contains(strings.ToLower(currentDescription), "https://t.co")
+	titleNeedsRepair := xProjectionTextNeedsRepair(currentTitle)
+	descriptionNeedsRepair := xProjectionTextNeedsRepair(currentDescription)
+	projectionRotten := currentText != projection.SourceText || titleNeedsRepair || descriptionNeedsRepair
 	versionsStale := summaryVersion != providers.SummaryPromptVersion || enrichmentVersion != providers.SemanticVersion
 	if currentEvidence > 0 && !projectionRotten && !versionsStale && normalizeForDedup(currentURL) == normalizeForDedup(bookmarkURL) {
 		return false, nil
@@ -372,10 +375,10 @@ func (a *App) repairExistingXBookmark(r *http.Request, userID, bookmarkID string
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err := a.db.ExecContext(r.Context(), `UPDATE bookmarks SET
-		title=CASE WHEN title='' OR title=url OR instr(title,'&quot;')>0 OR instr(lower(title),'https://t.co')>0 THEN ? ELSE title END,
-		description=CASE WHEN description='' OR instr(description,'&quot;')>0 OR instr(lower(description),'https://t.co')>0 THEN ? ELSE description END,
+		title=CASE WHEN title='' OR title=url OR ? THEN ? ELSE title END,
+		description=CASE WHEN description='' OR ? THEN ? ELSE description END,
 		url=?,canonical_url=?,domain=?,text_content=?,x_tweet_id=?,x_author_username=?,x_author_name=?,x_tweet_url=?,x_metrics_json=?,content_kind=?,source_published_at=?,source_author_id=?,source_publisher_key=?,fetch_version='x-api-v1',summary_version='',enrichment_version='',updated_at=?
-		WHERE id=? AND user_id=?`, projection.Title, projection.SourceText, bookmarkURL, bookmarkURL, projection.Domain, projection.SourceText, tweet.ID, author.Username, author.Name, projection.TweetURL, projection.MetricsJSON, projection.ContentKind, nullableString(tweet.CreatedAt), nullableString(tweet.AuthorID), projection.PublisherKey, now, bookmarkID, userID)
+		WHERE id=? AND user_id=?`, titleNeedsRepair, projection.Title, descriptionNeedsRepair, projection.SourceText, bookmarkURL, bookmarkURL, projection.Domain, projection.SourceText, tweet.ID, author.Username, author.Name, projection.TweetURL, projection.MetricsJSON, projection.ContentKind, nullableString(tweet.CreatedAt), nullableString(tweet.AuthorID), projection.PublisherKey, now, bookmarkID, userID)
 	if err != nil {
 		return false, err
 	}
@@ -490,6 +493,10 @@ func xEvidenceQuality(text string, hasMedia bool) (string, []string) {
 		return "metadata_only", []string{"media_without_transcript"}
 	}
 	return "metadata_only", []string{"link_only"}
+}
+
+func xProjectionTextNeedsRepair(value string) bool {
+	return stdhtml.UnescapeString(value) != value || strings.Contains(strings.ToLower(value), "https://t.co")
 }
 
 func hasSubstantiveXText(text string) bool {

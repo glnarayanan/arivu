@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	stdhtml "html"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -3542,7 +3543,7 @@ func TestXOAuthStatusSyncAndDisconnect(t *testing.T) {
 	_, _ = a.db.Exec(`UPDATE bookmark_evidence SET content_text='stale partial API text',quality_status='partial',extractor_version='old-x' WHERE bookmark_id=? AND evidence_kind='source_post'`, bookmarkID)
 	_, _ = a.db.Exec(`DELETE FROM bookmark_evidence WHERE bookmark_id=? AND evidence_kind<>'source_post'`, bookmarkID)
 	_, _ = a.db.Exec(`DELETE FROM jobs WHERE json_extract(payload_json,'$.bookmark_id')=?`, bookmarkID)
-	_, _ = a.db.Exec(`UPDATE bookmarks SET url=x_tweet_url,canonical_url=x_tweet_url,title='ClaudeDevs on X: &quot;https://t.co/rotten&quot;',description='https://t.co/rotten',text_content='quot https com',fetch_version='' WHERE id=?`, bookmarkID)
+	_, _ = a.db.Exec(`UPDATE bookmarks SET url=x_tweet_url,canonical_url=x_tweet_url,title='ClaudeDevs on X: &quot;https://t.co/rotten&quot;',description='Research &amp; https://t.co/rotten',text_content='quot https com',fetch_version='' WHERE id=?`, bookmarkID)
 	repairResp := adminRequest(t, handler, http.MethodPost, "/api/auth/x/sync", `{}`, accessCookie, csrfCookie)
 	if repairResp.StatusCode != http.StatusOK {
 		t.Fatalf("repair sync status = %d body=%s", repairResp.StatusCode, readBody(repairResp))
@@ -3560,7 +3561,7 @@ func TestXOAuthStatusSyncAndDisconnect(t *testing.T) {
 	if err := a.db.QueryRow(`SELECT title,description,text_content,fetch_version FROM bookmarks WHERE id=?`, bookmarkID).Scan(&repairedTitle, &repairedDescription, &repairedText, &repairedFetch); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(repairedTitle, "&quot;") || repairedDescription != "The complete long-form post text from the X API." || repairedText != repairedDescription || repairedFetch != "x-api-v1" {
+	if stdhtml.UnescapeString(repairedTitle) != repairedTitle || stdhtml.UnescapeString(repairedDescription) != repairedDescription || repairedDescription != "The complete long-form post text from the X API." || repairedText != repairedDescription || repairedFetch != "x-api-v1" {
 		t.Fatalf("existing X repair = title=%q description=%q text=%q fetch=%q", repairedTitle, repairedDescription, repairedText, repairedFetch)
 	}
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM bookmark_evidence WHERE bookmark_id=? AND evidence_kind='source_post' AND evidence_origin='x_api' AND quality_status='complete' AND extractor_version='x-api-v1' AND is_selected=1`, bookmarkID).Scan(&evidenceCount); err != nil || evidenceCount != 1 {
