@@ -205,11 +205,7 @@ func installArivuBinary(ctx context.Context, opts ApplyOptions, plan Plan) error
 	if err := VerifyChecksum(binary, sums, name); err != nil {
 		return err
 	}
-	tmp := "/usr/local/bin/arivu.tmp"
-	if err := os.WriteFile(tmp, binary, 0o755); err != nil {
-		return err
-	}
-	return os.Rename(tmp, "/usr/local/bin/arivu")
+	return installExecutableBinary("/usr/local/bin/arivu", binary)
 }
 
 func bootstrapAdmin(ctx context.Context, plan Plan, opts ApplyOptions) error {
@@ -484,16 +480,75 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 
 func activateUpgrade(ctx context.Context, root string) error {
 	if err := runCommand(ctx, "systemctl", "restart", "arivu.service"); err != nil {
-		return err
+		return fmt.Errorf("%w%s", err, serviceFailureDetail(ctx, root))
 	}
 	if err := runCommand(ctx, "systemctl", "is-active", "--quiet", "arivu.service"); err != nil {
-		return err
+		return fmt.Errorf("%w%s", err, serviceFailureDetail(ctx, root))
 	}
 	port := 8080
 	if opts, err := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env")); err == nil && opts.BindPort != 0 {
 		port = opts.BindPort
 	}
-	return healthCheckFunc(ctx, port)
+	if err := healthCheckFunc(ctx, port); err != nil {
+		return fmt.Errorf("%w%s", err, serviceFailureDetail(ctx, root))
+	}
+	return nil
+}
+
+// installExecutableBinary writes a release binary with explicit execute bits.
+// os.WriteFile applies the process umask, so chmod is required for hosts with a
+// restrictive root umask (for example 0117 → 0640 without chmod).
+func installExecutableBinary(path string, data []byte) error {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	// MkdirAll is also umask-affected; directories need +x to be traversable.
+	if err := os.Chmod(dir, 0o755); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	_ = os.Remove(tmp)
+	if err := os.WriteFile(tmp, data, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmp, 0o755); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Rename(tmp, path); err != nil {
+		_ = os.Remove(tmp)
+		return err
+	}
+	if err := os.Chmod(path, 0o755); err != nil {
+		return err
+	}
+	return nil
+}
+
+func serviceFailureDetail(ctx context.Context, root string) string {
+	if root != "/" && root != "" {
+		return ""
+	}
+	var b strings.Builder
+	appendCommandOutput(&b, ctx, "systemctl", "status", "arivu.service", "--no-pager", "-l")
+	appendCommandOutput(&b, ctx, "journalctl", "-u", "arivu.service", "-n", "20", "--no-pager")
+	if b.Len() == 0 {
+		return ""
+	}
+	return "\n" + strings.TrimSpace(b.String())
+}
+
+func appendCommandOutput(b *strings.Builder, ctx context.Context, name string, args ...string) {
+	cmd := exec.CommandContext(ctx, name, args...)
+	out, err := cmd.CombinedOutput()
+	if len(out) == 0 && err != nil {
+		return
+	}
+	if b.Len() > 0 {
+		b.WriteByte('\n')
+	}
+	b.Write(bytes.TrimSpace(out))
 }
 
 func downloadVerifiedArtifact(ctx context.Context, target string, sums []byte) ([]byte, error) {
@@ -528,11 +583,22 @@ func (r *binaryReplacement) prepare() error {
 	} else if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(r.path), 0o755); err != nil {
+	dir := filepath.Dir(r.path)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
 		return err
 	}
 	_ = os.Remove(r.tmp)
-	return os.WriteFile(r.tmp, r.data, 0o755)
+	if err := os.WriteFile(r.tmp, r.data, 0o755); err != nil {
+		return err
+	}
+	if err := os.Chmod(r.tmp, 0o755); err != nil {
+		_ = os.Remove(r.tmp)
+		return err
+	}
+	return nil
 }
 
 func (r *binaryReplacement) commit() error {
@@ -548,6 +614,13 @@ func (r *binaryReplacement) commit() error {
 	if err := os.Rename(r.tmp, r.path); err != nil {
 		if r.hadOriginal {
 			return errors.Join(err, os.Rename(r.previous, r.path))
+		}
+		return err
+	}
+	if err := os.Chmod(r.path, 0o755); err != nil {
+		if r.hadOriginal {
+			_ = os.Remove(r.path)
+			_ = os.Rename(r.previous, r.path)
 		}
 		return err
 	}

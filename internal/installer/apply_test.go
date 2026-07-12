@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/glnarayanan/arivu/internal/database"
@@ -250,6 +251,58 @@ func TestUpgradeWithCustomAppArtifactPreservesInstaller(t *testing.T) {
 	}
 	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu"), "custom app")
 	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu-installer"), "old installer")
+}
+
+func TestInstallExecutableBinaryPreservesExecuteBitUnderRestrictiveUmask(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "bin", "arivu")
+	old := syscall.Umask(0o117)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	if err := installExecutableBinary(path, []byte("#!/bin/sh\n")); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("installed binary mode = %o, want execute bits set", info.Mode().Perm())
+	}
+}
+
+func TestBinaryReplacementCommitPreservesExecuteBitUnderRestrictiveUmask(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usr/local/bin/arivu")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	old := syscall.Umask(0o117)
+	t.Cleanup(func() { syscall.Umask(old) })
+
+	replacement := &binaryReplacement{path: path, data: []byte("new binary")}
+	if err := replacement.prepare(); err != nil {
+		t.Fatal(err)
+	}
+	if err := replacement.commit(); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Fatalf("upgraded binary mode = %o, want execute bits set", info.Mode().Perm())
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "new binary" {
+		t.Fatalf("content = %q", got)
+	}
 }
 
 func upgradeFixture(t *testing.T) string {
