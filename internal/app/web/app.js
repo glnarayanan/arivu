@@ -4395,7 +4395,7 @@ function graphSVG(nodes, edges, positions) {
     }).join("")}</g>
     <g class="graph-nodes">${nodes.map((node) => {
       const point = positions[node.id];
-      return `<g class="graph-node" data-kind="${escapeHTML(node.type)}" data-graph-node="${escapeHTML(node.id)}" tabindex="0" role="button" aria-label="${escapeHTML(`${node.title || node.id}, ${knowledgeTypeLabel(node.type)}`)}" transform="translate(${point.x} ${point.y})"><circle r="${node === nodes[0] ? 12 : 8}"></circle><text y="-15">${escapeHTML(String(node.title || node.id).slice(0, 24))}</text></g>`;
+      return `<a href="${escapeHTML(knowledgeItemHref(node.type, node.source_id, node.title))}" data-graph-node="${escapeHTML(node.id)}" aria-label="${escapeHTML(`Open ${node.title || node.id}, ${knowledgeTypeLabel(node.type)}`)}"><g class="graph-node" data-kind="${escapeHTML(node.type)}" transform="translate(${point.x} ${point.y})"><circle r="${node === nodes[0] ? 12 : 8}"></circle><text y="-15">${escapeHTML(String(node.title || node.id).slice(0, 24))}</text></g></a>`;
     }).join("")}</g>
   </svg>`;
 }
@@ -4408,7 +4408,7 @@ function bindGraphNodes(nodes, edges) {
     document.querySelector("#graph-inspector").innerHTML = graphInspector(node, edges, nodes);
     bindRelationshipFeedback();
   };
-  document.querySelectorAll("[data-graph-node]").forEach((item) => {
+  document.querySelectorAll(".graph-list-node").forEach((item) => {
     item.addEventListener("click", () => select(item.dataset.graphNode));
     item.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(item.dataset.graphNode); }

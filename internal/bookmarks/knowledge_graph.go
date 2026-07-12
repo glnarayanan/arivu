@@ -89,7 +89,7 @@ func scanGraphV2Nodes(rows interface {
 		if err := rows.Scan(&userID, &id, &itemType, &title, &body, &source, &stage, &topic, &connection, &created, &updated); err != nil {
 			return nil, err
 		}
-		nodes = append(nodes, graphV2Node{ID: graphNodeID(itemType, id), Type: itemType, SourceID: id, Title: title, Summary: truncateText(body, 240), Source: source, UpdatedAt: updated})
+		nodes = append(nodes, graphV2Node{ID: graphNodeID(itemType, id), Type: itemType, SourceID: id, Title: knowledgeDisplayTitle(itemType, title, body), Summary: truncateText(body, 240), Source: source, UpdatedAt: updated})
 	}
 	return nodes, rows.Err()
 }

@@ -25,7 +25,8 @@ Saving a bookmark initiates several processing stages to build a structured grap
    Unresolved X short-link placeholders whose title and body are only the same
    `t.co` URL also remain stored for repair but are omitted from Library rows;
    ordinary unenriched URLs and `t.co` captures with useful context remain
-   visible.
+   visible. Generic scraper labels such as `Post / X` fall back to the useful
+   bookmark body in Library and Graph projections instead of becoming nodes.
 4. **Graph relationships**: `/api/knowledge-graph/v2` projects explicit links,
    source links, shared concepts, shared entities, and semantic similarity where
    embeddings exist. Every edge has a stable ID, provenance, and confidence.

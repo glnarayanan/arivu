@@ -73,3 +73,8 @@ test("ships a responsive light-only theme and accessible graph fallbacks", () =>
   assert.ok(app.includes('id="global-capture"'));
   assert.ok(app.includes('href="/search"'));
 });
+
+test("opens visual graph nodes at their saved knowledge item", () => {
+  assert.ok(app.includes('href="${escapeHTML(knowledgeItemHref(node.type, node.source_id, node.title))}"'));
+  assert.ok(app.includes('document.querySelectorAll(".graph-list-node")'));
+});

@@ -69,6 +69,7 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 			writeError(w, http.StatusInternalServerError, "Could not load library")
 			return
 		}
+		title = knowledgeDisplayTitle(itemType, title, body)
 		items = append(items, map[string]any{"id": id, "type": itemType, "title": title, "body": body, "source": source, "stage": stage, "topic": topic, "connection": connection, "created_at": created, "updated_at": updated})
 	}
 	if err := rows.Err(); err != nil {
@@ -88,6 +89,19 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next, "facets": facets})
+}
+
+func knowledgeDisplayTitle(itemType, title, body string) string {
+	if itemType != "bookmark" {
+		return title
+	}
+	switch strings.ToLower(strings.TrimSpace(title)) {
+	case "post / x", "post on x", "x post", "x / twitter":
+		if useful := truncateText(body, 160); useful != "" {
+			return useful
+		}
+	}
+	return title
 }
 
 // libraryDisplayEligibilitySQL hides unresolved short-link placeholders while
