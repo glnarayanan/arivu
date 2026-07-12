@@ -96,7 +96,11 @@ sudo arivu-installer uninstall
 
 Release builds inject the Git tag into both binaries. A packaged release should
 report the same tag for the application and installer; `devel` is reserved for
-untagged local builds.
+untagged local builds. Install and upgrade write app and installer binaries with
+explicit mode `0755` so a restrictive root umask cannot leave them
+non-executable. If an upgrade health check fails, the installer rolls back the
+previous binaries and includes best-effort `systemctl status` / `journalctl`
+output in the error.
 
 `--tls-email` is rendered into Arivu-managed Caddy site blocks. Nginx and
 Apache snippets still leave certificate ownership to the existing proxy.

@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-07-13
+
+### Fixed
+
+- Made database migration apply schema in additive-safe phases: create tables and
+  unique indexes first, run column ensures, then create non-unique indexes. This
+  lets existing installs gain quality metadata columns before indexes that
+  reference them, so self-hosted upgrades no longer fail on start with
+  `no such column: enrichment_version`.
+- Install and upgrade paths now `chmod 0755` release binaries after write so a
+  restrictive root umask cannot strip execute bits (`Permission denied` /
+  systemd `203/EXEC`). Failed upgrades include best-effort `systemctl status`
+  and recent `journalctl` output to speed diagnosis.
+
 ## [1.2.0] - 2026-07-12
 
 ### Added

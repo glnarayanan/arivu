@@ -55,6 +55,12 @@ To achieve high concurrent throughput and protect data integrity, the driver ini
 
 ### Schema Definition
 
+On open, `Migrate()` converges additive SQLite schemas in three phases: create
+tables and unique indexes from `schema.sql`, apply `ensure*` column and
+backfill helpers for existing installs, then create non-unique indexes. That
+order keeps upgrades safe when new indexes reference columns that only exist
+after `ALTER TABLE` ensures.
+
 The full tables structure is declared in `/internal/database/schema.sql`. It models:
 - **Core Entities**: `users`, `sessions`, `bookmarks`, `collections`, `collection_bookmarks` (join table).
 - **Processing Outputs**: `ai_summaries` (from the configured model provider), `bookmark_entities`, and `bookmark_concepts`.
