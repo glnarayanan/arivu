@@ -48,7 +48,8 @@ All notable changes to this project will be documented in this file.
   evidence as partial instead of completed, and X Sync repairs existing rotten
   duplicates from HTML-entity-decoded API evidence before requeueing analysis. Unvalidated
   legacy summaries no longer block a safe fallback swap when replacement model
-  output fails validation.
+  output fails validation, while unavailable historical X items keep their
+  bookmark and receive only deterministic title decoding plus generated-state cleanup.
 
 ## [1.1.0] - 2026-07-11
 

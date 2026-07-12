@@ -72,6 +72,9 @@ Second-brain v1 adds user-authored context around bookmarks:
   Only a current, validated summary for the same evidence hash can block a
   failed replacement; unvalidated legacy summaries are replaced by a bounded
   fallback so stale semantics cannot keep the repair job retrying indefinitely.
+  X bookmarks no longer returned by the provider retain their local record and
+  manual context; insufficient-evidence cleanup only decodes the stored title
+  and removes generated artifacts.
 - Reader annotations store text-quote selector metadata when captured from the
   sanitized page selection, so saved highlights can jump back to matching source
   text when the archive still contains that passage.

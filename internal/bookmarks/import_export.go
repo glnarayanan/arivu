@@ -255,9 +255,12 @@ func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qual
 		return err
 	}
 	defer tx.Rollback()
-	var userID, evidenceOrigin, evidenceStatus, extractorVersion string
-	if err := tx.QueryRowContext(ctx, `SELECT b.user_id,COALESCE(e.evidence_origin,''),COALESCE(e.quality_status,''),COALESCE(e.extractor_version,'') FROM bookmarks b LEFT JOIN bookmark_evidence e ON e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 WHERE b.id=?`, bookmarkID).Scan(&userID, &evidenceOrigin, &evidenceStatus, &extractorVersion); err != nil {
+	var userID, source, title, evidenceOrigin, evidenceStatus, extractorVersion string
+	if err := tx.QueryRowContext(ctx, `SELECT b.user_id,b.source,COALESCE(b.title,''),COALESCE(e.evidence_origin,''),COALESCE(e.quality_status,''),COALESCE(e.extractor_version,'') FROM bookmarks b LEFT JOIN bookmark_evidence e ON e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 WHERE b.id=?`, bookmarkID).Scan(&userID, &source, &title, &evidenceOrigin, &evidenceStatus, &extractorVersion); err != nil {
 		return err
+	}
+	if source == "x" || source == "twitter" {
+		title = html.UnescapeString(title)
 	}
 	authoritativeEmpty := evidenceOrigin == "x_api" && evidenceStatus == "metadata_only" && extractorVersion == "x-api-v1"
 	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_entities WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
@@ -269,7 +272,7 @@ func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qual
 	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_tags WHERE bookmark_id=? AND user_id=? AND source='enrichment'`, bookmarkID, userID); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=NULL,embedding_dim=0,embedding_model=NULL,processed_at=?,fetch_version=CASE WHEN ? THEN ? ELSE fetch_version END,summary_version=CASE WHEN ? THEN ? ELSE summary_version END,enrichment_version=CASE WHEN ? THEN ? ELSE enrichment_version END WHERE id=?`, now, authoritativeEmpty, extractorVersion, authoritativeEmpty, providers.SummaryPromptVersion, authoritativeEmpty, providers.SemanticVersion, bookmarkID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET title=?,embedding=NULL,embedding_dim=0,embedding_model=NULL,processed_at=?,fetch_version=CASE WHEN ? THEN ? ELSE fetch_version END,summary_version=CASE WHEN ? THEN ? ELSE summary_version END,enrichment_version=CASE WHEN ? THEN ? ELSE enrichment_version END WHERE id=?`, title, now, authoritativeEmpty, extractorVersion, authoritativeEmpty, providers.SummaryPromptVersion, authoritativeEmpty, providers.SemanticVersion, bookmarkID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `UPDATE ai_summaries SET one_sentence=CASE WHEN validation_status='validated' THEN one_sentence ELSE NULL END,bullet_points_json=CASE WHEN validation_status='validated' THEN bullet_points_json ELSE '[]' END,long_form=CASE WHEN validation_status='validated' THEN long_form ELSE NULL END,highlights_json=CASE WHEN validation_status='validated' THEN highlights_json ELSE '[]' END,suggested_tags_json=CASE WHEN validation_status='validated' THEN suggested_tags_json ELSE '[]' END,processing_status=CASE WHEN validation_status='validated' AND processing_status='completed' THEN processing_status ELSE ? END,validation_status=CASE WHEN validation_status='validated' THEN validation_status ELSE 'insufficient_evidence' END,updated_at=? WHERE bookmark_id=?`, status, now, bookmarkID); err != nil {

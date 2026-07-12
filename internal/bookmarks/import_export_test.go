@@ -272,17 +272,18 @@ func TestProcessXArticleFailureFallsBackWithoutDestroyingSource(t *testing.T) {
 func TestProcessMetadataOnlyXDoesNotGenerateClaims(t *testing.T) {
 	service, db := xProcessingTestService(t, "x-media", "https://x.com/author/status/3", "x_media", "https://t.co/media", "metadata_only")
 	now := "2026-07-11T08:00:00Z"
+	_, _ = db.Exec(`UPDATE bookmarks SET title='Author on X: &quot;https://t.co/media&quot;' WHERE id='x-media'`)
 	_, _ = db.Exec(`INSERT INTO tags(id,user_id,name,slug,source,created_at,updated_at) VALUES('manual-tag','user-1','Manual','manual','manual',?,?),('generated-tag','user-1','Generated','generated','enrichment',?,?)`, now, now, now, now)
 	_, _ = db.Exec(`INSERT INTO bookmark_tags(bookmark_id,tag_id,user_id,source,created_at) VALUES('x-media','manual-tag','user-1','manual',?),('x-media','generated-tag','user-1','enrichment',?)`, now, now)
 	if err := service.processBookmark(t.Context(), "x-media", "https://x.com/author/status/3"); err != nil {
 		t.Fatal(err)
 	}
-	var status, summary string
-	if err := db.QueryRow(`SELECT processing_status,COALESCE(one_sentence,'') FROM ai_summaries WHERE bookmark_id='x-media'`).Scan(&status, &summary); err != nil {
+	var status, summary, title string
+	if err := db.QueryRow(`SELECT s.processing_status,COALESCE(s.one_sentence,''),b.title FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id WHERE b.id='x-media'`).Scan(&status, &summary, &title); err != nil {
 		t.Fatal(err)
 	}
-	if status != "insufficient_evidence" || summary != "" {
-		t.Fatalf("metadata-only summary = status=%q summary=%q", status, summary)
+	if status != "insufficient_evidence" || summary != "" || strings.Contains(title, "&quot;") {
+		t.Fatalf("metadata-only output = status=%q summary=%q title=%q", status, summary, title)
 	}
 	var manualTags, generatedTags int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM bookmark_tags WHERE bookmark_id='x-media' AND source='manual'`).Scan(&manualTags)
