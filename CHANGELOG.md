@@ -2,33 +2,9 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.1] - 2026-07-10
-
-### Changed
-
-- Restored legacy parity for key Go-port surfaces: X OAuth now completes from
-  the Settings redirect callback, Analytics returns the combined legacy summary
-  envelope with immediate first paint and resilient page rendering, bookmark
-  extraction uses readable article text instead of raw DOM text, Gemini
-  summaries populate structured summary fields with a local fallback status
-  when AI is unavailable, Admin settings expose Gemini model/base URL controls,
-  and the embedded UI returns to the sharp signal-orange/electric-blue brutalist
-  theme.
-- Consolidated repeated empty states, runtime-setting rows, and shared visual
-  dimensions; moved service-worker registration into the CSP-approved app
-  module, added lifecycle regression coverage, refreshed the offline shell
-  cache, and contained mobile navigation within narrow viewports.
-- Reworked the embedded frontend palette into accessible semantic OKLCH roles,
-  then reduced supporting borders, shadows, typography weight, and motion while
-  preserving primary brutalist work surfaces.
-- Clarified core navigation, workflow counts, Assistant safeguards,
-  destructive actions, provider settings, and admin controls with specific,
-  outcome-focused interface copy.
-- Bookmark cards now describe missing source metadata neutrally instead of
-  implying that every blank description is waiting for enrichment; reader and
-  import views remain the source of truth for processing status.
-
 ## [Unreleased]
+
+## [1.2.0] - 2026-07-12
 
 ### Added
 
@@ -58,10 +34,11 @@ All notable changes to this project will be documented in this file.
 - Quarantined unversioned or unsupported legacy entities and concepts from
   Library, Graph, and Insights; source-aware reprocessing now reports missing X
   evidence as partial instead of completed, and X Sync repairs existing rotten
-  duplicates from HTML-entity-decoded API evidence before requeueing analysis. Unvalidated
-  legacy summaries no longer block a safe fallback swap when replacement model
-  output fails validation, while unavailable historical X items keep their
-  bookmark and receive only deterministic title decoding plus generated-state cleanup.
+  duplicates from HTML-entity-decoded API evidence before requeueing analysis.
+  Unvalidated legacy summaries no longer block a safe fallback swap when
+  replacement model output fails validation, while unavailable historical X
+  items keep their bookmark and receive only deterministic title decoding plus
+  generated-state cleanup.
 
 ## [1.1.0] - 2026-07-11
 
@@ -341,3 +318,29 @@ All notable changes to this project will be documented in this file.
 - Assistant suggestions are CSRF-protected, quota-limited, user-scoped, and ephemeral; queueing and approval continue to validate allowlisted proposal payloads before any mutation runs.
 - Inbox bulk triage is CSRF-protected, quota-limited, user-scoped, and returns per-item failures for stale or cross-user targets.
 - Bookmark cards now escape saved titles, domains, and descriptions before inserting them into the embedded frontend.
+
+## [1.0.1] - 2026-07-10
+
+### Changed
+
+- Restored legacy parity for key Go-port surfaces: X OAuth now completes from
+  the Settings redirect callback, Analytics returns the combined legacy summary
+  envelope with immediate first paint and resilient page rendering, bookmark
+  extraction uses readable article text instead of raw DOM text, Gemini
+  summaries populate structured summary fields with a local fallback status
+  when AI is unavailable, Admin settings expose Gemini model/base URL controls,
+  and the embedded UI returns to the sharp signal-orange/electric-blue brutalist
+  theme.
+- Consolidated repeated empty states, runtime-setting rows, and shared visual
+  dimensions; moved service-worker registration into the CSP-approved app
+  module, added lifecycle regression coverage, refreshed the offline shell
+  cache, and contained mobile navigation within narrow viewports.
+- Reworked the embedded frontend palette into accessible semantic OKLCH roles,
+  then reduced supporting borders, shadows, typography weight, and motion while
+  preserving primary brutalist work surfaces.
+- Clarified core navigation, workflow counts, Assistant safeguards,
+  destructive actions, provider settings, and admin controls with specific,
+  outcome-focused interface copy.
+- Bookmark cards now describe missing source metadata neutrally instead of
+  implying that every blank description is waiting for enrichment; reader and
+  import views remain the source of truth for processing status.
