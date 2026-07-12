@@ -606,7 +606,7 @@ func TestPersistSelectedEvidenceAtomicallyStoresValidatedSummaryAndSemantics(t *
 	}
 }
 
-func TestPersistSelectedEvidenceKeepsLastValidArtifactsWhenValidationFails(t *testing.T) {
+func TestPersistSelectedEvidenceRepairsInconsistentValidSummaryStateWithFallback(t *testing.T) {
 	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
@@ -620,15 +620,46 @@ func TestPersistSelectedEvidenceKeepsLastValidArtifactsWhenValidationFails(t *te
 	oldEvidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "Old evidence", QualityStatus: "complete", ExtractorVersion: "old", Selected: true})
 	newEvidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "GLM 5.2 comparison results are pending.", QualityStatus: "complete", ExtractorVersion: "new"})
 	_, _ = db.Exec(`UPDATE ai_summaries SET prompt_version=?,validator_version=?,evidence_hash=?,validation_status='validated' WHERE bookmark_id='bookmark-1'`, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, newEvidence.ContentHash)
-	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "x.com", newEvidence); err == nil {
-		t.Fatal("expected unsupported comparison result to fail validation")
+	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "x.com", newEvidence); err != nil {
+		t.Fatalf("inconsistent state should complete a safe fallback swap: %v", err)
 	}
 	var summary, textContent, selectedID string
 	if err := db.QueryRow(`SELECT s.one_sentence,b.text_content,(SELECT id FROM bookmark_evidence WHERE bookmark_id=b.id AND is_selected=1) FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id WHERE b.id='bookmark-1'`).Scan(&summary, &textContent, &selectedID); err != nil {
 		t.Fatal(err)
 	}
-	if summary != "Last valid summary" || textContent != "Old evidence" || selectedID != oldEvidence.ID {
-		t.Fatalf("failed replacement changed active artifacts: summary=%q text=%q selected=%q want=%q", summary, textContent, selectedID, oldEvidence.ID)
+	if summary == "Last valid summary" || textContent != newEvidence.Text || selectedID != newEvidence.ID {
+		t.Fatalf("inconsistent state was not repaired: summary=%q text=%q selected=%q old=%q", summary, textContent, selectedID, oldEvidence.ID)
+	}
+}
+
+func TestPersistSelectedEvidenceKeepsAlreadyActiveValidArtifacts(t *testing.T) {
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('user-1','one@example.com','One',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,text_content,content_kind,summary_version,enrichment_version,created_at,updated_at) VALUES('bookmark-1','user-1','https://example.com/post','Post','example.com','Active evidence','article',?,?,?,?)`, providers.SummaryPromptVersion, providers.SemanticVersion, now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{APIKey: "test", BaseURL: "https://gemini.test", HTTP: summaryTestHTTPClient(`{"one_sentence":"Unsupported claim.","long_form":"","bullet_points":[],"highlights":[],"suggested_tags":[],"entities":[],"concepts":[]}`)})
+	evidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "fetched_article", Origin: "web_fetch", Text: "Active evidence", QualityStatus: "complete", ExtractorVersion: safefetch.ExtractorVersion, Selected: true})
+	_, _ = db.Exec(`INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,processing_status,prompt_version,validator_version,evidence_hash,validation_status,created_at,updated_at) VALUES('summary-1','bookmark-1','user-1','Last valid summary','completed',?,?,?,'validated',?,?)`, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, evidence.ContentHash, now, now)
+	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "example.com", evidence); err != nil {
+		t.Fatalf("already active valid artifacts should avoid retry churn: %v", err)
+	}
+	var summary string
+	if err := db.QueryRow(`SELECT one_sentence FROM ai_summaries WHERE bookmark_id='bookmark-1'`).Scan(&summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary != "Last valid summary" {
+		t.Fatalf("active valid summary changed to %q", summary)
+	}
+}
+
+func TestSummaryFailureReasonsClassifiesDeadline(t *testing.T) {
+	reasons := summaryFailureReasons(context.DeadlineExceeded)
+	if len(reasons) != 1 || reasons[0] != providers.ErrorProviderTimeout {
+		t.Fatalf("deadline reasons = %#v", reasons)
 	}
 }
 

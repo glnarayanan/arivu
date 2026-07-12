@@ -4,6 +4,15 @@ import (
 	"context"
 	"log"
 	"time"
+
+	"github.com/glnarayanan/arivu/internal/providers"
+	"github.com/glnarayanan/arivu/internal/safefetch"
+)
+
+const (
+	jobLease                 = 4 * time.Minute
+	bookmarkLeaseMargin      = 90 * time.Second
+	bookmarkProcessingBudget = safefetch.RequestTimeout + providers.SummaryGenerationBudget + providers.EmbeddingRequestTimeout
 )
 
 func (a *App) startWorkers(ctx context.Context) {
@@ -24,7 +33,7 @@ func (a *App) startWorkers(ctx context.Context) {
 }
 
 func (a *App) runOneJob(ctx context.Context) {
-	job, ok, err := a.jobs.Lease(ctx, 2*time.Minute)
+	job, ok, err := a.jobs.Lease(ctx, jobLease)
 	if err != nil {
 		log.Printf("job lease: %v", err)
 		return

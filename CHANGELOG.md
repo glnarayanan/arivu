@@ -43,6 +43,12 @@ All notable changes to this project will be documented in this file.
 
 - Documented evidence provenance, bounded summary and semantic guarantees,
   insight-versus-recommendation semantics, and staged backup/repair/rollback.
+- Kept incomplete and metadata-only captures in Library while excluding them
+  from Graph unless the user intentionally connected them; focused Graph reads
+  and relationship validation use the same eligibility rule.
+- Bounded provider work within a four-minute bookmark lease, made summary
+  retries share one deadline, and replaced raw provider telemetry errors with
+  safe classified codes and messages.
 - Quarantined unversioned or unsupported legacy entities and concepts from
   Library, Graph, and Insights; source-aware reprocessing now reports missing X
   evidence as partial instead of completed, and X Sync repairs existing rotten

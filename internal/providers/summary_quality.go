@@ -16,6 +16,7 @@ const (
 	SummaryPromptVersion    = "summary-v2"
 	SummaryValidatorVersion = "summary-validator-v1"
 	SemanticVersion         = "semantic-v1"
+	SummaryGenerationBudget = 90 * time.Second
 )
 
 type ContentKind string
@@ -138,6 +139,8 @@ func (c GeminiClient) GenerateSummary(ctx context.Context, req SummaryRequest) (
 	if req.QualityStatus == QualityMetadataOnly || req.QualityStatus == QualityFailed || strings.TrimSpace(req.PrimaryText) == "" {
 		return SummaryResult{Status: SummaryStatusInsufficientEvidence, PromptVersion: SummaryPromptVersion, ValidatorVersion: SummaryValidatorVersion}, nil
 	}
+	ctx, cancel := context.WithTimeout(ctx, SummaryGenerationBudget)
+	defer cancel()
 	prompt := summaryPrompt(req, nil)
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {

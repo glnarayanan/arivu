@@ -286,8 +286,8 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 	now := time.Now().UTC().Format(time.RFC3339)
 	request := s.summaryRequestForEvidence(ctx, userID, bookmarkID, title, evidence)
 	generated, generationErr := s.aiClient(ctx).GenerateSummary(ctx, request)
-	if generationErr != nil && s.hasValidSummary(ctx, userID, bookmarkID, evidence.ContentHash) {
-		return generationErr
+	if generationErr != nil && s.hasValidActiveSummary(ctx, userID, bookmarkID, evidence.ContentHash) {
+		return nil
 	}
 	validationReasons := summaryFailureReasons(generationErr)
 	if generationErr != nil {
@@ -308,7 +308,10 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 		validationStatus = "insufficient_evidence"
 	}
 	semanticResult := providers.SemanticResult{Entities: generated.Entities, Concepts: generated.Concepts}
-	enrichment := s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text, semanticResult)
+	enrichment := enrichment{}
+	if evidence.QualityStatus == string(providers.QualityComplete) {
+		enrichment = s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text, semanticResult)
+	}
 	highlightSpans := highlightSpansJSON(evidence.ID, evidence.Text, generated.Highlights)
 	generatedAt := nullableTimeString(generated.GeneratedAt)
 	htmlContent := evidence.SanitizedHTML
@@ -390,9 +393,9 @@ func nullableTimeString(value time.Time) any {
 	return value.UTC().Format(time.RFC3339)
 }
 
-func (s *Service) hasValidSummary(ctx context.Context, userID, bookmarkID, evidenceHash string) bool {
+func (s *Service) hasValidActiveSummary(ctx context.Context, userID, bookmarkID, evidenceHash string) bool {
 	var count int
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_summaries WHERE bookmark_id=? AND user_id=? AND processing_status='completed' AND validation_status='validated' AND prompt_version=? AND validator_version=? AND evidence_hash=? AND trim(COALESCE(one_sentence,''))<>''`, bookmarkID, userID, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, evidenceHash).Scan(&count)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_summaries summary JOIN bookmarks bookmark ON bookmark.id=summary.bookmark_id AND bookmark.user_id=summary.user_id JOIN bookmark_evidence evidence ON evidence.bookmark_id=summary.bookmark_id AND evidence.user_id=summary.user_id AND evidence.is_selected=1 AND evidence.content_hash=summary.evidence_hash WHERE summary.bookmark_id=? AND summary.user_id=? AND summary.processing_status='completed' AND summary.validation_status='validated' AND summary.prompt_version=? AND summary.validator_version=? AND summary.evidence_hash=? AND trim(COALESCE(summary.one_sentence,''))<>'' AND bookmark.summary_version=? AND bookmark.enrichment_version=? AND trim(COALESCE(bookmark.text_content,''))=trim(COALESCE(evidence.content_text,''))`, bookmarkID, userID, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, evidenceHash, providers.SummaryPromptVersion, providers.SemanticVersion).Scan(&count)
 	return count > 0
 }
 
@@ -404,10 +407,7 @@ func summaryFailureReasons(err error) []string {
 	if errors.As(err, &validationErr) {
 		return validationErr.ReasonCodes
 	}
-	if errors.Is(err, providers.ErrNotConfigured) {
-		return []string{"provider_not_configured"}
-	}
-	return []string{"provider_error"}
+	return []string{providers.SafeErrorCode(err)}
 }
 
 func highlightSpansJSON(evidenceID, evidenceText string, highlights []string) string {

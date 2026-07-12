@@ -100,6 +100,10 @@ Asynchronous workflows (e.g., crawling bookmarks, querying LLMs, syncing X timel
   - Recovers expired leases after worker crashes, while completion and failure
     updates are fenced to the active `leased_until` value so stale workers cannot
     overwrite a newer lease.
+  - Uses a four-minute worker lease, sized for the longest bounded bookmark
+    path: up to 30 seconds for safe fetch, one shared 90-second summary budget
+    including its validation retry, up to 30 seconds for embedding, and a
+    90-second lease margin. Shorter reminder jobs share this queue lease.
   - Limits execution concurrency using bounded pools of Go workers.
   - Recovers on server restart by scanning non-completed entries.
 
@@ -113,3 +117,9 @@ Quality reprocessing queues ordinary durable `bookmark.process` jobs in bounded
 batches. Payloads carry the repair run, target versions, and selected-evidence
 hash. Queueing never deletes active artifacts; validated replacements are the
 processor's swap boundary.
+
+Provider usage telemetry classifies failures into stable codes such as
+`provider_timeout`, `provider_rate_limited`, and `provider_auth`. Admin APIs and
+the embedded UI receive only the safe code and a bounded public message; raw
+network errors, endpoint URLs, query parameters, and credentials are never
+stored in process-local telemetry.
