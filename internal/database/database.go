@@ -51,22 +51,23 @@ func applyPragmas(ctx context.Context, db *sql.DB) error {
 	return nil
 }
 
+// Migrate converges any older additive database to the current schema.
+//
+// Order is intentional and version-agnostic:
+//  1. structure — CREATE TABLE / VIRTUAL TABLE / UNIQUE INDEX (unique indexes stay
+//     interleaved so composite foreign keys have a parent unique key)
+//  2. additive columns and dependent objects via ensure* helpers
+//  3. non-unique indexes from schema.sql (safe only after columns exist)
+//
+// CREATE TABLE IF NOT EXISTS never alters an existing table, so indexes that
+// reference additive columns must not run before ensure* column migrations.
 func Migrate(ctx context.Context, db *sql.DB) error {
-	raw, err := schemaFS.ReadFile("schema.sql")
+	structure, indexes, err := loadSchemaPhases()
 	if err != nil {
 		return err
 	}
-	for _, stmt := range strings.Split(string(raw), ";\n") {
-		stmt = strings.TrimSpace(stmt)
-		if stmt == "" {
-			continue
-		}
-		if _, err := db.ExecContext(ctx, stmt); err != nil {
-			if strings.Contains(stmt, "VIRTUAL TABLE") && strings.Contains(err.Error(), "no such module: fts5") {
-				continue
-			}
-			return fmt.Errorf("schema statement %q: %w", stmt, err)
-		}
+	if err := execSchemaStatements(ctx, db, structure); err != nil {
+		return err
 	}
 	if err := ensureReminderColumns(ctx, db); err != nil {
 		return err
@@ -82,6 +83,58 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	}
 	if err := ensureQualityOperations(ctx, db); err != nil {
 		return err
+	}
+	if err := execSchemaStatements(ctx, db, indexes); err != nil {
+		return err
+	}
+	return nil
+}
+
+type schemaStatementKind int
+
+const (
+	schemaStatementStructure schemaStatementKind = iota
+	schemaStatementIndex
+)
+
+func loadSchemaPhases() (structure, indexes []string, err error) {
+	raw, err := schemaFS.ReadFile("schema.sql")
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, stmt := range strings.Split(string(raw), ";\n") {
+		stmt = strings.TrimSpace(stmt)
+		if stmt == "" {
+			continue
+		}
+		switch classifySchemaStatement(stmt) {
+		case schemaStatementIndex:
+			indexes = append(indexes, stmt)
+		default:
+			structure = append(structure, stmt)
+		}
+	}
+	return structure, indexes, nil
+}
+
+func classifySchemaStatement(stmt string) schemaStatementKind {
+	upper := strings.ToUpper(strings.Join(strings.Fields(stmt), " "))
+	// Non-unique indexes may reference additive columns and must run after ensure*.
+	// UNIQUE INDEX stays with structure so composite FK parents exist before children.
+	if strings.HasPrefix(upper, "CREATE INDEX ") {
+		return schemaStatementIndex
+	}
+	return schemaStatementStructure
+}
+
+func execSchemaStatements(ctx context.Context, db *sql.DB, statements []string) error {
+	for _, stmt := range statements {
+		if _, err := db.ExecContext(ctx, stmt); err != nil {
+			if strings.Contains(stmt, "VIRTUAL TABLE") && strings.Contains(err.Error(), "no such module: fts5") {
+				continue
+			}
+			return fmt.Errorf("schema statement %q: %w", stmt, err)
+		}
 	}
 	return nil
 }
