@@ -171,18 +171,27 @@ func (s *Service) processXBookmark(ctx context.Context, userID, bookmarkID, rawU
 	for _, evidence := range evidenceRows {
 		if evidence.Kind == "source_post" && (evidence.Origin == "x_api" || evidence.ExtractionMethod == "x_api") {
 			sourceEvidence = evidence
-			break
+			if evidence.ExtractorVersion == "x-api-v1" {
+				break
+			}
 		}
 	}
 	if sourceEvidence.ID == "" {
-		s.markInsufficientEvidence(ctx, bookmarkID, "failed")
-		return nil
+		if err := s.markInsufficientEvidence(ctx, bookmarkID, "failed"); err != nil {
+			return err
+		}
+		return errPartialExtraction
 	}
 	isExternalArticle := strings.Contains(contentKind, "article") && normalizeProcessingURL(rawURL) != normalizeProcessingURL(tweetURL)
 	if !isExternalArticle {
 		if sourceEvidence.QualityStatus != "complete" || strings.TrimSpace(sourceEvidence.Text) == "" {
-			s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus)
-			return nil
+			if err := s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus); err != nil {
+				return err
+			}
+			if sourceEvidence.Origin == "x_api" && sourceEvidence.QualityStatus == "metadata_only" {
+				return nil
+			}
+			return errPartialExtraction
 		}
 		sourceEvidence.Selected = false
 		storedEvidence, err := s.UpsertEvidence(ctx, userID, bookmarkID, sourceEvidence)
@@ -226,18 +235,50 @@ func (s *Service) useXSourceFallback(ctx context.Context, userID, bookmarkID, ti
 		}
 		return s.persistSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, storedEvidence)
 	}
-	s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus)
+	if err := s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus); err != nil {
+		return err
+	}
+	if fetchErr == nil {
+		return errPartialExtraction
+	}
 	return fetchErr
 }
 
-func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qualityStatus string) {
+func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qualityStatus string) error {
 	status := "insufficient_evidence"
 	if qualityStatus == "failed" {
 		status = "failed"
 	}
 	now := nowString()
-	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=CASE WHEN processing_status IN ('completed','fallback') THEN processing_status ELSE ? END,updated_at=? WHERE bookmark_id=?`, status, now, bookmarkID)
-	_, _ = s.db.ExecContext(ctx, `UPDATE bookmarks SET processed_at=?,fetch_version=? WHERE id=?`, now, safefetch.ExtractorVersion, bookmarkID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var userID, source, title, evidenceOrigin, evidenceStatus, extractorVersion string
+	if err := tx.QueryRowContext(ctx, `SELECT b.user_id,b.source,COALESCE(b.title,''),COALESCE(e.evidence_origin,''),COALESCE(e.quality_status,''),COALESCE(e.extractor_version,'') FROM bookmarks b LEFT JOIN bookmark_evidence e ON e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 WHERE b.id=?`, bookmarkID).Scan(&userID, &source, &title, &evidenceOrigin, &evidenceStatus, &extractorVersion); err != nil {
+		return err
+	}
+	if source == "x" || source == "twitter" {
+		title = html.UnescapeString(title)
+	}
+	authoritativeEmpty := evidenceOrigin == "x_api" && evidenceStatus == "metadata_only" && extractorVersion == "x-api-v1"
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_entities WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_concepts WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_tags WHERE bookmark_id=? AND user_id=? AND source='enrichment'`, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET title=?,embedding=NULL,embedding_dim=0,embedding_model=NULL,processed_at=?,fetch_version=CASE WHEN ? THEN ? ELSE fetch_version END,summary_version=CASE WHEN ? THEN ? ELSE summary_version END,enrichment_version=CASE WHEN ? THEN ? ELSE enrichment_version END WHERE id=?`, title, now, authoritativeEmpty, extractorVersion, authoritativeEmpty, providers.SummaryPromptVersion, authoritativeEmpty, providers.SemanticVersion, bookmarkID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE ai_summaries SET one_sentence=CASE WHEN validation_status='validated' THEN one_sentence ELSE NULL END,bullet_points_json=CASE WHEN validation_status='validated' THEN bullet_points_json ELSE '[]' END,long_form=CASE WHEN validation_status='validated' THEN long_form ELSE NULL END,highlights_json=CASE WHEN validation_status='validated' THEN highlights_json ELSE '[]' END,suggested_tags_json=CASE WHEN validation_status='validated' THEN suggested_tags_json ELSE '[]' END,processing_status=CASE WHEN validation_status='validated' AND processing_status='completed' THEN processing_status ELSE ? END,validation_status=CASE WHEN validation_status='validated' THEN validation_status ELSE 'insufficient_evidence' END,updated_at=? WHERE bookmark_id=?`, status, now, bookmarkID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence) error {
@@ -245,8 +286,8 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 	now := time.Now().UTC().Format(time.RFC3339)
 	request := s.summaryRequestForEvidence(ctx, userID, bookmarkID, title, evidence)
 	generated, generationErr := s.aiClient(ctx).GenerateSummary(ctx, request)
-	if generationErr != nil && s.hasValidSummary(ctx, userID, bookmarkID) {
-		return generationErr
+	if generationErr != nil && s.hasValidActiveSummary(ctx, userID, bookmarkID, evidence.ContentHash) {
+		return nil
 	}
 	validationReasons := summaryFailureReasons(generationErr)
 	if generationErr != nil {
@@ -267,7 +308,10 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 		validationStatus = "insufficient_evidence"
 	}
 	semanticResult := providers.SemanticResult{Entities: generated.Entities, Concepts: generated.Concepts}
-	enrichment := s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text, semanticResult)
+	enrichment := enrichment{}
+	if evidence.QualityStatus == string(providers.QualityComplete) {
+		enrichment = s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text, semanticResult)
+	}
 	highlightSpans := highlightSpansJSON(evidence.ID, evidence.Text, generated.Highlights)
 	generatedAt := nullableTimeString(generated.GeneratedAt)
 	htmlContent := evidence.SanitizedHTML
@@ -349,9 +393,9 @@ func nullableTimeString(value time.Time) any {
 	return value.UTC().Format(time.RFC3339)
 }
 
-func (s *Service) hasValidSummary(ctx context.Context, userID, bookmarkID string) bool {
+func (s *Service) hasValidActiveSummary(ctx context.Context, userID, bookmarkID, evidenceHash string) bool {
 	var count int
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_summaries WHERE bookmark_id=? AND user_id=? AND processing_status IN ('completed','fallback') AND trim(COALESCE(one_sentence,''))<>''`, bookmarkID, userID).Scan(&count)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_summaries summary JOIN bookmarks bookmark ON bookmark.id=summary.bookmark_id AND bookmark.user_id=summary.user_id JOIN bookmark_evidence evidence ON evidence.bookmark_id=summary.bookmark_id AND evidence.user_id=summary.user_id AND evidence.is_selected=1 AND evidence.content_hash=summary.evidence_hash WHERE summary.bookmark_id=? AND summary.user_id=? AND summary.processing_status='completed' AND summary.validation_status='validated' AND summary.prompt_version=? AND summary.validator_version=? AND summary.evidence_hash=? AND trim(COALESCE(summary.one_sentence,''))<>'' AND bookmark.summary_version=? AND bookmark.enrichment_version=? AND trim(COALESCE(bookmark.text_content,''))=trim(COALESCE(evidence.content_text,''))`, bookmarkID, userID, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, evidenceHash, providers.SummaryPromptVersion, providers.SemanticVersion).Scan(&count)
 	return count > 0
 }
 
@@ -363,10 +407,7 @@ func summaryFailureReasons(err error) []string {
 	if errors.As(err, &validationErr) {
 		return validationErr.ReasonCodes
 	}
-	if errors.Is(err, providers.ErrNotConfigured) {
-		return []string{"provider_not_configured"}
-	}
-	return []string{"provider_error"}
+	return []string{providers.SafeErrorCode(err)}
 }
 
 func highlightSpansJSON(evidenceID, evidenceText string, highlights []string) string {

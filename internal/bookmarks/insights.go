@@ -305,7 +305,7 @@ func (s *Service) forgottenValueInsights(ctx context.Context, userID string, now
 }
 
 func (s *Service) knowledgeGapInsights(ctx context.Context, userID string) []deterministicInsight {
-	rows, err := s.db.QueryContext(ctx, `SELECT b.id,COALESCE(b.title,b.url) FROM bookmarks b JOIN item_states st ON st.user_id=b.user_id AND st.item_type='bookmark' AND st.item_id=b.id WHERE b.user_id=? AND st.importance>=3 AND NOT EXISTS(SELECT 1 FROM bookmark_concepts c WHERE c.user_id=b.user_id AND c.bookmark_id=b.id) AND NOT EXISTS(SELECT 1 FROM item_links l WHERE l.user_id=b.user_id AND ((l.from_type='bookmark' AND l.from_id=b.id) OR (l.to_type='bookmark' AND l.to_id=b.id))) ORDER BY b.id LIMIT 100`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT b.id,COALESCE(b.title,b.url) FROM bookmarks b JOIN item_states st ON st.user_id=b.user_id AND st.item_type='bookmark' AND st.item_id=b.id WHERE b.user_id=? AND st.importance>=3 AND NOT EXISTS(SELECT 1 FROM bookmark_concepts c WHERE c.user_id=b.user_id AND c.bookmark_id=b.id AND `+semanticEligibilitySQL("c")+`) AND NOT EXISTS(SELECT 1 FROM item_links l WHERE l.user_id=b.user_id AND ((l.from_type='bookmark' AND l.from_id=b.id) OR (l.to_type='bookmark' AND l.to_id=b.id))) ORDER BY b.id LIMIT 100`, userID)
 	if err != nil {
 		return nil
 	}
@@ -476,7 +476,7 @@ func (s *Service) hasInsightHistory(ctx context.Context, userID string, now time
 
 func (s *Service) insightCorpusWatermark(ctx context.Context, userID string) string {
 	hash := sha256.New()
-	rows, err := s.db.QueryContext(ctx, `SELECT c.concept,b.id,COALESCE(b.source_published_at,''),COALESCE(NULLIF(b.source_publisher_key,''),NULLIF(b.source_author_id,''),NULLIF(b.domain,''),b.id) FROM bookmark_concepts c JOIN bookmarks b ON b.user_id=c.user_id AND b.id=c.bookmark_id WHERE c.user_id=? ORDER BY c.concept,b.id`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.concept,b.id,COALESCE(b.source_published_at,''),COALESCE(NULLIF(b.source_publisher_key,''),NULLIF(b.source_author_id,''),NULLIF(b.domain,''),b.id) FROM bookmark_concepts c JOIN bookmarks b ON b.user_id=c.user_id AND b.id=c.bookmark_id WHERE c.user_id=? AND `+semanticEligibilitySQL("c")+` ORDER BY c.concept,b.id`, userID)
 	if err == nil {
 		for rows.Next() {
 			var values [4]string

@@ -50,6 +50,7 @@ var blockedPrefixes = []netip.Prefix{
 const (
 	MaxBodyBytes     = 10 << 20
 	DefaultUserAgent = "Arivu/2.0"
+	RequestTimeout   = 30 * time.Second
 )
 
 type Client struct {
@@ -131,7 +132,7 @@ func NewWithUserAgent(userAgent string) *Client {
 	}
 	return &Client{http: &http.Client{
 		Transport: transport,
-		Timeout:   30 * time.Second,
+		Timeout:   RequestTimeout,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= 5 {
 				return errors.New("too many redirects")

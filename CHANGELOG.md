@@ -34,7 +34,7 @@ All notable changes to this project will be documented in this file.
 
 - Added privacy-safe aggregate quality auditing and an explicit, dry-run-first
   reprocessing CLI with scope guards, verified backup matching, bounded durable
-  batches, and idempotent run tracking.
+  batches, idempotent run tracking, and redacted run-status reporting.
 - Added a 30-case synthetic quality corpus covering evidence, summary
   faithfulness, semantic precision, extraction failures, unusual text, and
   prompt injection without production bookmark contents.
@@ -43,6 +43,25 @@ All notable changes to this project will be documented in this file.
 
 - Documented evidence provenance, bounded summary and semantic guarantees,
   insight-versus-recommendation semantics, and staged backup/repair/rollback.
+- Kept incomplete and metadata-only captures as repairable bookmark records
+  while excluding them from Graph unless the user intentionally connected them;
+  focused Graph reads and relationship validation use the same eligibility rule.
+- Hid unresolved X placeholders whose Library title and body are only the same
+  `t.co` short link while retaining the bookmark record for later repair.
+- Replaced generic `Post / X` projection labels with useful source context and
+  made visual Graph nodes link directly to their saved knowledge destination;
+  the accessible node list now uses the same direct links with a legible
+  high-contrast hover state.
+- Bounded provider work within a four-minute bookmark lease, made summary
+  retries share one deadline, and replaced raw provider telemetry errors with
+  safe classified codes and messages.
+- Quarantined unversioned or unsupported legacy entities and concepts from
+  Library, Graph, and Insights; source-aware reprocessing now reports missing X
+  evidence as partial instead of completed, and X Sync repairs existing rotten
+  duplicates from HTML-entity-decoded API evidence before requeueing analysis. Unvalidated
+  legacy summaries no longer block a safe fallback swap when replacement model
+  output fails validation, while unavailable historical X items keep their
+  bookmark and receive only deterministic title decoding plus generated-state cleanup.
 
 ## [1.1.0] - 2026-07-11
 

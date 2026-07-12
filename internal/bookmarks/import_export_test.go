@@ -271,15 +271,25 @@ func TestProcessXArticleFailureFallsBackWithoutDestroyingSource(t *testing.T) {
 
 func TestProcessMetadataOnlyXDoesNotGenerateClaims(t *testing.T) {
 	service, db := xProcessingTestService(t, "x-media", "https://x.com/author/status/3", "x_media", "https://t.co/media", "metadata_only")
+	now := "2026-07-11T08:00:00Z"
+	_, _ = db.Exec(`UPDATE bookmarks SET title='Author on X: &quot;https://t.co/media&quot;' WHERE id='x-media'`)
+	_, _ = db.Exec(`INSERT INTO tags(id,user_id,name,slug,source,created_at,updated_at) VALUES('manual-tag','user-1','Manual','manual','manual',?,?),('generated-tag','user-1','Generated','generated','enrichment',?,?)`, now, now, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmark_tags(bookmark_id,tag_id,user_id,source,created_at) VALUES('x-media','manual-tag','user-1','manual',?),('x-media','generated-tag','user-1','enrichment',?)`, now, now)
 	if err := service.processBookmark(t.Context(), "x-media", "https://x.com/author/status/3"); err != nil {
 		t.Fatal(err)
 	}
-	var status, summary string
-	if err := db.QueryRow(`SELECT processing_status,COALESCE(one_sentence,'') FROM ai_summaries WHERE bookmark_id='x-media'`).Scan(&status, &summary); err != nil {
+	var status, summary, title string
+	if err := db.QueryRow(`SELECT s.processing_status,COALESCE(s.one_sentence,''),b.title FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id WHERE b.id='x-media'`).Scan(&status, &summary, &title); err != nil {
 		t.Fatal(err)
 	}
-	if status != "insufficient_evidence" || summary != "" {
-		t.Fatalf("metadata-only summary = status=%q summary=%q", status, summary)
+	if status != "insufficient_evidence" || summary != "" || strings.Contains(title, "&quot;") {
+		t.Fatalf("metadata-only output = status=%q summary=%q title=%q", status, summary, title)
+	}
+	var manualTags, generatedTags int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bookmark_tags WHERE bookmark_id='x-media' AND source='manual'`).Scan(&manualTags)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bookmark_tags WHERE bookmark_id='x-media' AND source='enrichment'`).Scan(&generatedTags)
+	if manualTags != 1 || generatedTags != 0 {
+		t.Fatalf("insufficient evidence tags manual=%d generated=%d", manualTags, generatedTags)
 	}
 }
 
@@ -596,7 +606,7 @@ func TestPersistSelectedEvidenceAtomicallyStoresValidatedSummaryAndSemantics(t *
 	}
 }
 
-func TestPersistSelectedEvidenceKeepsLastValidArtifactsWhenValidationFails(t *testing.T) {
+func TestPersistSelectedEvidenceRepairsInconsistentValidSummaryStateWithFallback(t *testing.T) {
 	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
 	if err != nil {
 		t.Fatal(err)
@@ -609,15 +619,74 @@ func TestPersistSelectedEvidenceKeepsLastValidArtifactsWhenValidationFails(t *te
 	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{APIKey: "test", BaseURL: "https://gemini.test", HTTP: summaryTestHTTPClient(`{"one_sentence":"GLM 5.2 is superior.","long_form":"","bullet_points":[],"highlights":[],"suggested_tags":[],"entities":[],"concepts":[]}`)})
 	oldEvidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "Old evidence", QualityStatus: "complete", ExtractorVersion: "old", Selected: true})
 	newEvidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "GLM 5.2 comparison results are pending.", QualityStatus: "complete", ExtractorVersion: "new"})
-	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "x.com", newEvidence); err == nil {
-		t.Fatal("expected unsupported comparison result to fail validation")
+	_, _ = db.Exec(`UPDATE ai_summaries SET prompt_version=?,validator_version=?,evidence_hash=?,validation_status='validated' WHERE bookmark_id='bookmark-1'`, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, newEvidence.ContentHash)
+	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "x.com", newEvidence); err != nil {
+		t.Fatalf("inconsistent state should complete a safe fallback swap: %v", err)
 	}
 	var summary, textContent, selectedID string
 	if err := db.QueryRow(`SELECT s.one_sentence,b.text_content,(SELECT id FROM bookmark_evidence WHERE bookmark_id=b.id AND is_selected=1) FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id WHERE b.id='bookmark-1'`).Scan(&summary, &textContent, &selectedID); err != nil {
 		t.Fatal(err)
 	}
-	if summary != "Last valid summary" || textContent != "Old evidence" || selectedID != oldEvidence.ID {
-		t.Fatalf("failed replacement changed active artifacts: summary=%q text=%q selected=%q want=%q", summary, textContent, selectedID, oldEvidence.ID)
+	if summary == "Last valid summary" || textContent != newEvidence.Text || selectedID != newEvidence.ID {
+		t.Fatalf("inconsistent state was not repaired: summary=%q text=%q selected=%q old=%q", summary, textContent, selectedID, oldEvidence.ID)
+	}
+}
+
+func TestPersistSelectedEvidenceKeepsAlreadyActiveValidArtifacts(t *testing.T) {
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('user-1','one@example.com','One',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,text_content,content_kind,summary_version,enrichment_version,created_at,updated_at) VALUES('bookmark-1','user-1','https://example.com/post','Post','example.com','Active evidence','article',?,?,?,?)`, providers.SummaryPromptVersion, providers.SemanticVersion, now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{APIKey: "test", BaseURL: "https://gemini.test", HTTP: summaryTestHTTPClient(`{"one_sentence":"Unsupported claim.","long_form":"","bullet_points":[],"highlights":[],"suggested_tags":[],"entities":[],"concepts":[]}`)})
+	evidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "fetched_article", Origin: "web_fetch", Text: "Active evidence", QualityStatus: "complete", ExtractorVersion: safefetch.ExtractorVersion, Selected: true})
+	_, _ = db.Exec(`INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,processing_status,prompt_version,validator_version,evidence_hash,validation_status,created_at,updated_at) VALUES('summary-1','bookmark-1','user-1','Last valid summary','completed',?,?,?,'validated',?,?)`, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, evidence.ContentHash, now, now)
+	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "example.com", evidence); err != nil {
+		t.Fatalf("already active valid artifacts should avoid retry churn: %v", err)
+	}
+	var summary string
+	if err := db.QueryRow(`SELECT one_sentence FROM ai_summaries WHERE bookmark_id='bookmark-1'`).Scan(&summary); err != nil {
+		t.Fatal(err)
+	}
+	if summary != "Last valid summary" {
+		t.Fatalf("active valid summary changed to %q", summary)
+	}
+}
+
+func TestSummaryFailureReasonsClassifiesDeadline(t *testing.T) {
+	reasons := summaryFailureReasons(context.DeadlineExceeded)
+	if len(reasons) != 1 || reasons[0] != providers.ErrorProviderTimeout {
+		t.Fatalf("deadline reasons = %#v", reasons)
+	}
+}
+
+func TestPersistSelectedEvidenceReplacesUnvalidatedLegacyArtifactsWithFallback(t *testing.T) {
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('user-1','one@example.com','One',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,text_content,content_kind,created_at,updated_at) VALUES('bookmark-1','user-1','https://x.com/post','Post','x.com','quot https com','x_post',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,processing_status,created_at,updated_at) VALUES('summary-1','bookmark-1','user-1','Unsupported legacy expansion','completed',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES('bookmark-1','user-1','quot')`)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{APIKey: "test", BaseURL: "https://gemini.test", HTTP: summaryTestHTTPClient(`{"one_sentence":"GLM 5.2 is superior.","long_form":"","bullet_points":[],"highlights":[],"suggested_tags":[],"entities":[],"concepts":[]}`)})
+	evidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "GLM 5.2 comparison results are pending.", QualityStatus: "complete", ExtractorVersion: "x-api-v1", Selected: true})
+	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "x.com", evidence); err != nil {
+		t.Fatal(err)
+	}
+	var summary, status, validation, textContent, selectedID, summaryVersion, enrichmentVersion string
+	if err := db.QueryRow(`SELECT s.one_sentence,s.processing_status,s.validation_status,b.text_content,(SELECT id FROM bookmark_evidence WHERE bookmark_id=b.id AND is_selected=1),b.summary_version,b.enrichment_version FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id WHERE b.id='bookmark-1'`).Scan(&summary, &status, &validation, &textContent, &selectedID, &summaryVersion, &enrichmentVersion); err != nil {
+		t.Fatal(err)
+	}
+	var concepts int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bookmark_concepts WHERE bookmark_id='bookmark-1'`).Scan(&concepts)
+	if summary == "Unsupported legacy expansion" || status != "fallback" || validation != "fallback" || textContent != evidence.Text || selectedID != evidence.ID || summaryVersion != providers.SummaryPromptVersion || enrichmentVersion != providers.SemanticVersion || concepts != 0 {
+		t.Fatalf("legacy fallback swap summary=%q status=%q validation=%q text=%q selected=%q versions=%q/%q concepts=%d", summary, status, validation, textContent, selectedID, summaryVersion, enrichmentVersion, concepts)
 	}
 }
 

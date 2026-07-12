@@ -469,6 +469,11 @@ CREATE TABLE IF NOT EXISTS bookmark_concepts (
   PRIMARY KEY(bookmark_id, concept)
 );
 
+CREATE INDEX IF NOT EXISTS idx_entities_quality ON bookmark_entities(user_id, enrichment_version, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_concepts_quality ON bookmark_concepts(user_id, enrichment_version, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_entities_bookmark_quality ON bookmark_entities(bookmark_id, user_id, enrichment_version, confidence DESC);
+CREATE INDEX IF NOT EXISTS idx_concepts_bookmark_quality ON bookmark_concepts(bookmark_id, user_id, enrichment_version, confidence DESC);
+
 CREATE TABLE IF NOT EXISTS import_jobs (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

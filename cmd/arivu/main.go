@@ -94,9 +94,19 @@ func runReprocess(args []string) {
 	confirmAll := fs.Bool("confirm-all-users", false, "Confirm the intentionally broad --all-users mutation")
 	batchSize := fs.Int("batch-size", 25, "Maximum durable jobs to enqueue (1-100)")
 	staleVersion := fs.Bool("stale-version", false, "Select bookmarks behind current pipeline versions")
+	statusRun := fs.String("status", "", "Read the durable status of a reprocess run ID")
 	dryRun := fs.Bool("dry-run", false, "Explicitly request the default read-only preview")
 	apply := fs.Bool("apply", false, "Queue the verified reprocessing batch")
 	_ = fs.Parse(args)
+	if *statusRun != "" {
+		status, err := qualityops.ReprocessRunStatus(context.Background(), *dbPath, *statusRun)
+		if err != nil {
+			log.Fatal(err)
+		}
+		raw, _ := json.MarshalIndent(status, "", "  ")
+		fmt.Println(string(raw))
+		return
+	}
 	if !*staleVersion {
 		log.Fatal("--stale-version is required")
 	}

@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/glnarayanan/arivu/internal/auth"
+	"github.com/glnarayanan/arivu/internal/providers"
 )
 
 type graphV2Node struct {
@@ -64,7 +65,7 @@ func (s *Service) graphV2Nodes(ctx context.Context, userID string, limit int, fo
 		}
 		return []graphV2Node{}, nil
 	}
-	rows, err := s.db.QueryContext(ctx, libraryUnion+" WHERE user_id=? ORDER BY updated_at DESC,item_type,id LIMIT ?", userID, limit)
+	rows, err := s.db.QueryContext(ctx, libraryUnion+" WHERE user_id=? AND "+graphNodeEligibilitySQL("library")+" ORDER BY updated_at DESC,item_type,id LIMIT ?", userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -88,18 +89,35 @@ func scanGraphV2Nodes(rows interface {
 		if err := rows.Scan(&userID, &id, &itemType, &title, &body, &source, &stage, &topic, &connection, &created, &updated); err != nil {
 			return nil, err
 		}
-		nodes = append(nodes, graphV2Node{ID: graphNodeID(itemType, id), Type: itemType, SourceID: id, Title: title, Summary: truncateText(body, 240), Source: source, UpdatedAt: updated})
+		nodes = append(nodes, graphV2Node{ID: graphNodeID(itemType, id), Type: itemType, SourceID: id, Title: knowledgeDisplayTitle(itemType, title, body), Summary: truncateText(body, 240), Source: source, UpdatedAt: updated})
 	}
 	return nodes, rows.Err()
 }
 
 func (s *Service) graphV2Node(ctx context.Context, userID, itemType, id string) (graphV2Node, bool) {
-	rows, err := s.db.QueryContext(ctx, libraryUnion+" WHERE user_id=? AND item_type=? AND id=? LIMIT 1", userID, itemType, id)
+	rows, err := s.db.QueryContext(ctx, libraryUnion+" WHERE user_id=? AND item_type=? AND id=? AND "+graphNodeEligibilitySQL("library")+" LIMIT 1", userID, itemType, id)
 	if err != nil {
 		return graphV2Node{}, false
 	}
 	nodes, err := scanGraphV2Nodes(rows)
 	return firstGraphNode(nodes, err)
+}
+
+// graphNodeEligibilitySQL keeps raw bookmarks in the Library while admitting
+// them to the Graph only after usable evidence exists or the user has made an
+// intentional connection to another knowledge object.
+func graphNodeEligibilitySQL(alias string) string {
+	bookmark := "graph_bookmark"
+	return "(" + alias + ".item_type<>'bookmark' OR EXISTS (SELECT 1 FROM bookmarks " + bookmark +
+		" WHERE " + bookmark + ".id=" + alias + ".id AND " + bookmark + ".user_id=" + alias + ".user_id AND ((" +
+		bookmark + ".summary_version='" + providers.SummaryPromptVersion + "' AND " + bookmark + ".enrichment_version='" + providers.SemanticVersion +
+		"' AND EXISTS (SELECT 1 FROM bookmark_evidence graph_evidence WHERE graph_evidence.bookmark_id=" + bookmark + ".id AND graph_evidence.user_id=" + bookmark +
+		".user_id AND graph_evidence.is_selected=1 AND graph_evidence.quality_status='complete' AND trim(COALESCE(graph_evidence.content_text,''))<>'')) OR " +
+		"EXISTS (SELECT 1 FROM item_links graph_link WHERE graph_link.user_id=" + bookmark + ".user_id AND ((graph_link.from_type='bookmark' AND graph_link.from_id=" + bookmark +
+		".id) OR (graph_link.to_type='bookmark' AND graph_link.to_id=" + bookmark + ".id))) OR " +
+		"EXISTS (SELECT 1 FROM bookmark_notes graph_note WHERE graph_note.user_id=" + bookmark + ".user_id AND graph_note.bookmark_id=" + bookmark + ".id) OR " +
+		"EXISTS (SELECT 1 FROM annotations graph_annotation WHERE graph_annotation.user_id=" + bookmark + ".user_id AND graph_annotation.bookmark_id=" + bookmark + ".id) OR " +
+		"EXISTS (SELECT 1 FROM knowledge_objects graph_object WHERE graph_object.user_id=" + bookmark + ".user_id AND graph_object.source_item_type='bookmark' AND graph_object.source_item_id=" + bookmark + ".id))))"
 }
 
 func firstGraphNode(nodes []graphV2Node, err error) (graphV2Node, bool) {
@@ -163,7 +181,7 @@ func (s *Service) graphNeighborRefs(ctx context.Context, userID, itemType, itemI
 			rows.Close()
 		}
 		for _, term := range []struct{ table, column, itemType string }{{"bookmark_concepts", "concept", "concept"}, {"bookmark_entities", "entity", "entity"}} {
-			rows, err := s.db.QueryContext(ctx, `SELECT `+term.column+` FROM `+term.table+` WHERE user_id=? AND bookmark_id=? ORDER BY `+term.column, userID, itemID)
+			rows, err := s.db.QueryContext(ctx, `SELECT t.`+term.column+` FROM `+term.table+` t WHERE t.user_id=? AND t.bookmark_id=? AND `+semanticEligibilitySQL("t")+` ORDER BY t.`+term.column, userID, itemID)
 			if err == nil {
 				for rows.Next() {
 					var value string
@@ -190,7 +208,7 @@ func (s *Service) graphNeighborRefs(ctx context.Context, userID, itemType, itemI
 		if itemType == "entity" {
 			table, column = "bookmark_entities", "entity"
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT bookmark_id FROM `+table+` WHERE user_id=? AND `+column+`=? ORDER BY bookmark_id`, userID, itemID)
+		rows, err := s.db.QueryContext(ctx, `SELECT t.bookmark_id FROM `+table+` t WHERE t.user_id=? AND t.`+column+`=? AND `+semanticEligibilitySQL("t")+` ORDER BY t.bookmark_id`, userID, itemID)
 		if err == nil {
 			for rows.Next() {
 				var bookmarkID string
@@ -256,7 +274,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 		rows.Close()
 	}
 	for _, table := range []struct{ table, column, kind, nodeType string }{{"bookmark_concepts", "concept", "shared_concept", "concept"}, {"bookmark_entities", "entity", "shared_entity", "entity"}} {
-		query := `SELECT bookmark_id,` + table.column + ` FROM ` + table.table + ` WHERE user_id=? ORDER BY ` + table.column + `,bookmark_id`
+		query := `SELECT t.bookmark_id,t.` + table.column + ` FROM ` + table.table + ` t WHERE t.user_id=? AND ` + semanticEligibilitySQL("t") + ` ORDER BY t.` + table.column + `,t.bookmark_id`
 		rows, err := s.db.QueryContext(ctx, query, userID)
 		if err != nil {
 			continue
@@ -279,7 +297,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 		embedding []float64
 	}
 	embedded := []embeddedNode{}
-	rows, err = s.db.QueryContext(ctx, `SELECT id,embedding FROM bookmarks WHERE user_id=? AND embedding IS NOT NULL ORDER BY id`, userID)
+	rows, err = s.db.QueryContext(ctx, `SELECT b.id,b.embedding FROM bookmarks b WHERE b.user_id=? AND b.embedding IS NOT NULL AND b.enrichment_version=? AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 AND e.quality_status='complete') ORDER BY b.id`, userID, providers.SemanticVersion)
 	if err == nil {
 		for rows.Next() {
 			var id string

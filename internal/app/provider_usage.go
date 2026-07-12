@@ -3,6 +3,8 @@ package app
 import (
 	"sync"
 	"time"
+
+	"github.com/glnarayanan/arivu/internal/providers"
 )
 
 type providerUsage struct {
@@ -12,10 +14,11 @@ type providerUsage struct {
 }
 
 type providerUsageOp struct {
-	Requests    int    `json:"requests"`
-	Errors      int    `json:"errors"`
-	LastRequest string `json:"last_request,omitempty"`
-	LastError   string `json:"last_error,omitempty"`
+	Requests      int    `json:"requests"`
+	Errors        int    `json:"errors"`
+	LastRequest   string `json:"last_request,omitempty"`
+	LastErrorCode string `json:"last_error_code,omitempty"`
+	LastError     string `json:"last_error,omitempty"`
 }
 
 func newProviderUsage() *providerUsage {
@@ -33,7 +36,8 @@ func (u *providerUsage) RecordAI(operation string, err error) {
 	item.LastRequest = time.Now().UTC().Format(time.RFC3339)
 	if err != nil {
 		item.Errors++
-		item.LastError = err.Error()
+		item.LastErrorCode = providers.SafeErrorCode(err)
+		item.LastError = providers.SafeErrorMessage(err)
 	}
 	u.ai[operation] = item
 }

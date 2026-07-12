@@ -42,6 +42,27 @@ func TestLibraryItemsAreUserScopedStableAndCursorBounded(t *testing.T) {
 	}
 }
 
+func TestLibraryItemsHideOnlyUnresolvedTCOPlaceholders(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "raw-tco", "https://t.co/raw", "2026-07-12T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "useful-tco", "https://t.co/useful", "2026-07-11T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "ordinary-url", "https://example.com/unprocessed", "2026-07-10T00:00:00Z")
+	_, _ = db.Exec(`UPDATE bookmarks SET description='https://t.co/raw',text_content='https://t.co/raw',content_kind='x_link' WHERE id='raw-tco'`)
+	_, _ = db.Exec(`UPDATE bookmarks SET description='https://t.co/useful',text_content='Useful source context',content_kind='x_link' WHERE id='useful-tco'`)
+
+	payload := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=bookmark&limit=20", "")
+	items := payload["items"].([]any)
+	if payloadHasItemID(items, "raw-tco") {
+		t.Fatalf("Library exposed unresolved t.co placeholder: %#v", payload)
+	}
+	for _, want := range []string{"useful-tco", "ordinary-url"} {
+		if !payloadHasItemID(items, want) {
+			t.Fatalf("Library hid useful bookmark %s: %#v", want, payload)
+		}
+	}
+}
+
 func TestKnowledgeGraphV2KeepsOldFocusAndBoundsPayload(t *testing.T) {
 	service, db := newKnowledgeTestService(t)
 	seedKnowledgeUser(t, db, "u1", "one@example.com")
@@ -76,6 +97,75 @@ func TestKnowledgeGraphV2KeepsOldFocusAndBoundsPayload(t *testing.T) {
 	if len(hidden["edges"].([]any)) != 0 {
 		t.Fatalf("dismissed relationship still returned: %#v", hidden)
 	}
+}
+
+func TestKnowledgeSurfacesReplaceGenericBookmarkTitlesWithUsefulContext(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "generic-title", "Post / X", "2026-07-12T00:00:00Z")
+	_, _ = db.Exec(`UPDATE bookmarks SET description='A useful X post about retrieval systems.',text_content='A useful X post about retrieval systems.',content_kind='x_post',summary_version=?,enrichment_version=? WHERE id='generic-title'`, providers.SummaryPromptVersion, providers.SemanticVersion)
+	_, _ = db.Exec(`INSERT INTO bookmark_evidence(id,bookmark_id,user_id,evidence_kind,evidence_origin,authority,content_text,content_hash,quality_status,is_selected,created_at,updated_at) VALUES('e-generic','generic-title','u1','source_post','x_api',100,'A useful X post about retrieval systems.','generic-hash','complete',1,'2026-07-12T00:00:00Z','2026-07-12T00:00:00Z')`)
+
+	graph := callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2?focus=bookmark:generic-title", "")
+	nodes := graph["nodes"].([]any)
+	if len(nodes) != 1 || nodes[0].(map[string]any)["title"] != "A useful X post about retrieval systems." {
+		t.Fatalf("Graph retained generic bookmark title: %#v", graph)
+	}
+	library := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=bookmark", "")
+	if items := library["items"].([]any); len(items) != 1 || items[0].(map[string]any)["title"] != "A useful X post about retrieval systems." {
+		t.Fatalf("Library retained generic bookmark title: %#v", library)
+	}
+}
+
+func TestKnowledgeGraphV2HidesUnenrichedBookmarksAcrossKnowledgeSurfaces(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeUser(t, db, "u2", "two@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "raw", "https://t.co/raw", "2026-07-12T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "complete", "Useful source", "2026-07-11T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "linked", "https://t.co/linked", "2026-07-10T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "foreign-only", "https://t.co/foreign", "2026-07-09T00:00:00Z")
+	_, _ = db.Exec(`UPDATE bookmarks SET summary_version=?,enrichment_version=? WHERE id='raw'`, providers.SummaryPromptVersion, providers.SemanticVersion)
+	_, _ = db.Exec(`INSERT INTO bookmark_evidence(id,bookmark_id,user_id,evidence_kind,evidence_origin,authority,content_text,content_hash,quality_status,is_selected,created_at,updated_at) VALUES('e-raw','raw','u1','source_post','x_api',100,'https://t.co/raw','raw-hash','metadata_only',1,'2026-07-12T00:00:00Z','2026-07-12T00:00:00Z')`)
+	_, _ = db.Exec(`UPDATE bookmarks SET summary_version=?,enrichment_version=? WHERE id='complete'`, providers.SummaryPromptVersion, providers.SemanticVersion)
+	_, _ = db.Exec(`INSERT INTO bookmark_evidence(id,bookmark_id,user_id,evidence_kind,evidence_origin,authority,content_text,content_hash,quality_status,is_selected,created_at,updated_at) VALUES('e-complete','complete','u1','fetched_article','web_fetch',80,'Usable evidence','hash','complete',1,'2026-07-11T00:00:00Z','2026-07-11T00:00:00Z')`)
+	_, _ = db.Exec(`INSERT INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES('owned-link','u1','bookmark','linked','bookmark','complete','','manual','2026-07-12T00:00:00Z'),('foreign-link','u2','bookmark','foreign-only','bookmark','complete','','manual','2026-07-12T00:00:00Z')`)
+
+	library := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=bookmark&limit=20", "")
+	if payloadHasItemID(library["items"].([]any), "raw") {
+		t.Fatalf("Library exposed raw t.co placeholder: %#v", library)
+	}
+	graph := callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2?node_limit=20", "")
+	nodes := graph["nodes"].([]any)
+	for _, want := range []string{"bookmark:complete", "bookmark:linked"} {
+		if !payloadHasItemID(nodes, want) {
+			t.Fatalf("Graph missing eligible %s: %#v", want, graph)
+		}
+	}
+	for _, hidden := range []string{"bookmark:raw", "bookmark:foreign-only"} {
+		if payloadHasItemID(nodes, hidden) {
+			t.Fatalf("Graph exposed ineligible %s: %#v", hidden, graph)
+		}
+	}
+	focused := callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2?focus=bookmark:raw", "")
+	if len(focused["nodes"].([]any)) != 0 {
+		t.Fatalf("focused lookup exposed raw bookmark: %#v", focused)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/feedback", strings.NewReader(`{"target_type":"relationship","target_id":"forged","action":"dismiss","from":"bookmark:raw","to":"bookmark:complete"}`))
+	response := httptest.NewRecorder()
+	service.SaveFeedback(response, request, auth.User{ID: "u1"})
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("relationship feedback accepted hidden raw bookmark: status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func payloadHasItemID(items []any, id string) bool {
+	for _, raw := range items {
+		if raw.(map[string]any)["id"] == id {
+			return true
+		}
+	}
+	return false
 }
 
 func TestInsightsNeedOwnedEvidenceAndFeedbackHidesDeterministically(t *testing.T) {
@@ -135,6 +225,44 @@ func TestInsightFeedbackRejectsRelationshipOnlyConfirmation(t *testing.T) {
 	_ = db.QueryRow(`SELECT COUNT(*) FROM knowledge_feedback WHERE user_id='u1'`).Scan(&count)
 	if count != 0 {
 		t.Fatalf("invalid confirmation persisted %d feedback rows", count)
+	}
+}
+
+func TestLibraryAndGraphQuarantineLegacyUnprovenSemantics(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "a", "Rotten legacy item", "2026-07-10T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "b", "Another rotten item", "2026-07-09T00:00:00Z")
+	_, _ = db.Exec(`INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES('a','u1','quot')`)
+	_, _ = db.Exec(`INSERT INTO bookmark_entities(bookmark_id,user_id,entity) VALUES('a','u1','https')`)
+	_, _ = db.Exec(`UPDATE bookmarks SET embedding='[1,0]',embedding_dim=2,embedding_model='legacy' WHERE id IN ('a','b')`)
+
+	library := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=concept", "")
+	if items := library["items"].([]any); len(items) != 0 {
+		t.Fatalf("library exposed legacy semantics: %#v", library)
+	}
+	graph := callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2", "")
+	for _, raw := range graph["nodes"].([]any) {
+		typeName := raw.(map[string]any)["type"]
+		if typeName == "concept" || typeName == "entity" {
+			t.Fatalf("graph exposed legacy semantic node: %#v", raw)
+		}
+	}
+	for _, raw := range graph["edges"].([]any) {
+		typeName := raw.(map[string]any)["type"]
+		if typeName == "shared_concept" || typeName == "shared_entity" || typeName == "semantic_similarity" {
+			t.Fatalf("graph exposed legacy semantic edge: %#v", raw)
+		}
+	}
+	seedInsightConcept(t, db, "u1", "a", "Evidence provenance")
+	graph = callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2", "")
+	foundValidConcept := false
+	for _, raw := range graph["nodes"].([]any) {
+		node := raw.(map[string]any)
+		foundValidConcept = foundValidConcept || (node["type"] == "concept" && node["title"] == "Evidence provenance")
+	}
+	if !foundValidConcept {
+		t.Fatalf("graph hid validated concept: %#v", graph)
 	}
 }
 

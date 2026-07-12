@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestGeminiSummaryFieldsUseConfiguredModelAndBaseURL(t *testing.T) {
@@ -69,8 +70,14 @@ func TestGeminiTypedSummaryUsesStructuredOutputAndRetriesValidationOnce(t *testi
 	requests := 0
 	var responseSchema map[string]any
 	var prompts []string
+	var deadlines []time.Time
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		requests++
+		deadline, ok := r.Context().Deadline()
+		if !ok {
+			t.Fatal("summary request did not have a deadline")
+		}
+		deadlines = append(deadlines, deadline)
 		var body struct {
 			Contents []struct {
 				Parts []struct {
@@ -111,6 +118,15 @@ func TestGeminiTypedSummaryUsesStructuredOutputAndRetriesValidationOnce(t *testi
 	if requests != 2 || len(prompts) != 2 || !strings.Contains(prompts[1], "unsupported_number") {
 		t.Fatalf("requests=%d prompts=%#v", requests, prompts)
 	}
+	if len(deadlines) != 2 {
+		t.Fatalf("summary request deadlines = %#v", deadlines)
+	}
+	for _, deadline := range deadlines {
+		remaining := time.Until(deadline)
+		if remaining <= 0 || remaining > ProviderRequestTimeout {
+			t.Fatalf("summary request deadline remaining = %s", remaining)
+		}
+	}
 	if responseSchema["type"] != "object" || result.OneSentence == "" || len(result.Entities) != 1 {
 		t.Fatalf("schema=%#v result=%#v", responseSchema, result)
 	}
@@ -121,6 +137,7 @@ func TestGeminiTypedSummaryUsesStructuredOutputAndRetriesValidationOnce(t *testi
 
 func TestGeminiEmbeddingUsesCurrentModel(t *testing.T) {
 	var gotPath string
+	var gotDeadline time.Time
 	var gotBody struct {
 		Content struct {
 			Parts []struct {
@@ -131,6 +148,11 @@ func TestGeminiEmbeddingUsesCurrentModel(t *testing.T) {
 	}
 	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		gotPath = r.URL.Path
+		var ok bool
+		gotDeadline, ok = r.Context().Deadline()
+		if !ok {
+			t.Fatal("embedding request did not have a deadline")
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatal(err)
 		}
@@ -148,6 +170,10 @@ func TestGeminiEmbeddingUsesCurrentModel(t *testing.T) {
 	}
 	if gotPath != "/v1beta/models/gemini-embedding-2:embedContent" {
 		t.Fatalf("path = %q", gotPath)
+	}
+	remaining := time.Until(gotDeadline)
+	if remaining <= 0 || remaining > EmbeddingRequestTimeout {
+		t.Fatalf("embedding deadline remaining = %s", remaining)
 	}
 	if gotBody.Content.Parts[0].Text != "Useable article text." || gotBody.OutputDimensionality != embeddingDimensions {
 		t.Fatalf("request body = %#v", gotBody)

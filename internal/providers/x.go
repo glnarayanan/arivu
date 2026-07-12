@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -56,9 +57,9 @@ type XMedia struct {
 
 func (b XBookmark) EvidenceText() string {
 	if text := strings.TrimSpace(b.NoteTweet.Text); text != "" {
-		return text
+		return html.UnescapeString(text)
 	}
-	return strings.TrimSpace(b.Text)
+	return html.UnescapeString(strings.TrimSpace(b.Text))
 }
 
 type XUser struct {

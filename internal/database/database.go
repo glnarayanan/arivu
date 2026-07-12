@@ -137,6 +137,8 @@ func ensureGeneratedQualityMetadata(ctx context.Context, db *sql.DB) error {
 	statements := []string{
 		`CREATE INDEX IF NOT EXISTS idx_entities_quality ON bookmark_entities(user_id, enrichment_version, confidence DESC)`,
 		`CREATE INDEX IF NOT EXISTS idx_concepts_quality ON bookmark_concepts(user_id, enrichment_version, confidence DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_entities_bookmark_quality ON bookmark_entities(bookmark_id, user_id, enrichment_version, confidence DESC)`,
+		`CREATE INDEX IF NOT EXISTS idx_concepts_bookmark_quality ON bookmark_concepts(bookmark_id, user_id, enrichment_version, confidence DESC)`,
 	}
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {

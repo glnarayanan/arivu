@@ -18,12 +18,24 @@ Saving a bookmark initiates several processing stages to build a structured grap
    claim. No-provider operation does not repopulate the graph with raw tokens.
 3. **Knowledge projection**: `/api/library/items` unions bookmarks, notes, daily
    notes, annotations, knowledge objects, entities, and concepts into stable
-   user-scoped rows without duplicating canonical content.
+   user-scoped rows without duplicating canonical content. Generated entities
+   and concepts appear only when their confidence, enrichment version, selected
+   complete evidence, and source span all pass the shared semantic gate; legacy
+   token rows remain stored for audit but are quarantined from every surface.
+   Unresolved X short-link placeholders whose title and body are only the same
+   `t.co` URL also remain stored for repair but are omitted from Library rows;
+   ordinary unenriched URLs and `t.co` captures with useful context remain
+   visible. Generic scraper labels such as `Post / X` fall back to the useful
+   bookmark body in Library and Graph projections instead of becoming nodes.
 4. **Graph relationships**: `/api/knowledge-graph/v2` projects explicit links,
    source links, shared concepts, shared entities, and semantic similarity where
    embeddings exist. Every edge has a stable ID, provenance, and confidence.
    Node and edge limits are bounded; `focus` plus depth 0-2 performs local
-   expansion.
+   expansion. A bookmark enters the Graph only when its current selected
+   evidence is complete and non-empty, or when the user has intentionally
+   connected it through a link, linked note, annotation, or sourced knowledge
+   object. Metadata-only and failed URL captures remain available in Library
+   without becoming disconnected URL-shaped Graph nodes.
 5. **Pattern detection**: `/api/insights` deterministically detects emerging
    themes, recurring connections, forgotten value, knowledge gaps, and
    serendipitous connections. Evidence joins always include the current user.
@@ -62,6 +74,16 @@ Second-brain v1 adds user-authored context around bookmarks:
   keeps the existing archive and generated context available while queued, then
   replaces derived content only after a successful refresh. The bookmark,
   annotations, notes, manual tags, and collection membership remain intact.
+- Existing X bookmarks that predate evidence provenance are repaired during the
+  next X Sync. Duplicate tweet IDs are not blindly skipped: fresh API text is
+  HTML-entity decoded and retained as authoritative evidence, obviously scraped/encoded generated
+  titles and descriptions are corrected, and normal processing is requeued.
+  Only a current, validated summary for the same evidence hash can block a
+  failed replacement; unvalidated legacy summaries are replaced by a bounded
+  fallback so stale semantics cannot keep the repair job retrying indefinitely.
+  X bookmarks no longer returned by the provider retain their local record and
+  manual context; insufficient-evidence cleanup only decodes the stored title
+  and removes generated artifacts.
 - Reader annotations store text-quote selector metadata when captured from the
   sanitized page selection, so saved highlights can jump back to matching source
   text when the archive still contains that passage.
@@ -168,6 +190,10 @@ To keep the dependency surface small, Arivu bypasses vendor SDKs. External commu
 ### Model Providers (`gemini.go`, `model_provider.go`)
 - **Use Case**: Performs automated summaries and insights through the configured text-generation provider. Gemini remains the image OCR and embedding provider for now, using `gemini-embedding-2` for semantic vectors.
 - **Details**: Direct JSON endpoint payloads target Gemini-native generation, OpenAI-compatible chat completions, or Anthropic Messages based on `ai_provider`. Runtime settings read the active Model Provider, Model, API Key, and Base URL from SQLite/env, with legacy Gemini settings used only as Gemini fallbacks.
+- **Reliability**: Summary validation retries share one 90-second budget,
+  individual provider HTTP requests are capped at 60 seconds, and embeddings
+  are capped at 30 seconds. Provider telemetry exposes stable safe error codes
+  and messages rather than raw transport errors, request URLs, or credentials.
 
 ### Resend (`resend.go`)
 - **Use Case**: Triggers transactional email verification notices.

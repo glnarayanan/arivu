@@ -18,10 +18,12 @@ const (
 	summaryGeneratePromptLimit = 50000
 	GeminiEmbeddingModel       = "gemini-embedding-2"
 	embeddingDimensions        = 768
+	ProviderRequestTimeout     = 60 * time.Second
+	EmbeddingRequestTimeout    = 30 * time.Second
 )
 
 var defaultHTTPClient = &http.Client{
-	Timeout: 30 * time.Second,
+	Timeout: ProviderRequestTimeout,
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
@@ -61,6 +63,8 @@ func (c GeminiClient) GenerateInsight(ctx context.Context, prompt string) (strin
 
 func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, data []byte) (result string, err error) {
 	defer func() { c.record("ocr", err) }()
+	ctx, cancel := context.WithTimeout(ctx, ProviderRequestTimeout)
+	defer cancel()
 	if c.APIKey == "" || !c.usesGeminiNative() {
 		return "", ErrNotConfigured
 	}
@@ -122,6 +126,8 @@ func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, dat
 
 func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string) (values []float64, err error) {
 	defer func() { c.record("embedding", err) }()
+	ctx, cancel := context.WithTimeout(ctx, EmbeddingRequestTimeout)
+	defer cancel()
 	if c.APIKey == "" || !c.usesGeminiNative() {
 		return nil, ErrNotConfigured
 	}
@@ -177,6 +183,8 @@ func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string) (value
 
 func (c GeminiClient) generate(ctx context.Context, operation string, prompt string, promptLimit int) (result string, err error) {
 	defer func() { c.record(operation, err) }()
+	ctx, cancel := context.WithTimeout(ctx, ProviderRequestTimeout)
+	defer cancel()
 	provider := c.provider()
 	if c.APIKey == "" && !provider.APIKeyOptional {
 		return "", ErrNotConfigured
@@ -200,6 +208,8 @@ func (c GeminiClient) generateGemini(ctx context.Context, prompt string) (string
 
 func (c GeminiClient) generateStructured(ctx context.Context, operation, prompt string, schema map[string]any, promptLimit int) (result string, err error) {
 	defer func() { c.record(operation, err) }()
+	ctx, cancel := context.WithTimeout(ctx, ProviderRequestTimeout)
+	defer cancel()
 	provider := c.provider()
 	if c.APIKey == "" && !provider.APIKeyOptional {
 		return "", ErrNotConfigured

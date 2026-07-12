@@ -79,8 +79,7 @@ func seedGoldenParityData(t *testing.T, a *App, userID string) {
 		{"recipe", "Cooking", "Recipes"},
 		{"backlog", "Reading", "Backlog"},
 	} {
-		_, _ = a.db.ExecContext(context.Background(), `INSERT INTO bookmark_entities(bookmark_id,user_id,entity) VALUES(?,?,?)`, row.BookmarkID, userID, row.Entity)
-		_, _ = a.db.ExecContext(context.Background(), `INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES(?,?,?)`, row.BookmarkID, userID, row.Concept)
+		seedValidatedGraphTerms(t, a, userID, row.BookmarkID, row.Entity, row.Concept)
 	}
 	_, _ = a.db.ExecContext(context.Background(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,suggested_tags_json,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, "summary-vector", "vector", userID, "Worth revisiting.", `["vector"]`, "completed", now.Format(time.RFC3339), now.Format(time.RFC3339))
 }

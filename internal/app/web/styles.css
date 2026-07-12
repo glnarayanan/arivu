@@ -1428,21 +1428,35 @@ progress::-moz-progress-bar {
 .graph-list-node {
   width: 100%;
   min-height: 0;
+  display: flex;
+  align-items: center;
   justify-content: space-between;
+  gap: var(--space-3);
   border-radius: var(--radius);
   background: var(--sand-100);
   color: var(--ink);
   padding: var(--space-3);
+  font: 650 0.875rem/1.2 var(--font-ui);
   text-align: left;
+  text-decoration: none;
+}
+
+.graph-list-node span {
+  overflow-wrap: anywhere;
 }
 
 .graph-list-node small {
+  flex: 0 0 auto;
   color: var(--base-600);
 }
 
-.graph-list-node.selected {
-  background: var(--accent-50);
-  color: var(--accent-700);
+.graph-list-node:hover {
+  background: var(--sand-200);
+  color: var(--ink);
+}
+
+.graph-list-node:hover small {
+  color: var(--base-800);
 }
 
 .insights-heading label {
