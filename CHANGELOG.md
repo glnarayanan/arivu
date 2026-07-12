@@ -46,7 +46,7 @@ All notable changes to this project will be documented in this file.
 - Quarantined unversioned or unsupported legacy entities and concepts from
   Library, Graph, and Insights; source-aware reprocessing now reports missing X
   evidence as partial instead of completed, and X Sync repairs existing rotten
-  duplicates from fresh API evidence before requeueing analysis. Unvalidated
+  duplicates from HTML-entity-decoded API evidence before requeueing analysis. Unvalidated
   legacy summaries no longer block a safe fallback swap when replacement model
   output fails validation.
 

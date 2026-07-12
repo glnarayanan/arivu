@@ -67,7 +67,7 @@ Second-brain v1 adds user-authored context around bookmarks:
   annotations, notes, manual tags, and collection membership remain intact.
 - Existing X bookmarks that predate evidence provenance are repaired during the
   next X Sync. Duplicate tweet IDs are not blindly skipped: fresh API text is
-  retained as authoritative evidence, obviously scraped/encoded generated
+  HTML-entity decoded and retained as authoritative evidence, obviously scraped/encoded generated
   titles and descriptions are corrected, and normal processing is requeued.
   Only a current, validated summary for the same evidence hash can block a
   failed replacement; unvalidated legacy summaries are replaced by a bounded
