@@ -26,7 +26,11 @@ Saving a bookmark initiates several processing stages to build a structured grap
    source links, shared concepts, shared entities, and semantic similarity where
    embeddings exist. Every edge has a stable ID, provenance, and confidence.
    Node and edge limits are bounded; `focus` plus depth 0-2 performs local
-   expansion.
+   expansion. A bookmark enters the Graph only when its current selected
+   evidence is complete and non-empty, or when the user has intentionally
+   connected it through a link, linked note, annotation, or sourced knowledge
+   object. Metadata-only and failed URL captures remain available in Library
+   without becoming disconnected URL-shaped Graph nodes.
 5. **Pattern detection**: `/api/insights` deterministically detects emerging
    themes, recurring connections, forgotten value, knowledge gaps, and
    serendipitous connections. Evidence joins always include the current user.
@@ -181,6 +185,10 @@ To keep the dependency surface small, Arivu bypasses vendor SDKs. External commu
 ### Model Providers (`gemini.go`, `model_provider.go`)
 - **Use Case**: Performs automated summaries and insights through the configured text-generation provider. Gemini remains the image OCR and embedding provider for now, using `gemini-embedding-2` for semantic vectors.
 - **Details**: Direct JSON endpoint payloads target Gemini-native generation, OpenAI-compatible chat completions, or Anthropic Messages based on `ai_provider`. Runtime settings read the active Model Provider, Model, API Key, and Base URL from SQLite/env, with legacy Gemini settings used only as Gemini fallbacks.
+- **Reliability**: Summary validation retries share one 90-second budget,
+  individual provider HTTP requests are capped at 60 seconds, and embeddings
+  are capped at 30 seconds. Provider telemetry exposes stable safe error codes
+  and messages rather than raw transport errors, request URLs, or credentials.
 
 ### Resend (`resend.go`)
 - **Use Case**: Triggers transactional email verification notices.

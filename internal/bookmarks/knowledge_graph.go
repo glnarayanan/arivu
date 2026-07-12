@@ -65,7 +65,7 @@ func (s *Service) graphV2Nodes(ctx context.Context, userID string, limit int, fo
 		}
 		return []graphV2Node{}, nil
 	}
-	rows, err := s.db.QueryContext(ctx, libraryUnion+" WHERE user_id=? ORDER BY updated_at DESC,item_type,id LIMIT ?", userID, limit)
+	rows, err := s.db.QueryContext(ctx, libraryUnion+" WHERE user_id=? AND "+graphNodeEligibilitySQL("library")+" ORDER BY updated_at DESC,item_type,id LIMIT ?", userID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -95,12 +95,29 @@ func scanGraphV2Nodes(rows interface {
 }
 
 func (s *Service) graphV2Node(ctx context.Context, userID, itemType, id string) (graphV2Node, bool) {
-	rows, err := s.db.QueryContext(ctx, libraryUnion+" WHERE user_id=? AND item_type=? AND id=? LIMIT 1", userID, itemType, id)
+	rows, err := s.db.QueryContext(ctx, libraryUnion+" WHERE user_id=? AND item_type=? AND id=? AND "+graphNodeEligibilitySQL("library")+" LIMIT 1", userID, itemType, id)
 	if err != nil {
 		return graphV2Node{}, false
 	}
 	nodes, err := scanGraphV2Nodes(rows)
 	return firstGraphNode(nodes, err)
+}
+
+// graphNodeEligibilitySQL keeps raw bookmarks in the Library while admitting
+// them to the Graph only after usable evidence exists or the user has made an
+// intentional connection to another knowledge object.
+func graphNodeEligibilitySQL(alias string) string {
+	bookmark := "graph_bookmark"
+	return "(" + alias + ".item_type<>'bookmark' OR EXISTS (SELECT 1 FROM bookmarks " + bookmark +
+		" WHERE " + bookmark + ".id=" + alias + ".id AND " + bookmark + ".user_id=" + alias + ".user_id AND ((" +
+		bookmark + ".summary_version='" + providers.SummaryPromptVersion + "' AND " + bookmark + ".enrichment_version='" + providers.SemanticVersion +
+		"' AND EXISTS (SELECT 1 FROM bookmark_evidence graph_evidence WHERE graph_evidence.bookmark_id=" + bookmark + ".id AND graph_evidence.user_id=" + bookmark +
+		".user_id AND graph_evidence.is_selected=1 AND graph_evidence.quality_status='complete' AND trim(COALESCE(graph_evidence.content_text,''))<>'')) OR " +
+		"EXISTS (SELECT 1 FROM item_links graph_link WHERE graph_link.user_id=" + bookmark + ".user_id AND ((graph_link.from_type='bookmark' AND graph_link.from_id=" + bookmark +
+		".id) OR (graph_link.to_type='bookmark' AND graph_link.to_id=" + bookmark + ".id))) OR " +
+		"EXISTS (SELECT 1 FROM bookmark_notes graph_note WHERE graph_note.user_id=" + bookmark + ".user_id AND graph_note.bookmark_id=" + bookmark + ".id) OR " +
+		"EXISTS (SELECT 1 FROM annotations graph_annotation WHERE graph_annotation.user_id=" + bookmark + ".user_id AND graph_annotation.bookmark_id=" + bookmark + ".id) OR " +
+		"EXISTS (SELECT 1 FROM knowledge_objects graph_object WHERE graph_object.user_id=" + bookmark + ".user_id AND graph_object.source_item_type='bookmark' AND graph_object.source_item_id=" + bookmark + ".id))))"
 }
 
 func firstGraphNode(nodes []graphV2Node, err error) (graphV2Node, bool) {
