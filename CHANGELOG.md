@@ -34,7 +34,7 @@ All notable changes to this project will be documented in this file.
 
 - Added privacy-safe aggregate quality auditing and an explicit, dry-run-first
   reprocessing CLI with scope guards, verified backup matching, bounded durable
-  batches, and idempotent run tracking.
+  batches, idempotent run tracking, and redacted run-status reporting.
 - Added a 30-case synthetic quality corpus covering evidence, summary
   faithfulness, semantic precision, extraction failures, unusual text, and
   prompt injection without production bookmark contents.
@@ -43,6 +43,10 @@ All notable changes to this project will be documented in this file.
 
 - Documented evidence provenance, bounded summary and semantic guarantees,
   insight-versus-recommendation semantics, and staged backup/repair/rollback.
+- Quarantined unversioned or unsupported legacy entities and concepts from
+  Library, Graph, and Insights; source-aware reprocessing now reports missing X
+  evidence as partial instead of completed, and X Sync repairs existing rotten
+  duplicates from fresh API evidence before requeueing analysis.
 
 ## [1.1.0] - 2026-07-11
 

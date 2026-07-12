@@ -1037,11 +1037,14 @@ func (s *Service) graphBookmark(ctx context.Context, userID, bookmarkID string) 
 
 func (s *Service) graphBookmarks(ctx context.Context, userID string, limit int, requireEmbedding bool) ([]graphBookmark, error) {
 	query := `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,embedding FROM bookmarks WHERE user_id=?`
+	args := []any{userID}
 	if requireEmbedding {
-		query += ` AND embedding IS NOT NULL AND embedding_dim>0`
+		query += ` AND embedding IS NOT NULL AND embedding_dim>0 AND enrichment_version=? AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=bookmarks.id AND e.user_id=bookmarks.user_id AND e.is_selected=1 AND e.quality_status='complete')`
+		args = append(args, providers.SemanticVersion)
 	}
 	query += ` ORDER BY created_at DESC LIMIT ?`
-	rows, err := s.db.QueryContext(ctx, query, userID, limit)
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -1096,7 +1099,7 @@ func (s *Service) graphTerms(ctx context.Context, userID, table, column string, 
 	for _, id := range bookmarkIDs {
 		args = append(args, id)
 	}
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT bookmark_id,%s FROM %s WHERE user_id=? AND bookmark_id IN (%s) ORDER BY %s COLLATE NOCASE`, column, table, placeholders, column), args...)
+	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`SELECT t.bookmark_id,t.%s FROM %s t WHERE t.user_id=? AND t.bookmark_id IN (%s) AND %s ORDER BY t.%s COLLATE NOCASE`, column, table, placeholders, semanticEligibilitySQL("t"), column), args...)
 	if err != nil {
 		return nil, err
 	}

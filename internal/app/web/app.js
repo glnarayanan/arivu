@@ -3614,7 +3614,9 @@ async function bindConnectionsPanel() {
     const done = setButtonBusy(event.currentTarget, "Syncing");
     try {
       const result = await api("/auth/x/sync", { method: "POST", body: "{}" });
-      ui.toast(`Synced ${Number(result.new_bookmarks || 0)} new bookmarks`, "success");
+      const created = Number(result.new_bookmarks || 0);
+      const repaired = Number(result.repaired_bookmarks || 0);
+      ui.toast(`Synced ${created} new and repaired ${repaired} bookmarks`, "success");
       await refresh();
     } catch (err) {
       ui.toast(err.message, "error");

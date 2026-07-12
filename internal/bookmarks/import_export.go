@@ -171,18 +171,27 @@ func (s *Service) processXBookmark(ctx context.Context, userID, bookmarkID, rawU
 	for _, evidence := range evidenceRows {
 		if evidence.Kind == "source_post" && (evidence.Origin == "x_api" || evidence.ExtractionMethod == "x_api") {
 			sourceEvidence = evidence
-			break
+			if evidence.ExtractorVersion == "x-api-v1" {
+				break
+			}
 		}
 	}
 	if sourceEvidence.ID == "" {
-		s.markInsufficientEvidence(ctx, bookmarkID, "failed")
-		return nil
+		if err := s.markInsufficientEvidence(ctx, bookmarkID, "failed"); err != nil {
+			return err
+		}
+		return errPartialExtraction
 	}
 	isExternalArticle := strings.Contains(contentKind, "article") && normalizeProcessingURL(rawURL) != normalizeProcessingURL(tweetURL)
 	if !isExternalArticle {
 		if sourceEvidence.QualityStatus != "complete" || strings.TrimSpace(sourceEvidence.Text) == "" {
-			s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus)
-			return nil
+			if err := s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus); err != nil {
+				return err
+			}
+			if sourceEvidence.Origin == "x_api" && sourceEvidence.QualityStatus == "metadata_only" {
+				return nil
+			}
+			return errPartialExtraction
 		}
 		sourceEvidence.Selected = false
 		storedEvidence, err := s.UpsertEvidence(ctx, userID, bookmarkID, sourceEvidence)
@@ -226,18 +235,47 @@ func (s *Service) useXSourceFallback(ctx context.Context, userID, bookmarkID, ti
 		}
 		return s.persistSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, storedEvidence)
 	}
-	s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus)
+	if err := s.markInsufficientEvidence(ctx, bookmarkID, sourceEvidence.QualityStatus); err != nil {
+		return err
+	}
+	if fetchErr == nil {
+		return errPartialExtraction
+	}
 	return fetchErr
 }
 
-func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qualityStatus string) {
+func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qualityStatus string) error {
 	status := "insufficient_evidence"
 	if qualityStatus == "failed" {
 		status = "failed"
 	}
 	now := nowString()
-	_, _ = s.db.ExecContext(ctx, `UPDATE ai_summaries SET processing_status=CASE WHEN processing_status IN ('completed','fallback') THEN processing_status ELSE ? END,updated_at=? WHERE bookmark_id=?`, status, now, bookmarkID)
-	_, _ = s.db.ExecContext(ctx, `UPDATE bookmarks SET processed_at=?,fetch_version=? WHERE id=?`, now, safefetch.ExtractorVersion, bookmarkID)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	var userID, evidenceOrigin, evidenceStatus, extractorVersion string
+	if err := tx.QueryRowContext(ctx, `SELECT b.user_id,COALESCE(e.evidence_origin,''),COALESCE(e.quality_status,''),COALESCE(e.extractor_version,'') FROM bookmarks b LEFT JOIN bookmark_evidence e ON e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 WHERE b.id=?`, bookmarkID).Scan(&userID, &evidenceOrigin, &evidenceStatus, &extractorVersion); err != nil {
+		return err
+	}
+	authoritativeEmpty := evidenceOrigin == "x_api" && evidenceStatus == "metadata_only" && extractorVersion == "x-api-v1"
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_entities WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_concepts WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_tags WHERE bookmark_id=? AND user_id=? AND source='enrichment'`, bookmarkID, userID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=NULL,embedding_dim=0,embedding_model=NULL,processed_at=?,fetch_version=CASE WHEN ? THEN ? ELSE fetch_version END,summary_version=CASE WHEN ? THEN ? ELSE summary_version END,enrichment_version=CASE WHEN ? THEN ? ELSE enrichment_version END WHERE id=?`, now, authoritativeEmpty, extractorVersion, authoritativeEmpty, providers.SummaryPromptVersion, authoritativeEmpty, providers.SemanticVersion, bookmarkID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE ai_summaries SET one_sentence=CASE WHEN validation_status='validated' THEN one_sentence ELSE NULL END,bullet_points_json=CASE WHEN validation_status='validated' THEN bullet_points_json ELSE '[]' END,long_form=CASE WHEN validation_status='validated' THEN long_form ELSE NULL END,highlights_json=CASE WHEN validation_status='validated' THEN highlights_json ELSE '[]' END,suggested_tags_json=CASE WHEN validation_status='validated' THEN suggested_tags_json ELSE '[]' END,processing_status=CASE WHEN validation_status='validated' AND processing_status='completed' THEN processing_status ELSE ? END,validation_status=CASE WHEN validation_status='validated' THEN validation_status ELSE 'insufficient_evidence' END,updated_at=? WHERE bookmark_id=?`, status, now, bookmarkID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence) error {

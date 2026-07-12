@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/glnarayanan/arivu/internal/auth"
+	"github.com/glnarayanan/arivu/internal/providers"
 )
 
 type graphV2Node struct {
@@ -163,7 +164,7 @@ func (s *Service) graphNeighborRefs(ctx context.Context, userID, itemType, itemI
 			rows.Close()
 		}
 		for _, term := range []struct{ table, column, itemType string }{{"bookmark_concepts", "concept", "concept"}, {"bookmark_entities", "entity", "entity"}} {
-			rows, err := s.db.QueryContext(ctx, `SELECT `+term.column+` FROM `+term.table+` WHERE user_id=? AND bookmark_id=? ORDER BY `+term.column, userID, itemID)
+			rows, err := s.db.QueryContext(ctx, `SELECT t.`+term.column+` FROM `+term.table+` t WHERE t.user_id=? AND t.bookmark_id=? AND `+semanticEligibilitySQL("t")+` ORDER BY t.`+term.column, userID, itemID)
 			if err == nil {
 				for rows.Next() {
 					var value string
@@ -190,7 +191,7 @@ func (s *Service) graphNeighborRefs(ctx context.Context, userID, itemType, itemI
 		if itemType == "entity" {
 			table, column = "bookmark_entities", "entity"
 		}
-		rows, err := s.db.QueryContext(ctx, `SELECT bookmark_id FROM `+table+` WHERE user_id=? AND `+column+`=? ORDER BY bookmark_id`, userID, itemID)
+		rows, err := s.db.QueryContext(ctx, `SELECT t.bookmark_id FROM `+table+` t WHERE t.user_id=? AND t.`+column+`=? AND `+semanticEligibilitySQL("t")+` ORDER BY t.bookmark_id`, userID, itemID)
 		if err == nil {
 			for rows.Next() {
 				var bookmarkID string
@@ -256,7 +257,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 		rows.Close()
 	}
 	for _, table := range []struct{ table, column, kind, nodeType string }{{"bookmark_concepts", "concept", "shared_concept", "concept"}, {"bookmark_entities", "entity", "shared_entity", "entity"}} {
-		query := `SELECT bookmark_id,` + table.column + ` FROM ` + table.table + ` WHERE user_id=? ORDER BY ` + table.column + `,bookmark_id`
+		query := `SELECT t.bookmark_id,t.` + table.column + ` FROM ` + table.table + ` t WHERE t.user_id=? AND ` + semanticEligibilitySQL("t") + ` ORDER BY t.` + table.column + `,t.bookmark_id`
 		rows, err := s.db.QueryContext(ctx, query, userID)
 		if err != nil {
 			continue
@@ -279,7 +280,7 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 		embedding []float64
 	}
 	embedded := []embeddedNode{}
-	rows, err = s.db.QueryContext(ctx, `SELECT id,embedding FROM bookmarks WHERE user_id=? AND embedding IS NOT NULL ORDER BY id`, userID)
+	rows, err = s.db.QueryContext(ctx, `SELECT b.id,b.embedding FROM bookmarks b WHERE b.user_id=? AND b.embedding IS NOT NULL AND b.enrichment_version=? AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 AND e.quality_status='complete') ORDER BY b.id`, userID, providers.SemanticVersion)
 	if err == nil {
 		for rows.Next() {
 			var id string

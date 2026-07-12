@@ -18,7 +18,10 @@ Saving a bookmark initiates several processing stages to build a structured grap
    claim. No-provider operation does not repopulate the graph with raw tokens.
 3. **Knowledge projection**: `/api/library/items` unions bookmarks, notes, daily
    notes, annotations, knowledge objects, entities, and concepts into stable
-   user-scoped rows without duplicating canonical content.
+   user-scoped rows without duplicating canonical content. Generated entities
+   and concepts appear only when their confidence, enrichment version, selected
+   complete evidence, and source span all pass the shared semantic gate; legacy
+   token rows remain stored for audit but are quarantined from every surface.
 4. **Graph relationships**: `/api/knowledge-graph/v2` projects explicit links,
    source links, shared concepts, shared entities, and semantic similarity where
    embeddings exist. Every edge has a stable ID, provenance, and confidence.
@@ -62,6 +65,10 @@ Second-brain v1 adds user-authored context around bookmarks:
   keeps the existing archive and generated context available while queued, then
   replaces derived content only after a successful refresh. The bookmark,
   annotations, notes, manual tags, and collection membership remain intact.
+- Existing X bookmarks that predate evidence provenance are repaired during the
+  next X Sync. Duplicate tweet IDs are not blindly skipped: fresh API text is
+  retained as authoritative evidence, obviously scraped/encoded generated
+  titles and descriptions are corrected, and normal processing is requeued.
 - Reader annotations store text-quote selector metadata when captured from the
   sanitized page selection, so saved highlights can jump back to matching source
   text when the archive still contains that passage.

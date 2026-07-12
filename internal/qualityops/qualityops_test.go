@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/database"
+	"github.com/glnarayanan/arivu/internal/safefetch"
 )
 
 func TestAuditIsRedactedAndReadOnly(t *testing.T) {
@@ -76,6 +77,13 @@ func TestReprocessApplyRequiresVerifiedMatchingBackupAndQueuesBoundedIdempotentB
 	}
 	if !first.BackupVerified || first.Queued != 2 || first.RunID == "" {
 		t.Fatalf("first apply = %#v", first)
+	}
+	status, err := ReprocessRunStatus(context.Background(), dbPath, first.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Status != "queued" || status.Counts["queued"] != 2 || status.Reasons["stale_version"] != 2 || status.Scope != "user" {
+		t.Fatalf("reprocess status = %#v", status)
 	}
 	second, err := Reprocess(context.Background(), options)
 	if err != nil {
@@ -166,6 +174,37 @@ func TestReprocessDoesNotAttachRunToUnrelatedBookmarkJob(t *testing.T) {
 	}
 	if jobID == "ordinary-job" || !strings.Contains(payload, result.RunID) {
 		t.Fatalf("run item reused unrelated job: id=%q payload=%s", jobID, payload)
+	}
+}
+
+func TestReprocessSourceAwareFetchVersionsConverge(t *testing.T) {
+	dbPath := seedQualityDatabase(t, 1)
+	db, err := database.Open(context.Background(), dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	_, _ = db.Exec(`UPDATE bookmarks SET source='x',summary_version=?,enrichment_version=? WHERE id='bookmark-1'`, TargetSummaryVersion, TargetEnrichmentVersion)
+	_, _ = db.Exec(`UPDATE bookmark_evidence SET evidence_kind='fetched_article',extractor_version=?,quality_status='complete' WHERE bookmark_id='bookmark-1'`, safefetch.ExtractorVersion)
+	result, err := Reprocess(context.Background(), ReprocessOptions{DBPath: dbPath, UserID: "user-1", BatchSize: 10})
+	if err != nil || result.Eligible != 0 {
+		t.Fatalf("current X article eligible=%d err=%v", result.Eligible, err)
+	}
+	_, _ = db.Exec(`UPDATE bookmark_evidence SET evidence_kind='source_post',extractor_version='x-api-v1' WHERE bookmark_id='bookmark-1'`)
+	result, err = Reprocess(context.Background(), ReprocessOptions{DBPath: dbPath, UserID: "user-1", BatchSize: 10})
+	if err != nil || result.Eligible != 0 {
+		t.Fatalf("current direct X eligible=%d err=%v", result.Eligible, err)
+	}
+	_, _ = db.Exec(`UPDATE bookmark_evidence SET extractor_version='old-x' WHERE bookmark_id='bookmark-1'`)
+	result, err = Reprocess(context.Background(), ReprocessOptions{DBPath: dbPath, UserID: "user-1", BatchSize: 10})
+	if err != nil || result.Eligible != 1 {
+		t.Fatalf("stale X eligible=%d err=%v", result.Eligible, err)
+	}
+	_, _ = db.Exec(`UPDATE bookmarks SET source='web' WHERE id='bookmark-1'`)
+	_, _ = db.Exec(`UPDATE bookmark_evidence SET evidence_kind='fetched_article',extractor_version=? WHERE bookmark_id='bookmark-1'`, safefetch.ExtractorVersion)
+	result, err = Reprocess(context.Background(), ReprocessOptions{DBPath: dbPath, UserID: "user-1", BatchSize: 10})
+	if err != nil || result.Eligible != 0 {
+		t.Fatalf("current web eligible=%d err=%v", result.Eligible, err)
 	}
 }
 

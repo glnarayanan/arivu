@@ -138,6 +138,44 @@ func TestInsightFeedbackRejectsRelationshipOnlyConfirmation(t *testing.T) {
 	}
 }
 
+func TestLibraryAndGraphQuarantineLegacyUnprovenSemantics(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "a", "Rotten legacy item", "2026-07-10T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "b", "Another rotten item", "2026-07-09T00:00:00Z")
+	_, _ = db.Exec(`INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES('a','u1','quot')`)
+	_, _ = db.Exec(`INSERT INTO bookmark_entities(bookmark_id,user_id,entity) VALUES('a','u1','https')`)
+	_, _ = db.Exec(`UPDATE bookmarks SET embedding='[1,0]',embedding_dim=2,embedding_model='legacy' WHERE id IN ('a','b')`)
+
+	library := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=concept", "")
+	if items := library["items"].([]any); len(items) != 0 {
+		t.Fatalf("library exposed legacy semantics: %#v", library)
+	}
+	graph := callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2", "")
+	for _, raw := range graph["nodes"].([]any) {
+		typeName := raw.(map[string]any)["type"]
+		if typeName == "concept" || typeName == "entity" {
+			t.Fatalf("graph exposed legacy semantic node: %#v", raw)
+		}
+	}
+	for _, raw := range graph["edges"].([]any) {
+		typeName := raw.(map[string]any)["type"]
+		if typeName == "shared_concept" || typeName == "shared_entity" || typeName == "semantic_similarity" {
+			t.Fatalf("graph exposed legacy semantic edge: %#v", raw)
+		}
+	}
+	seedInsightConcept(t, db, "u1", "a", "Evidence provenance")
+	graph = callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2", "")
+	foundValidConcept := false
+	for _, raw := range graph["nodes"].([]any) {
+		node := raw.(map[string]any)
+		foundValidConcept = foundValidConcept || (node["type"] == "concept" && node["title"] == "Evidence provenance")
+	}
+	if !foundValidConcept {
+		t.Fatalf("graph hid validated concept: %#v", graph)
+	}
+}
+
 func TestKnowledgeFeedbackExportIsOptionalAndUserScoped(t *testing.T) {
 	service, db := newKnowledgeTestService(t)
 	seedKnowledgeUser(t, db, "u1", "one@example.com")

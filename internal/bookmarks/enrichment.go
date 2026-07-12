@@ -88,8 +88,22 @@ func (s *Service) replaceGeneratedEnrichmentTx(ctx context.Context, tx *sql.Tx, 
 		if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), "gemini/"+providers.GeminiEmbeddingModel, bookmarkID, userID); err != nil {
 			return err
 		}
+	} else {
+		if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=NULL,embedding_dim=0,embedding_model=NULL WHERE id=? AND user_id=?`, bookmarkID, userID); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+// semanticEligibilitySQL is used only with hard-coded table aliases. It keeps
+// every knowledge surface on the same provenance gate as insight generation.
+func semanticEligibilitySQL(alias string) string {
+	return alias + ".confidence>=0.65 AND " + alias + ".enrichment_version='" + providers.SemanticVersion +
+		"' AND " + alias + ".evidence_id IS NOT NULL AND " + alias + ".evidence_text<>'' AND " +
+		alias + ".evidence_end>" + alias + ".evidence_start AND EXISTS (SELECT 1 FROM bookmark_evidence quality_evidence WHERE quality_evidence.id=" +
+		alias + ".evidence_id AND quality_evidence.bookmark_id=" + alias + ".bookmark_id AND quality_evidence.user_id=" + alias +
+		".user_id AND quality_evidence.is_selected=1 AND quality_evidence.quality_status='complete' AND lower(CAST(substr(CAST(quality_evidence.content_text AS BLOB)," + alias + ".evidence_start+1," + alias + ".evidence_end-" + alias + ".evidence_start) AS TEXT))=lower(" + alias + ".evidence_text))"
 }
 
 func (s *Service) bookmarkOwner(ctx context.Context, bookmarkID string) (string, bool) {

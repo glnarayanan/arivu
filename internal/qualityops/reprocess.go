@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	TargetFetchVersion      = safefetch.ExtractorVersion
+	TargetFetchVersion      = safefetch.ExtractorVersion + "|x-api-v1"
 	TargetSummaryVersion    = providers.SummaryPromptVersion
 	TargetEnrichmentVersion = providers.SemanticVersion
 )
@@ -48,6 +48,66 @@ type ReprocessResult struct {
 	AlreadyTracked       int               `json:"already_tracked"`
 	PreservedValidOutput int               `json:"preserved_valid_output"`
 	BackupVerified       bool              `json:"backup_verified"`
+}
+
+type ReprocessStatus struct {
+	RunID           string         `json:"run_id"`
+	Status          string         `json:"status"`
+	Scope           string         `json:"scope"`
+	TotalCandidates int            `json:"total_candidates"`
+	Counts          map[string]int `json:"counts"`
+	Reasons         map[string]int `json:"reasons"`
+	UpdatedAt       string         `json:"updated_at"`
+}
+
+func ReprocessRunStatus(ctx context.Context, dbPath, runID string) (ReprocessStatus, error) {
+	db, err := openReadOnly(strings.TrimSpace(dbPath))
+	if err != nil {
+		return ReprocessStatus{}, err
+	}
+	defer db.Close()
+	result := ReprocessStatus{RunID: strings.TrimSpace(runID), Counts: map[string]int{}, Reasons: map[string]int{}}
+	if result.RunID == "" {
+		return ReprocessStatus{}, errors.New("run ID is required")
+	}
+	var scopeType, scopeUserID string
+	if err := db.QueryRowContext(ctx, `SELECT status,scope_type,COALESCE(scope_user_id,''),total_candidates,updated_at FROM quality_reprocess_runs WHERE id=?`, result.RunID).Scan(&result.Status, &scopeType, &scopeUserID, &result.TotalCandidates, &result.UpdatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ReprocessStatus{}, errors.New("reprocess run not found")
+		}
+		return ReprocessStatus{}, err
+	}
+	result.Scope = scopeLabel(scopeUserID, scopeType == "all")
+	rows, err := db.QueryContext(ctx, `SELECT status,COUNT(*) FROM quality_reprocess_items WHERE run_id=? GROUP BY status`, result.RunID)
+	if err != nil {
+		return ReprocessStatus{}, err
+	}
+	for rows.Next() {
+		var status string
+		var count int
+		if err := rows.Scan(&status, &count); err != nil {
+			rows.Close()
+			return ReprocessStatus{}, err
+		}
+		result.Counts[status] = count
+	}
+	if err := rows.Close(); err != nil {
+		return ReprocessStatus{}, err
+	}
+	reasonRows, err := db.QueryContext(ctx, `SELECT COALESCE(NULLIF(reason,''),'unspecified'),COUNT(*) FROM quality_reprocess_items WHERE run_id=? GROUP BY COALESCE(NULLIF(reason,''),'unspecified')`, result.RunID)
+	if err != nil {
+		return ReprocessStatus{}, err
+	}
+	defer reasonRows.Close()
+	for reasonRows.Next() {
+		var reason string
+		var count int
+		if err := reasonRows.Scan(&reason, &count); err != nil {
+			return ReprocessStatus{}, err
+		}
+		result.Reasons[reason] = count
+	}
+	return result, reasonRows.Err()
 }
 
 func Reprocess(ctx context.Context, options ReprocessOptions) (ReprocessResult, error) {
@@ -187,10 +247,16 @@ type candidate struct {
 	EvidenceHash string
 }
 
+const freshSelectedEvidenceSQL = `EXISTS (SELECT 1 FROM bookmark_evidence selected_evidence
+	WHERE selected_evidence.bookmark_id=b.id AND selected_evidence.user_id=b.user_id AND selected_evidence.is_selected=1
+	AND (selected_evidence.quality_status='complete' OR (b.source='x' AND selected_evidence.evidence_kind='source_post' AND selected_evidence.quality_status='metadata_only'))
+	AND ((b.source='x' AND selected_evidence.evidence_kind='source_post' AND selected_evidence.extractor_version='x-api-v1')
+		OR (selected_evidence.evidence_kind IN ('fetched_article','linked_article','web_article') AND selected_evidence.extractor_version=?)))`
+
 func candidateCounts(ctx context.Context, q queryer, userID string) (int, int, error) {
 	where, args := scopeWhere(userID)
-	query := `SELECT COUNT(*),COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM ai_summaries s WHERE s.bookmark_id=b.id AND s.user_id=b.user_id AND s.processing_status IN ('completed','fallback')) THEN 1 ELSE 0 END),0) FROM bookmarks b WHERE ` + where + ` AND (b.fetch_version<>? OR b.summary_version<>? OR b.enrichment_version<>?)`
-	args = append(args, TargetFetchVersion, TargetSummaryVersion, TargetEnrichmentVersion)
+	query := `SELECT COUNT(*),COALESCE(SUM(CASE WHEN EXISTS (SELECT 1 FROM ai_summaries s WHERE s.bookmark_id=b.id AND s.user_id=b.user_id AND s.processing_status IN ('completed','fallback')) THEN 1 ELSE 0 END),0) FROM bookmarks b WHERE ` + where + ` AND (NOT (` + freshSelectedEvidenceSQL + `) OR b.summary_version<>? OR b.enrichment_version<>?)`
+	args = append(args, safefetch.ExtractorVersion, TargetSummaryVersion, TargetEnrichmentVersion)
 	var eligible, preserved int
 	if err := q.QueryRowContext(ctx, query, args...).Scan(&eligible, &preserved); err != nil {
 		return 0, 0, err
@@ -200,8 +266,8 @@ func candidateCounts(ctx context.Context, q queryer, userID string) (int, int, e
 
 func reprocessCandidates(ctx context.Context, q queryer, runID, userID string, limit int) ([]candidate, error) {
 	where, args := scopeWhere(userID)
-	query := `SELECT b.id,b.user_id,b.url,COALESCE((SELECT e.content_hash FROM bookmark_evidence e WHERE e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 LIMIT 1),'') FROM bookmarks b WHERE ` + where + ` AND (b.fetch_version<>? OR b.summary_version<>? OR b.enrichment_version<>?) AND NOT EXISTS (SELECT 1 FROM quality_reprocess_items qi WHERE qi.run_id=? AND qi.bookmark_id=b.id) ORDER BY b.user_id,b.created_at,b.id LIMIT ?`
-	args = append(args, TargetFetchVersion, TargetSummaryVersion, TargetEnrichmentVersion, runID, limit)
+	query := `SELECT b.id,b.user_id,b.url,COALESCE((SELECT e.content_hash FROM bookmark_evidence e WHERE e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 LIMIT 1),'') FROM bookmarks b WHERE ` + where + ` AND (NOT (` + freshSelectedEvidenceSQL + `) OR b.summary_version<>? OR b.enrichment_version<>?) AND NOT EXISTS (SELECT 1 FROM quality_reprocess_items qi WHERE qi.run_id=? AND qi.bookmark_id=b.id) ORDER BY b.user_id,b.created_at,b.id LIMIT ?`
+	args = append(args, safefetch.ExtractorVersion, TargetSummaryVersion, TargetEnrichmentVersion, runID, limit)
 	rows, err := q.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err

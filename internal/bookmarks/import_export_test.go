@@ -271,6 +271,9 @@ func TestProcessXArticleFailureFallsBackWithoutDestroyingSource(t *testing.T) {
 
 func TestProcessMetadataOnlyXDoesNotGenerateClaims(t *testing.T) {
 	service, db := xProcessingTestService(t, "x-media", "https://x.com/author/status/3", "x_media", "https://t.co/media", "metadata_only")
+	now := "2026-07-11T08:00:00Z"
+	_, _ = db.Exec(`INSERT INTO tags(id,user_id,name,slug,source,created_at,updated_at) VALUES('manual-tag','user-1','Manual','manual','manual',?,?),('generated-tag','user-1','Generated','generated','enrichment',?,?)`, now, now, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmark_tags(bookmark_id,tag_id,user_id,source,created_at) VALUES('x-media','manual-tag','user-1','manual',?),('x-media','generated-tag','user-1','enrichment',?)`, now, now)
 	if err := service.processBookmark(t.Context(), "x-media", "https://x.com/author/status/3"); err != nil {
 		t.Fatal(err)
 	}
@@ -280,6 +283,12 @@ func TestProcessMetadataOnlyXDoesNotGenerateClaims(t *testing.T) {
 	}
 	if status != "insufficient_evidence" || summary != "" {
 		t.Fatalf("metadata-only summary = status=%q summary=%q", status, summary)
+	}
+	var manualTags, generatedTags int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bookmark_tags WHERE bookmark_id='x-media' AND source='manual'`).Scan(&manualTags)
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bookmark_tags WHERE bookmark_id='x-media' AND source='enrichment'`).Scan(&generatedTags)
+	if manualTags != 1 || generatedTags != 0 {
+		t.Fatalf("insufficient evidence tags manual=%d generated=%d", manualTags, generatedTags)
 	}
 }
 

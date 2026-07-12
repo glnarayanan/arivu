@@ -186,6 +186,21 @@ Queueing does not delete active summaries or semantics. Review a stratified
 15-20 item sample and the acceptance report before continuing. Stop queueing if
 quality gates fail; restore the verified installer backup for rollback.
 
+Poll a queued run without opening SQLite directly:
+
+```bash
+arivu reprocess --db /path/to/arivu.sqlite3 --status RUN_ID
+```
+
+The redacted result reports durable run state, per-item status counts,
+reason-code totals, and the last update time.
+
+For older X-only databases, run X Sync before the repair batch. The sync
+backfills authoritative API evidence for existing tweet IDs and queues those
+bookmarks; reprocessing without that evidence finishes them as `partial`, never
+as a false success. Library and Graph quarantine legacy semantic rows while the
+backfill is incomplete.
+
 `arivu-installer backup` fails if the primary SQLite database is missing and
 uses a SQLite-consistent snapshot instead of raw-copying a live WAL database.
 

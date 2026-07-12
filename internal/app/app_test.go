@@ -3539,6 +3539,66 @@ func TestXOAuthStatusSyncAndDisconnect(t *testing.T) {
 	if err := a.db.QueryRow(`SELECT COUNT(*) FROM bookmark_evidence WHERE bookmark_id=? AND evidence_origin='x_api'`, bookmarkID).Scan(&evidenceCount); err != nil || evidenceCount != 3 {
 		t.Fatalf("X evidence count = %d err=%v", evidenceCount, err)
 	}
+	_, _ = a.db.Exec(`UPDATE bookmark_evidence SET content_text='stale partial API text',quality_status='partial',extractor_version='old-x' WHERE bookmark_id=? AND evidence_kind='source_post'`, bookmarkID)
+	_, _ = a.db.Exec(`DELETE FROM bookmark_evidence WHERE bookmark_id=? AND evidence_kind<>'source_post'`, bookmarkID)
+	_, _ = a.db.Exec(`DELETE FROM jobs WHERE json_extract(payload_json,'$.bookmark_id')=?`, bookmarkID)
+	_, _ = a.db.Exec(`UPDATE bookmarks SET url=x_tweet_url,canonical_url=x_tweet_url,title='ClaudeDevs on X: &quot;https://t.co/rotten&quot;',description='https://t.co/rotten',text_content='quot https com',fetch_version='' WHERE id=?`, bookmarkID)
+	repairResp := adminRequest(t, handler, http.MethodPost, "/api/auth/x/sync", `{}`, accessCookie, csrfCookie)
+	if repairResp.StatusCode != http.StatusOK {
+		t.Fatalf("repair sync status = %d body=%s", repairResp.StatusCode, readBody(repairResp))
+	}
+	var repairBody map[string]any
+	_ = json.NewDecoder(repairResp.Body).Decode(&repairBody)
+	repairResp.Body.Close()
+	if repairBody["repaired_bookmarks"].(float64) != 1 || repairBody["new_bookmarks"].(float64) != 0 {
+		t.Fatalf("unexpected repair sync: %#v", repairBody)
+	}
+	if repairBody["duplicates_skipped"].(float64) != 0 {
+		t.Fatalf("repaired bookmark was reported as skipped: %#v", repairBody)
+	}
+	var repairedTitle, repairedDescription, repairedText, repairedFetch string
+	if err := a.db.QueryRow(`SELECT title,description,text_content,fetch_version FROM bookmarks WHERE id=?`, bookmarkID).Scan(&repairedTitle, &repairedDescription, &repairedText, &repairedFetch); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(repairedTitle, "&quot;") || repairedDescription != "The complete long-form post text from the X API." || repairedText != repairedDescription || repairedFetch != "x-api-v1" {
+		t.Fatalf("existing X repair = title=%q description=%q text=%q fetch=%q", repairedTitle, repairedDescription, repairedText, repairedFetch)
+	}
+	if err := a.db.QueryRow(`SELECT COUNT(*) FROM bookmark_evidence WHERE bookmark_id=? AND evidence_kind='source_post' AND evidence_origin='x_api' AND quality_status='complete' AND extractor_version='x-api-v1' AND is_selected=1`, bookmarkID).Scan(&evidenceCount); err != nil || evidenceCount != 1 {
+		t.Fatalf("repaired X source evidence count = %d err=%v", evidenceCount, err)
+	}
+	var repairedURL, repairedKind string
+	if err := a.db.QueryRow(`SELECT url,content_kind FROM bookmarks WHERE id=?`, bookmarkID).Scan(&repairedURL, &repairedKind); err != nil || repairedURL != "https://example.com/article?utm_source=x" || repairedKind != "x_article" {
+		t.Fatalf("repaired X article url=%q kind=%q err=%v", repairedURL, repairedKind, err)
+	}
+	var repairedJobs int
+	_ = a.db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE status='queued' AND json_extract(payload_json,'$.bookmark_id')=?`, bookmarkID).Scan(&repairedJobs)
+	if repairedJobs != 1 {
+		t.Fatalf("repaired X queued jobs=%d", repairedJobs)
+	}
+	_, _ = a.db.Exec(`UPDATE bookmarks SET x_tweet_id=NULL,title=NULL,description=NULL,text_content=NULL WHERE id=?`, bookmarkID)
+	urlRepairResp := adminRequest(t, handler, http.MethodPost, "/api/auth/x/sync", `{}`, accessCookie, csrfCookie)
+	var urlRepairBody map[string]any
+	_ = json.NewDecoder(urlRepairResp.Body).Decode(&urlRepairBody)
+	urlRepairResp.Body.Close()
+	var restoredTweetID string
+	_ = a.db.QueryRow(`SELECT COALESCE(x_tweet_id,'') FROM bookmarks WHERE id=?`, bookmarkID).Scan(&restoredTweetID)
+	if urlRepairResp.StatusCode != http.StatusOK || urlRepairBody["repaired_bookmarks"].(float64) != 1 || restoredTweetID != "tweet-1" {
+		t.Fatalf("URL-only X repair status=%d body=%#v tweet=%q", urlRepairResp.StatusCode, urlRepairBody, restoredTweetID)
+	}
+
+	_, _ = a.db.Exec(`UPDATE bookmarks SET url=x_tweet_url,canonical_url=x_tweet_url,x_tweet_id=NULL WHERE id=?`, bookmarkID)
+	userID := userIDForEmail(t, a, "x-user@example.com")
+	insertBookmarkForTest(t, a, userID, "ordinary-web-collision", "Ordinary web article", time.Now().UTC(), time.Now().UTC(), 0, 1)
+	_, _ = a.db.Exec(`UPDATE bookmarks SET url='https://example.com/article?utm_source=x',canonical_url='https://example.com/article?utm_source=x',source='web',text_content='independent web content' WHERE id='ordinary-web-collision'`)
+	collisionResp := adminRequest(t, handler, http.MethodPost, "/api/auth/x/sync", `{}`, accessCookie, csrfCookie)
+	var collisionBody map[string]any
+	_ = json.NewDecoder(collisionResp.Body).Decode(&collisionBody)
+	collisionResp.Body.Close()
+	var collisionSource, collisionText string
+	_ = a.db.QueryRow(`SELECT source,text_content FROM bookmarks WHERE id='ordinary-web-collision'`).Scan(&collisionSource, &collisionText)
+	if collisionResp.StatusCode != http.StatusOK || collisionBody["repaired_bookmarks"].(float64) != 0 || collisionBody["duplicates_skipped"].(float64) != 1 || collisionSource != "web" || collisionText != "independent web content" {
+		t.Fatalf("web URL collision mutated by X sync: status=%d body=%#v source=%q text=%q", collisionResp.StatusCode, collisionBody, collisionSource, collisionText)
+	}
 
 	disconnect := adminRequest(t, handler, http.MethodPost, "/api/auth/x/disconnect", `{}`, accessCookie, csrfCookie)
 	if disconnect.StatusCode != http.StatusOK {
@@ -3772,12 +3832,7 @@ func TestSemanticKnowledgeGraphParity(t *testing.T) {
 		{"close", "Embeddings", "Vector Search"},
 		{"far", "Cooking", "Recipes"},
 	} {
-		if row.Entity != "" {
-			_, _ = a.db.ExecContext(context.Background(), `INSERT INTO bookmark_entities(bookmark_id,user_id,entity) VALUES(?,?,?)`, row.BookmarkID, userID, row.Entity)
-		}
-		if row.Concept != "" {
-			_, _ = a.db.ExecContext(context.Background(), `INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES(?,?,?)`, row.BookmarkID, userID, row.Concept)
-		}
+		seedValidatedGraphTerms(t, a, userID, row.BookmarkID, row.Entity, row.Concept)
 	}
 
 	related := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/source/related?limit=2", "", accessCookie, csrfCookie)
@@ -4010,6 +4065,35 @@ func userIDForEmail(t *testing.T, a *App, email string) string {
 		t.Fatal(err)
 	}
 	return id
+}
+
+func seedValidatedGraphTerms(t *testing.T, a *App, userID, bookmarkID, entity, concept string) {
+	t.Helper()
+	evidenceID := "test-evidence-" + bookmarkID
+	evidenceText := strings.TrimSpace(entity + " " + concept)
+	now := time.Now().UTC().Format(time.RFC3339)
+	mustExecTest(t, a, `INSERT OR IGNORE INTO bookmark_evidence(id,bookmark_id,user_id,evidence_kind,evidence_origin,content_text,content_hash,quality_status,extractor_version,is_selected,created_at,updated_at) VALUES(?,?,?,'fetched_article','test',?,?,'complete','test-v1',1,?,?)`, evidenceID, bookmarkID, userID, evidenceText, evidenceID, now, now)
+	mustExecTest(t, a, `UPDATE bookmark_evidence SET content_text=trim(content_text||' '||?),updated_at=? WHERE id=?`, evidenceText, now, evidenceID)
+	mustExecTest(t, a, `UPDATE bookmarks SET enrichment_version=? WHERE id=?`, providers.SemanticVersion, bookmarkID)
+	var storedEvidence string
+	if err := a.db.QueryRowContext(context.Background(), `SELECT content_text FROM bookmark_evidence WHERE id=?`, evidenceID).Scan(&storedEvidence); err != nil {
+		t.Fatal(err)
+	}
+	if entity != "" {
+		entityStart := strings.LastIndex(storedEvidence, entity)
+		mustExecTest(t, a, `INSERT OR REPLACE INTO bookmark_entities(bookmark_id,user_id,entity,normalized_key,entity_type,confidence,extraction_method,evidence_id,evidence_text,evidence_start,evidence_end,enrichment_version) VALUES(?,?,?,?, 'other',0.9,'model_structured',?,?,?,?,?)`, bookmarkID, userID, entity, strings.ToLower(entity), evidenceID, entity, entityStart, entityStart+len(entity), providers.SemanticVersion)
+	}
+	if concept != "" {
+		conceptStart := strings.LastIndex(storedEvidence, concept)
+		mustExecTest(t, a, `INSERT OR REPLACE INTO bookmark_concepts(bookmark_id,user_id,concept,normalized_key,confidence,extraction_method,evidence_id,evidence_text,evidence_start,evidence_end,enrichment_version) VALUES(?,?,?,?,0.9,'model_structured',?,?,?,?,?)`, bookmarkID, userID, concept, strings.ToLower(concept), evidenceID, concept, conceptStart, conceptStart+len(concept), providers.SemanticVersion)
+	}
+}
+
+func mustExecTest(t *testing.T, a *App, query string, args ...any) {
+	t.Helper()
+	if _, err := a.db.ExecContext(context.Background(), query, args...); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func insertBookmarkForTest(t *testing.T, a *App, userID, id, title string, createdAt, lastAccessed time.Time, viewCount, readingTime int) {
