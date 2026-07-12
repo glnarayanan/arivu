@@ -68,11 +68,12 @@ requests depth-one expansion. The SVG distinguishes node types and explicit vs
 derived edges, while the inspector exposes provenance and confidence.
 
 SVG nodes are semantic links to the saved bookmark, note, or corresponding
-knowledge destination. The open `Accessible node list` contains the same nodes
-as buttons for selecting the inspector and does not require interpreting the
-visual map. On constrained screens the canvas scrolls and the inspector moves
-below it. Normal browser and touch zoom remain enabled. The graph also provides
-bounded Zoom out, Reset, and Zoom in controls for focused canvas navigation.
+knowledge destination. The open `Accessible node list` exposes those same
+destinations as high-contrast keyboard-accessible links and does not require
+interpreting the visual map. The focus selector controls which node is loaded
+into the inspector. On constrained screens the canvas scrolls and the inspector
+moves below it. Normal browser and touch zoom remain enabled. The graph also
+provides bounded Zoom out, Reset, and Zoom in controls for focused navigation.
 
 ### Insights
 

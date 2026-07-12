@@ -4343,7 +4343,7 @@ async function graphPage() {
     <details class="graph-list" open>
       <summary>Accessible node list</summary>
       <p class="meta">This list contains the same nodes as the visual graph and supports full keyboard navigation.</p>
-      <ul>${nodes.map((node) => `<li><button type="button" class="graph-list-node" data-graph-node="${escapeHTML(node.id)}"><span>${escapeHTML(node.title || node.id)}</span><small>${escapeHTML(knowledgeTypeLabel(node.type))}</small></button></li>`).join("")}</ul>
+      <ul>${nodes.map((node) => `<li><a class="graph-list-node" href="${escapeHTML(knowledgeItemHref(node.type, node.source_id, node.title))}"><span>${escapeHTML(node.title || node.id)}</span><small>${escapeHTML(knowledgeTypeLabel(node.type))}</small></a></li>`).join("")}</ul>
     </details>
   `));
   document.querySelector("#graph-focus-form").addEventListener("submit", (event) => {
@@ -4351,7 +4351,7 @@ async function graphPage() {
     const value = document.querySelector("#graph-focus").value;
     navigate(`/graph${value ? `?focus=${encodeURIComponent(value)}` : ""}`);
   });
-  bindGraphNodes(nodes, edges);
+  bindRelationshipFeedback();
   bindGraphViewport();
 }
 
@@ -4398,23 +4398,6 @@ function graphSVG(nodes, edges, positions) {
       return `<a href="${escapeHTML(knowledgeItemHref(node.type, node.source_id, node.title))}" data-graph-node="${escapeHTML(node.id)}" aria-label="${escapeHTML(`Open ${node.title || node.id}, ${knowledgeTypeLabel(node.type)}`)}"><g class="graph-node" data-kind="${escapeHTML(node.type)}" transform="translate(${point.x} ${point.y})"><circle r="${node === nodes[0] ? 12 : 8}"></circle><text y="-15">${escapeHTML(String(node.title || node.id).slice(0, 24))}</text></g></a>`;
     }).join("")}</g>
   </svg>`;
-}
-
-function bindGraphNodes(nodes, edges) {
-  const select = (id) => {
-    const node = nodes.find((item) => item.id === id);
-    if (!node) return;
-    document.querySelectorAll("[data-graph-node]").forEach((item) => item.classList.toggle("selected", item.dataset.graphNode === id));
-    document.querySelector("#graph-inspector").innerHTML = graphInspector(node, edges, nodes);
-    bindRelationshipFeedback();
-  };
-  document.querySelectorAll(".graph-list-node").forEach((item) => {
-    item.addEventListener("click", () => select(item.dataset.graphNode));
-    item.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") { event.preventDefault(); select(item.dataset.graphNode); }
-    });
-  });
-  if (nodes[0]) select(nodes[0].id);
 }
 
 function graphInspector(node, edges, nodes) {

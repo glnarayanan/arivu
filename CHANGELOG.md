@@ -50,7 +50,8 @@ All notable changes to this project will be documented in this file.
   `t.co` short link while retaining the bookmark record for later repair.
 - Replaced generic `Post / X` projection labels with useful source context and
   made visual Graph nodes link directly to their saved knowledge destination;
-  the accessible list continues to select nodes for relationship inspection.
+  the accessible node list now uses the same direct links with a legible
+  high-contrast hover state.
 - Bounded provider work within a four-minute bookmark lease, made summary
   retries share one deadline, and replaced raw provider telemetry errors with
   safe classified codes and messages.
