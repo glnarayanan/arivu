@@ -618,6 +618,7 @@ func TestPersistSelectedEvidenceKeepsLastValidArtifactsWhenValidationFails(t *te
 	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{APIKey: "test", BaseURL: "https://gemini.test", HTTP: summaryTestHTTPClient(`{"one_sentence":"GLM 5.2 is superior.","long_form":"","bullet_points":[],"highlights":[],"suggested_tags":[],"entities":[],"concepts":[]}`)})
 	oldEvidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "Old evidence", QualityStatus: "complete", ExtractorVersion: "old", Selected: true})
 	newEvidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "GLM 5.2 comparison results are pending.", QualityStatus: "complete", ExtractorVersion: "new"})
+	_, _ = db.Exec(`UPDATE ai_summaries SET prompt_version=?,validator_version=?,evidence_hash=?,validation_status='validated' WHERE bookmark_id='bookmark-1'`, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, newEvidence.ContentHash)
 	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "x.com", newEvidence); err == nil {
 		t.Fatal("expected unsupported comparison result to fail validation")
 	}
@@ -627,6 +628,33 @@ func TestPersistSelectedEvidenceKeepsLastValidArtifactsWhenValidationFails(t *te
 	}
 	if summary != "Last valid summary" || textContent != "Old evidence" || selectedID != oldEvidence.ID {
 		t.Fatalf("failed replacement changed active artifacts: summary=%q text=%q selected=%q want=%q", summary, textContent, selectedID, oldEvidence.ID)
+	}
+}
+
+func TestPersistSelectedEvidenceReplacesUnvalidatedLegacyArtifactsWithFallback(t *testing.T) {
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := time.Now().UTC().Format(time.RFC3339)
+	_, _ = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('user-1','one@example.com','One',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,domain,text_content,content_kind,created_at,updated_at) VALUES('bookmark-1','user-1','https://x.com/post','Post','x.com','quot https com','x_post',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,processing_status,created_at,updated_at) VALUES('summary-1','bookmark-1','user-1','Unsupported legacy expansion','completed',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmark_concepts(bookmark_id,user_id,concept) VALUES('bookmark-1','user-1','quot')`)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{APIKey: "test", BaseURL: "https://gemini.test", HTTP: summaryTestHTTPClient(`{"one_sentence":"GLM 5.2 is superior.","long_form":"","bullet_points":[],"highlights":[],"suggested_tags":[],"entities":[],"concepts":[]}`)})
+	evidence, _ := service.UpsertEvidence(t.Context(), "user-1", "bookmark-1", BookmarkEvidence{Kind: "source_post", Origin: "x_api", Text: "GLM 5.2 comparison results are pending.", QualityStatus: "complete", ExtractorVersion: "x-api-v1", Selected: true})
+	if err := service.persistSelectedEvidence(t.Context(), "user-1", "bookmark-1", "Post", "", "x.com", evidence); err != nil {
+		t.Fatal(err)
+	}
+	var summary, status, validation, textContent, selectedID, summaryVersion, enrichmentVersion string
+	if err := db.QueryRow(`SELECT s.one_sentence,s.processing_status,s.validation_status,b.text_content,(SELECT id FROM bookmark_evidence WHERE bookmark_id=b.id AND is_selected=1),b.summary_version,b.enrichment_version FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id WHERE b.id='bookmark-1'`).Scan(&summary, &status, &validation, &textContent, &selectedID, &summaryVersion, &enrichmentVersion); err != nil {
+		t.Fatal(err)
+	}
+	var concepts int
+	_ = db.QueryRow(`SELECT COUNT(*) FROM bookmark_concepts WHERE bookmark_id='bookmark-1'`).Scan(&concepts)
+	if summary == "Unsupported legacy expansion" || status != "fallback" || validation != "fallback" || textContent != evidence.Text || selectedID != evidence.ID || summaryVersion != providers.SummaryPromptVersion || enrichmentVersion != providers.SemanticVersion || concepts != 0 {
+		t.Fatalf("legacy fallback swap summary=%q status=%q validation=%q text=%q selected=%q versions=%q/%q concepts=%d", summary, status, validation, textContent, selectedID, summaryVersion, enrichmentVersion, concepts)
 	}
 }
 

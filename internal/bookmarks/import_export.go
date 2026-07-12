@@ -283,7 +283,7 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 	now := time.Now().UTC().Format(time.RFC3339)
 	request := s.summaryRequestForEvidence(ctx, userID, bookmarkID, title, evidence)
 	generated, generationErr := s.aiClient(ctx).GenerateSummary(ctx, request)
-	if generationErr != nil && s.hasValidSummary(ctx, userID, bookmarkID) {
+	if generationErr != nil && s.hasValidSummary(ctx, userID, bookmarkID, evidence.ContentHash) {
 		return generationErr
 	}
 	validationReasons := summaryFailureReasons(generationErr)
@@ -387,9 +387,9 @@ func nullableTimeString(value time.Time) any {
 	return value.UTC().Format(time.RFC3339)
 }
 
-func (s *Service) hasValidSummary(ctx context.Context, userID, bookmarkID string) bool {
+func (s *Service) hasValidSummary(ctx context.Context, userID, bookmarkID, evidenceHash string) bool {
 	var count int
-	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_summaries WHERE bookmark_id=? AND user_id=? AND processing_status IN ('completed','fallback') AND trim(COALESCE(one_sentence,''))<>''`, bookmarkID, userID).Scan(&count)
+	_ = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM ai_summaries WHERE bookmark_id=? AND user_id=? AND processing_status='completed' AND validation_status='validated' AND prompt_version=? AND validator_version=? AND evidence_hash=? AND trim(COALESCE(one_sentence,''))<>''`, bookmarkID, userID, providers.SummaryPromptVersion, providers.SummaryValidatorVersion, evidenceHash).Scan(&count)
 	return count > 0
 }
 
