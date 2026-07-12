@@ -17,7 +17,7 @@ type libraryCursor struct {
 
 func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth.User) {
 	limit := queryInt(r, "limit", 50, 1, 200)
-	where := []string{"user_id=?"}
+	where := []string{"user_id=?", libraryDisplayEligibilitySQL("library")}
 	args := []any{user.ID}
 	for _, filter := range []struct {
 		key, column string
@@ -90,8 +90,15 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "next_cursor": next, "facets": facets})
 }
 
+// libraryDisplayEligibilitySQL hides unresolved short-link placeholders while
+// retaining the bookmark itself for later repair and every capture with useful
+// title or body text.
+func libraryDisplayEligibilitySQL(alias string) string {
+	return "NOT (" + alias + ".item_type='bookmark' AND lower(trim(" + alias + ".title)) LIKE 'https://t.co/%' AND (trim(" + alias + ".body)='' OR lower(trim(" + alias + ".body))=lower(trim(" + alias + ".title))))"
+}
+
 var libraryUnion = `SELECT * FROM (
- SELECT b.user_id,b.id,'bookmark' item_type,COALESCE(b.title,b.url) title,substr(COALESCE(b.description,b.text_content,''),1,600) body,b.source,COALESCE(st.stage,'inbox') stage,
+ SELECT b.user_id,b.id,'bookmark' item_type,COALESCE(b.title,b.url) title,CASE WHEN lower(trim(COALESCE(b.description,'')))=lower(trim(COALESCE(b.title,b.url))) THEN substr(COALESCE(NULLIF(trim(b.text_content),''),b.description,''),1,600) ELSE substr(COALESCE(NULLIF(trim(b.description),''),b.text_content,''),1,600) END body,b.source,COALESCE(st.stage,'inbox') stage,
   COALESCE((SELECT group_concat(value,' ') FROM (SELECT entity value FROM bookmark_entities topic_entity WHERE user_id=b.user_id AND bookmark_id=b.id AND ` + semanticEligibilitySQL("topic_entity") + ` UNION SELECT concept FROM bookmark_concepts topic_concept WHERE user_id=b.user_id AND bookmark_id=b.id AND ` + semanticEligibilitySQL("topic_concept") + `)),'') topic,
   CASE WHEN EXISTS(SELECT 1 FROM item_links l WHERE l.user_id=b.user_id AND ((l.from_type='bookmark' AND l.from_id=b.id) OR (l.to_type='bookmark' AND l.to_id=b.id))) THEN 'connected' ELSE 'unconnected' END connection_state,b.created_at,b.updated_at
  FROM bookmarks b LEFT JOIN item_states st ON st.user_id=b.user_id AND st.item_type='bookmark' AND st.item_id=b.id

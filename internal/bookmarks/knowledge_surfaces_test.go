@@ -42,6 +42,27 @@ func TestLibraryItemsAreUserScopedStableAndCursorBounded(t *testing.T) {
 	}
 }
 
+func TestLibraryItemsHideOnlyUnresolvedTCOPlaceholders(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "raw-tco", "https://t.co/raw", "2026-07-12T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "useful-tco", "https://t.co/useful", "2026-07-11T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "ordinary-url", "https://example.com/unprocessed", "2026-07-10T00:00:00Z")
+	_, _ = db.Exec(`UPDATE bookmarks SET description='https://t.co/raw',text_content='https://t.co/raw',content_kind='x_link' WHERE id='raw-tco'`)
+	_, _ = db.Exec(`UPDATE bookmarks SET description='https://t.co/useful',text_content='Useful source context',content_kind='x_link' WHERE id='useful-tco'`)
+
+	payload := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=bookmark&limit=20", "")
+	items := payload["items"].([]any)
+	if payloadHasItemID(items, "raw-tco") {
+		t.Fatalf("Library exposed unresolved t.co placeholder: %#v", payload)
+	}
+	for _, want := range []string{"useful-tco", "ordinary-url"} {
+		if !payloadHasItemID(items, want) {
+			t.Fatalf("Library hid useful bookmark %s: %#v", want, payload)
+		}
+	}
+}
+
 func TestKnowledgeGraphV2KeepsOldFocusAndBoundsPayload(t *testing.T) {
 	service, db := newKnowledgeTestService(t)
 	seedKnowledgeUser(t, db, "u1", "one@example.com")
@@ -78,7 +99,7 @@ func TestKnowledgeGraphV2KeepsOldFocusAndBoundsPayload(t *testing.T) {
 	}
 }
 
-func TestKnowledgeGraphV2HidesUnenrichedBookmarksButLibraryKeepsThem(t *testing.T) {
+func TestKnowledgeGraphV2HidesUnenrichedBookmarksAcrossKnowledgeSurfaces(t *testing.T) {
 	service, db := newKnowledgeTestService(t)
 	seedKnowledgeUser(t, db, "u1", "one@example.com")
 	seedKnowledgeUser(t, db, "u2", "two@example.com")
@@ -93,8 +114,8 @@ func TestKnowledgeGraphV2HidesUnenrichedBookmarksButLibraryKeepsThem(t *testing.
 	_, _ = db.Exec(`INSERT INTO item_links(id,user_id,from_type,from_id,to_type,to_id,label,source,created_at) VALUES('owned-link','u1','bookmark','linked','bookmark','complete','','manual','2026-07-12T00:00:00Z'),('foreign-link','u2','bookmark','foreign-only','bookmark','complete','','manual','2026-07-12T00:00:00Z')`)
 
 	library := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=bookmark&limit=20", "")
-	if !payloadHasItemID(library["items"].([]any), "raw") {
-		t.Fatalf("Library should retain raw bookmark: %#v", library)
+	if payloadHasItemID(library["items"].([]any), "raw") {
+		t.Fatalf("Library exposed raw t.co placeholder: %#v", library)
 	}
 	graph := callKnowledgeHandler(t, service.KnowledgeGraphV2, auth.User{ID: "u1"}, http.MethodGet, "/api/knowledge-graph/v2?node_limit=20", "")
 	nodes := graph["nodes"].([]any)

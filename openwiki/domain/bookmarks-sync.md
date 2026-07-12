@@ -22,6 +22,10 @@ Saving a bookmark initiates several processing stages to build a structured grap
    and concepts appear only when their confidence, enrichment version, selected
    complete evidence, and source span all pass the shared semantic gate; legacy
    token rows remain stored for audit but are quarantined from every surface.
+   Unresolved X short-link placeholders whose title and body are only the same
+   `t.co` URL also remain stored for repair but are omitted from Library rows;
+   ordinary unenriched URLs and `t.co` captures with useful context remain
+   visible.
 4. **Graph relationships**: `/api/knowledge-graph/v2` projects explicit links,
    source links, shared concepts, shared entities, and semantic similarity where
    embeddings exist. Every edge has a stable ID, provenance, and confidence.

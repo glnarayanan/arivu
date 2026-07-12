@@ -43,9 +43,11 @@ All notable changes to this project will be documented in this file.
 
 - Documented evidence provenance, bounded summary and semantic guarantees,
   insight-versus-recommendation semantics, and staged backup/repair/rollback.
-- Kept incomplete and metadata-only captures in Library while excluding them
-  from Graph unless the user intentionally connected them; focused Graph reads
-  and relationship validation use the same eligibility rule.
+- Kept incomplete and metadata-only captures as repairable bookmark records
+  while excluding them from Graph unless the user intentionally connected them;
+  focused Graph reads and relationship validation use the same eligibility rule.
+- Hid unresolved X placeholders whose Library title and body are only the same
+  `t.co` short link while retaining the bookmark record for later repair.
 - Bounded provider work within a four-minute bookmark lease, made summary
   retries share one deadline, and replaced raw provider telemetry errors with
   safe classified codes and messages.
