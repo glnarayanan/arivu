@@ -23,6 +23,68 @@ func TestOpenInitializesSchema(t *testing.T) {
 	}
 }
 
+func TestMigratePreservesPublicSnapshotsAndReadingProgressBounds(t *testing.T) {
+	ctx := context.Background()
+	db, err := Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := "2026-01-01T00:00:00Z"
+	if _, err := db.ExecContext(ctx, `INSERT INTO users(id,email,name,created_at,updated_at) VALUES('u1','one@example.com','One',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,created_at,updated_at) VALUES('b1','u1','https://example.com','Private',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO public_shares(id,user_id,token_digest,title,created_at,updated_at) VALUES('s1','u1','digest','Shared',?,?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO capture_attempts(id,bookmark_id,user_id,status,requested_url,engine,engine_version,queued_at) VALUES('ca1','b1','u1','complete','https://example.com','direct_http','test',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO artifacts(id,user_id,bookmark_id,capture_attempt_id,artifact_type,mime_type,byte_size,sha256,storage_key,created_at) VALUES('a1','u1','b1','ca1','screenshot','image/png',42,'hash','objects/hash',?)`, now); err != nil {
+		t.Fatal(err)
+	}
+	// Recreate the pre-migration relationship that cascaded snapshot membership.
+	if _, err := db.ExecContext(ctx, `DROP TABLE public_share_artifacts; DROP TABLE public_share_items; CREATE TABLE public_share_items (
+		share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
+		bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+		evidence_id TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL,
+		public_title TEXT NOT NULL DEFAULT '', public_description TEXT NOT NULL DEFAULT '',
+		public_url TEXT NOT NULL DEFAULT '', public_domain TEXT NOT NULL DEFAULT '',
+		public_reader_html TEXT NOT NULL DEFAULT '', public_text TEXT NOT NULL DEFAULT '',
+		public_published_at TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL,
+		PRIMARY KEY(share_id,bookmark_id));
+		CREATE TABLE public_share_artifacts (
+		share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
+		artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+		artifact_type TEXT NOT NULL CHECK(artifact_type IN ('screenshot','pdf')),
+		added_at TEXT NOT NULL, PRIMARY KEY(share_id,artifact_id));
+		INSERT INTO public_share_items(share_id,bookmark_id,public_title,public_url,added_at) VALUES('s1','b1','Published','https://example.com',?);
+		INSERT INTO public_share_artifacts(share_id,artifact_id,artifact_type,added_at) VALUES('s1','a1','screenshot',?)`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(ctx, db); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.ExecContext(ctx, `DELETE FROM bookmarks WHERE id='b1'`); err != nil {
+		t.Fatal(err)
+	}
+	var title string
+	if err := db.QueryRowContext(ctx, `SELECT public_title FROM public_share_items WHERE share_id='s1'`).Scan(&title); err != nil || title != "Published" {
+		t.Fatalf("published snapshot after bookmark delete: title=%q err=%v", title, err)
+	}
+	var storageKey, mime string
+	var size int64
+	if err := db.QueryRowContext(ctx, `SELECT storage_key,mime_type,byte_size FROM public_share_artifacts WHERE share_id='s1' AND artifact_id='a1'`).Scan(&storageKey, &mime, &size); err != nil || storageKey != "objects/hash" || mime != "image/png" || size != 42 {
+		t.Fatalf("published artifact after bookmark delete: key=%q mime=%q size=%d err=%v", storageKey, mime, size, err)
+	}
+	if _, err := db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,reading_progress,created_at,updated_at) VALUES('b2','u1','https://two.example','Two',1.1,?,?)`, now, now); err == nil {
+		t.Fatal("out-of-range reading progress was accepted")
+	}
+}
+
 func TestClassifySchemaStatementPhasesIndexesAfterStructure(t *testing.T) {
 	cases := []struct {
 		stmt string

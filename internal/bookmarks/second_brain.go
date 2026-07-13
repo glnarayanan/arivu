@@ -301,7 +301,13 @@ func (s *Service) CreateAnnotation(w http.ResponseWriter, r *http.Request, user 
 	tagJSON, _ := json.Marshal(tags)
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := ids.New()
-	_, err := s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, user.ID, bookmarkID, quote, note, selector, string(tagJSON), now, now)
+	var evidenceID string
+	_ = s.db.QueryRowContext(r.Context(), `SELECT id FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? AND is_selected=1`, bookmarkID, user.ID).Scan(&evidenceID)
+	var evidence sql.NullString
+	if evidenceID != "" {
+		evidence = sql.NullString{String: evidenceID, Valid: true}
+	}
+	_, err := s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,evidence_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, user.ID, bookmarkID, quote, note, selector, string(tagJSON), evidence, now, now)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not create annotation")
 		return
@@ -1328,25 +1334,43 @@ func scanNote(row scanner) map[string]any {
 }
 
 func (s *Service) annotation(ctx context.Context, userID, id string) (map[string]any, error) {
-	var bookmarkID, quote, note, selector, tags, created, updated string
-	err := s.db.QueryRowContext(ctx, `SELECT bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at FROM annotations WHERE id=? AND user_id=?`, id, userID).Scan(&bookmarkID, &quote, &note, &selector, &tags, &created, &updated)
+	var bookmarkID, quote, note, selector, tags, created, updated, evidenceID string
+	err := s.db.QueryRowContext(ctx, `SELECT bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at,COALESCE(evidence_id,'') FROM annotations WHERE id=? AND user_id=?`, id, userID).Scan(&bookmarkID, &quote, &note, &selector, &tags, &created, &updated, &evidenceID)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"id": id, "bookmark_id": bookmarkID, "quote": quote, "note": note, "selector": jsonObjectValue(selector), "tags": jsonList(tags), "created_at": created, "updated_at": updated}, nil
+	resolution := "unresolved"
+	if evidenceID != "" {
+		var selected bool
+		if s.db.QueryRowContext(ctx, `SELECT is_selected FROM bookmark_evidence WHERE id=? AND bookmark_id=?`, evidenceID, bookmarkID).Scan(&selected) == nil {
+			if selected {
+				resolution = "resolved"
+			} else {
+				resolution = "version_mismatch"
+			}
+		}
+	}
+	return map[string]any{"id": id, "bookmark_id": bookmarkID, "quote": quote, "note": note, "selector": jsonObjectValue(selector), "tags": jsonList(tags), "evidence_id": evidenceID, "resolution_state": resolution, "created_at": created, "updated_at": updated}, nil
 }
 
 func (s *Service) bookmarkAnnotations(ctx context.Context, userID, bookmarkID string) []map[string]any {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,quote,note,selector_json,tags_json,created_at,updated_at FROM annotations WHERE user_id=? AND bookmark_id=? ORDER BY created_at DESC LIMIT 100`, userID, bookmarkID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id FROM annotations WHERE user_id=? AND bookmark_id=? ORDER BY created_at DESC LIMIT 100`, userID, bookmarkID)
 	if err != nil {
 		return []map[string]any{}
 	}
-	defer rows.Close()
-	var result []map[string]any
+	var ids []string
 	for rows.Next() {
-		var id, quote, note, selector, tags, created, updated string
-		_ = rows.Scan(&id, &quote, &note, &selector, &tags, &created, &updated)
-		result = append(result, map[string]any{"id": id, "bookmark_id": bookmarkID, "quote": quote, "note": note, "selector": jsonObjectValue(selector), "tags": jsonList(tags), "created_at": created, "updated_at": updated})
+		var id string
+		if rows.Scan(&id) == nil {
+			ids = append(ids, id)
+		}
+	}
+	_ = rows.Close()
+	var result []map[string]any
+	for _, id := range ids {
+		if item, err := s.annotation(ctx, userID, id); err == nil {
+			result = append(result, item)
+		}
 	}
 	return result
 }

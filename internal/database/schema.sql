@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS bookmarks (
   text_content TEXT,
   domain TEXT,
   reading_time INTEGER NOT NULL DEFAULT 0,
+  reading_progress REAL NOT NULL DEFAULT 0 CHECK(reading_progress >= 0 AND reading_progress <= 1),
   read_status INTEGER NOT NULL DEFAULT 0,
   source TEXT NOT NULL DEFAULT 'web',
   x_tweet_id TEXT,
@@ -115,6 +116,46 @@ CREATE INDEX IF NOT EXISTS idx_evidence_user_published ON bookmark_evidence(user
 CREATE INDEX IF NOT EXISTS idx_evidence_user_quality_version ON bookmark_evidence(user_id, quality_status, extractor_version);
 CREATE INDEX IF NOT EXISTS idx_evidence_content_hash ON bookmark_evidence(content_hash) WHERE content_hash != '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_evidence_selected_bookmark ON bookmark_evidence(bookmark_id) WHERE is_selected = 1;
+
+CREATE TABLE IF NOT EXISTS capture_attempts (
+  id TEXT PRIMARY KEY,
+  bookmark_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  retry_of_id TEXT REFERENCES capture_attempts(id) ON DELETE SET NULL,
+  status TEXT NOT NULL CHECK(status IN ('queued','running','complete','partial','failed')),
+  requested_url TEXT NOT NULL,
+  final_url TEXT NOT NULL DEFAULT '',
+  engine TEXT NOT NULL DEFAULT 'direct_http',
+  engine_version TEXT NOT NULL DEFAULT '',
+  error_code TEXT NOT NULL DEFAULT '',
+  queued_at TEXT NOT NULL,
+  started_at TEXT,
+  finished_at TEXT,
+  FOREIGN KEY(bookmark_id,user_id) REFERENCES bookmarks(id,user_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_capture_attempts_owner ON capture_attempts(user_id,bookmark_id,queued_at DESC);
+CREATE INDEX IF NOT EXISTS idx_capture_attempts_status ON capture_attempts(status,queued_at);
+
+CREATE TABLE IF NOT EXISTS artifacts (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  bookmark_id TEXT NOT NULL,
+  capture_attempt_id TEXT NOT NULL REFERENCES capture_attempts(id) ON DELETE CASCADE,
+  evidence_id TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL,
+  artifact_type TEXT NOT NULL CHECK(artifact_type IN ('source_response','screenshot','pdf','self_contained_html','uploaded_file')),
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+  sha256 TEXT NOT NULL,
+  storage_key TEXT NOT NULL,
+  original_filename TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY(bookmark_id,user_id) REFERENCES bookmarks(id,user_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_artifacts_owner ON artifacts(user_id,bookmark_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_artifacts_attempt ON artifacts(capture_attempt_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_attempt_type ON artifacts(capture_attempt_id,artifact_type);
+CREATE INDEX IF NOT EXISTS idx_artifacts_storage_key ON artifacts(storage_key);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
   title,
@@ -272,6 +313,7 @@ CREATE TABLE IF NOT EXISTS annotations (
   note TEXT NOT NULL DEFAULT '',
   selector_json TEXT NOT NULL DEFAULT '{}',
   tags_json TEXT NOT NULL DEFAULT '[]',
+  evidence_id TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -414,6 +456,8 @@ CREATE INDEX IF NOT EXISTS idx_assistant_actions_user_status ON assistant_action
 CREATE TABLE IF NOT EXISTS collections (
   id TEXT PRIMARY KEY,
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  parent_id TEXT REFERENCES collections(id) ON DELETE RESTRICT,
+  sibling_order INTEGER NOT NULL DEFAULT 0,
   name TEXT NOT NULL,
   description TEXT,
   color TEXT,
@@ -421,6 +465,7 @@ CREATE TABLE IF NOT EXISTS collections (
   updated_at TEXT NOT NULL,
   UNIQUE(user_id, name)
 );
+CREATE INDEX IF NOT EXISTS idx_collections_tree ON collections(user_id,parent_id,sibling_order,name);
 
 CREATE TABLE IF NOT EXISTS collection_bookmarks (
   collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
@@ -532,6 +577,86 @@ CREATE TABLE IF NOT EXISTS settings (
   key_id TEXT,
   updated_by TEXT,
   updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS user_settings (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL DEFAULT '',
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(user_id,key)
+);
+
+CREATE TABLE IF NOT EXISTS feed_subscriptions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  url TEXT NOT NULL,
+  name TEXT NOT NULL DEFAULT '',
+  collection_id TEXT REFERENCES collections(id) ON DELETE SET NULL,
+  tags_json TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'pending',
+  last_error TEXT NOT NULL DEFAULT '',
+  etag TEXT NOT NULL DEFAULT '',
+  last_modified TEXT NOT NULL DEFAULT '',
+  last_poll_at TEXT,
+  next_poll_at TEXT NOT NULL,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(user_id,url)
+);
+
+CREATE TABLE IF NOT EXISTS feed_entries (
+  subscription_id TEXT NOT NULL REFERENCES feed_subscriptions(id) ON DELETE CASCADE,
+  entry_key TEXT NOT NULL,
+  bookmark_id TEXT REFERENCES bookmarks(id) ON DELETE SET NULL,
+  fingerprint TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(subscription_id,entry_key)
+);
+CREATE INDEX IF NOT EXISTS idx_feed_subscriptions_due ON feed_subscriptions(enabled,next_poll_at);
+CREATE INDEX IF NOT EXISTS idx_feed_entries_fingerprint ON feed_entries(subscription_id,fingerprint);
+
+CREATE TABLE IF NOT EXISTS public_shares (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_digest TEXT NOT NULL UNIQUE,
+  title TEXT NOT NULL,
+  description TEXT NOT NULL DEFAULT '',
+  expires_at TEXT,
+  revoked_at TEXT,
+  indexable INTEGER NOT NULL DEFAULT 0 CHECK(indexable IN (0,1)),
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_public_shares_owner ON public_shares(user_id,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS public_share_items (
+  share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
+  bookmark_id TEXT NOT NULL,
+  evidence_id TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL,
+  public_title TEXT NOT NULL DEFAULT '',
+  public_description TEXT NOT NULL DEFAULT '',
+  public_url TEXT NOT NULL DEFAULT '',
+  public_domain TEXT NOT NULL DEFAULT '',
+  public_reader_html TEXT NOT NULL DEFAULT '',
+  public_text TEXT NOT NULL DEFAULT '',
+  public_published_at TEXT NOT NULL DEFAULT '',
+  added_at TEXT NOT NULL,
+  PRIMARY KEY(share_id,bookmark_id)
+);
+
+CREATE TABLE IF NOT EXISTS public_share_artifacts (
+  share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
+  artifact_id TEXT NOT NULL,
+  bookmark_id TEXT NOT NULL,
+  artifact_type TEXT NOT NULL CHECK(artifact_type IN ('screenshot','pdf')),
+  storage_key TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
+  added_at TEXT NOT NULL,
+  PRIMARY KEY(share_id,artifact_id)
 );
 
 CREATE TABLE IF NOT EXISTS rate_limits (

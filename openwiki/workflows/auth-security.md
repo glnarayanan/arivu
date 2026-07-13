@@ -51,6 +51,26 @@ generated.
 
 ## Backend-Owned HTML Sanitization
 
+Public shares store only a SHA-256 digest of a random 256-bit token. Public
+queries use a dedicated projection, enforce revocation and optional expiry,
+rate-limit by a hashed client address, default to `noindex`, and omit owner,
+private-tag, note, annotation, backlink, graph, and insight data. Only explicitly
+selected screenshot/PDF artifacts are eligible; responses use `nosniff`, a
+restrictive sandbox CSP, and `no-store`. Raw and self-contained HTML artifacts
+are never publicly served.
+
+Adding or replacing share membership copies the selected evidence ID and the
+public title, description, URL, domain, sanitized reader HTML, plain text, and
+published/capture time into the membership row. Public JSON, HTML, and RSS read
+only this immutable snapshot, so later edits or recaptures cannot change a
+published item. Snapshot rows and explicitly selected artifact metadata are not
+cascade-bound to the private bookmark, so deleting private material does not
+silently break an active public share. Existing memberships are safely
+snapshotted during migration.
+The public reader loads its script and stylesheet as embedded same-origin assets;
+it requires no inline CSP exception. Client identity comes only from the socket
+address, never forwarding headers.
+
 Users import bookmarks containing arbitrary rich documentation or raw source HTML. Rendering arbitrary elements exposes others to Cross-Site Scripting (XSS).
 
 - **Implementation**: `/internal/sanitize/sanitize.go`.

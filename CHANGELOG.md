@@ -4,6 +4,42 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Fixed Home so Pulse, Focus, Review, and Board keep their shared navigation;
+  separated Focus status filters from Home routing; removed Pulse's cross-column
+  whitespace; condensed Review with deduplicated memories and optional follow-up
+  forms; and made Board fill wide desktops while retaining horizontally
+  scrollable Kanban lanes on constrained screens.
+- Added owner-scoped nested collections with ordered siblings, safe moves and
+  cycle prevention, non-recursive deletion, and hierarchy-aware backup restore.
+- Added an opt-in, dependency-free browser preservation helper boundary with
+  strict JSON, timeout, staging confinement, format/MIME/size validation, and
+  authenticated screenshot/PDF/HTML artifact presentation.
+- Added capture-attempt and typed-artifact persistence, evidence-version binding
+  for annotations, crash-safe bounded storage of original direct-fetch responses,
+  owner-checked artifact APIs, and stable capture terminal states without changing
+  the one-binary SSRF-safe direct-fetch baseline.
+- Added Settings controls for per-user AI tagging and RSS/Atom subscription
+  lifecycle/status, bookmark scroll-progress and capture-history presentation,
+  retained-evidence inspection, collection management, and one-time-copy public
+  bookmark links with owner list/revoke controls. Removed the duplicate profile
+  import/export action and normalized legible hover states across clickable UI.
+- Added snapshot public shares with digest-only tokens, expiry/revocation,
+  dedicated non-leaking projections, bounded public RSS, explicitly selected
+  screenshot/PDF artifacts, rate limiting, and noindex/no-store defaults.
+  Membership now freezes selected evidence and all public fields, migrations
+  safely backfill existing rows, public snapshots survive private bookmark
+  deletion, and the reader uses self-hosted CSP-safe assets and product styling.
+- Added CLI-audience agent parity for collections, feed subscriptions, and
+  public-share lifecycle operations with bounded mutation quotas.
+- Backups now cover adjacent assets with a verified size/hash manifest while
+  retaining restore compatibility with legacy manifest-free backups.
+- Artifact storage now supports multiple logical references per content object,
+  enforces a configurable logical per-user quota, and safely migrates legacy
+  `storage_key` uniqueness. Backup hashing streams data and excludes staging;
+  restore validates live DB references and activates database/assets as a pair.
+- Asset maintenance now reports missing referenced objects, retains shared live
+  objects, and grace-cleans stale staging and unreferenced content safely.
+
 ## [1.2.1] - 2026-07-13
 
 ### Fixed

@@ -14,6 +14,17 @@ import (
 	"github.com/glnarayanan/arivu/internal/database"
 )
 
+func createBackupDB(t *testing.T, path string) {
+	t.Helper()
+	db, err := database.Open(context.Background(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestValidateDownloadURLRejectsPlainHTTP(t *testing.T) {
 	if err := validateDownloadURL("http://example.com/arivu"); err == nil {
 		t.Fatal("expected http URL to fail")
@@ -46,6 +57,13 @@ func TestBackupCreatesConsistentSQLiteSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
+	assetPath := filepath.Join(dataDir, "arivu.sqlite3.assets", "objects", "ab", "artifact")
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(assetPath, []byte("preserved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	backupDir, err := Backup(root)
 	if err != nil {
@@ -63,11 +81,39 @@ func TestBackupCreatesConsistentSQLiteSnapshot(t *testing.T) {
 	if value != "ok" {
 		t.Fatalf("backup value = %q", value)
 	}
+	artifact, err := os.ReadFile(filepath.Join(backupDir, "arivu.sqlite3.assets", "objects", "ab", "artifact"))
+	if err != nil {
+		t.Fatalf("read backed-up artifact: %v", err)
+	}
+	if string(artifact) != "preserved" {
+		t.Fatalf("backed-up artifact = %q", artifact)
+	}
 }
 
 func TestRestoreRequiresPrimaryBackupDatabase(t *testing.T) {
 	if err := Restore(t.TempDir(), t.TempDir()); err == nil {
 		t.Fatal("expected missing primary backup database to fail")
+	}
+}
+
+func TestRestoreRejectsCorruptManifestAndAcceptsLegacyBackup(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "var/lib/arivu"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(t.TempDir(), "legacy")
+	if err := os.MkdirAll(legacy, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	createBackupDB(t, filepath.Join(legacy, "arivu.sqlite3"))
+	if err := Restore(root, legacy); err != nil {
+		t.Fatalf("legacy restore: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "manifest.json"), []byte(`{"version":1,"files":[{"path":"arivu.sqlite3","size":6,"sha256":"bad"}]}`), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if err := Restore(root, legacy); err == nil || !strings.Contains(err.Error(), "integrity") {
+		t.Fatalf("corrupt manifest error=%v", err)
 	}
 }
 
@@ -77,9 +123,7 @@ func TestRootRestoreChecksHealthBeforeBackupTimer(t *testing.T) {
 	if err := os.MkdirAll(backupDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(backupDir, "arivu.sqlite3"), []byte("backup"), 0o640); err != nil {
-		t.Fatal(err)
-	}
+	createBackupDB(t, filepath.Join(backupDir, "arivu.sqlite3"))
 
 	var commands []string
 	oldRun := runCommand
@@ -116,9 +160,7 @@ func TestRootRestoreHealthFailureSkipsBackupTimer(t *testing.T) {
 	if err := os.MkdirAll(backupDir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(backupDir, "arivu.sqlite3"), []byte("backup"), 0o640); err != nil {
-		t.Fatal(err)
-	}
+	createBackupDB(t, filepath.Join(backupDir, "arivu.sqlite3"))
 
 	var commands []string
 	oldRun := runCommand
@@ -139,8 +181,8 @@ func TestRootRestoreHealthFailureSkipsBackupTimer(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "restore health check failed") {
 		t.Fatalf("restore error = %v, want health failure", err)
 	}
-	if indexCommand(commands, "systemctl start arivu-backup.timer") >= 0 {
-		t.Fatalf("backup timer started despite health failure: %#v", commands)
+	if indexCommand(commands, "systemctl stop arivu.service") < 0 || indexCommand(commands, "systemctl start arivu-backup.timer") < 0 {
+		t.Fatalf("old service and timer were not restored after health failure: %#v", commands)
 	}
 }
 

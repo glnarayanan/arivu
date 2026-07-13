@@ -11,6 +11,7 @@ import (
 
 type libraryCursor struct {
 	UpdatedAt string `json:"updated_at"`
+	Sort      string `json:"sort,omitempty"`
 	Type      string `json:"type"`
 	ID        string `json:"id"`
 }
@@ -36,6 +37,10 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 		where = append(where, "topic LIKE ?")
 		args = append(args, "%"+value+"%")
 	}
+	if collection := strings.TrimSpace(r.URL.Query().Get("collection_id")); collection != "" {
+		where = append(where, "item_type='bookmark' AND EXISTS(SELECT 1 FROM collection_bookmarks cb JOIN collections c ON c.id=cb.collection_id WHERE cb.bookmark_id=library.id AND cb.user_id=library.user_id AND cb.collection_id=? AND c.user_id=?)")
+		args = append(args, collection, user.ID)
+	}
 	if value := strings.TrimSpace(r.URL.Query().Get("date_from")); value != "" {
 		where = append(where, "updated_at>=?")
 		args = append(args, value)
@@ -44,17 +49,38 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 		where = append(where, "updated_at<=?")
 		args = append(args, value+"T23:59:59Z")
 	}
+	sort := strings.TrimSpace(r.URL.Query().Get("sort"))
+	if sort == "" {
+		sort = "newest"
+	}
+	sortExpr, sortDirection := "updated_at", "DESC"
+	switch sort {
+	case "relevance", "newest":
+	case "oldest":
+		sortDirection = "ASC"
+	case "title":
+		sortExpr, sortDirection = "lower(title)", "ASC"
+	case "domain":
+		sortExpr, sortDirection = "lower(source)", "ASC"
+	default:
+		writeError(w, http.StatusBadRequest, "Invalid sort")
+		return
+	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("cursor")); raw != "" {
 		cursor, ok := decodeLibraryCursor(raw)
-		if !ok {
+		if !ok || (cursor.Sort != sort && !(cursor.Sort == "" && sort == "newest")) {
 			writeError(w, http.StatusBadRequest, "Invalid cursor")
 			return
 		}
-		where = append(where, "(updated_at<? OR (updated_at=? AND item_type>?) OR (updated_at=? AND item_type=? AND id>?))")
+		comparison := "<"
+		if sortDirection == "ASC" {
+			comparison = ">"
+		}
+		where = append(where, "("+sortExpr+comparison+"? OR ("+sortExpr+"=? AND item_type>?) OR ("+sortExpr+"=? AND item_type=? AND id>?))")
 		args = append(args, cursor.UpdatedAt, cursor.UpdatedAt, cursor.Type, cursor.UpdatedAt, cursor.Type, cursor.ID)
 	}
 
-	query := libraryUnion + " WHERE " + strings.Join(where, " AND ") + " ORDER BY updated_at DESC,item_type ASC,id ASC LIMIT ?"
+	query := libraryUnion + " WHERE " + strings.Join(where, " AND ") + " ORDER BY " + sortExpr + " " + sortDirection + ",item_type ASC,id ASC LIMIT ?"
 	args = append(args, limit+1)
 	rows, err := s.db.QueryContext(r.Context(), query, args...)
 	if err != nil {
@@ -70,16 +96,30 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 			return
 		}
 		title = knowledgeDisplayTitle(itemType, title, body)
-		items = append(items, map[string]any{"id": id, "type": itemType, "title": title, "body": body, "source": source, "stage": stage, "topic": topic, "connection": connection, "created_at": created, "updated_at": updated})
+		item := map[string]any{"id": id, "type": itemType, "title": title, "body": body, "source": source, "stage": stage, "topic": topic, "connection": connection, "created_at": created, "updated_at": updated}
+		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load library")
 		return
 	}
+	_ = rows.Close()
+	for _, item := range items {
+		if item["type"] == "bookmark" {
+			item["capture_status"] = s.captureStatus(r.Context(), user.ID, stringValue(item["id"]))
+		}
+	}
 	var next any
 	if len(items) > limit {
 		last := items[limit-1]
-		next = encodeLibraryCursor(libraryCursor{UpdatedAt: stringValue(last["updated_at"]), Type: stringValue(last["type"]), ID: stringValue(last["id"])})
+		value := stringValue(last["updated_at"])
+		if sort == "title" {
+			value = strings.ToLower(stringValue(last["title"]))
+		}
+		if sort == "domain" {
+			value = strings.ToLower(stringValue(last["source"]))
+		}
+		next = encodeLibraryCursor(libraryCursor{UpdatedAt: value, Sort: sort, Type: stringValue(last["type"]), ID: stringValue(last["id"])})
 		items = items[:limit]
 	}
 	facets := map[string]map[string]int{"type": {}, "source": {}, "stage": {}, "connection": {}}

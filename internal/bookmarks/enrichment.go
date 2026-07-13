@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
 )
 
@@ -72,6 +73,29 @@ func (s *Service) replaceGeneratedEnrichmentTx(ctx context.Context, tx *sql.Tx, 
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM bookmark_tags WHERE bookmark_id=? AND user_id=? AND source='enrichment'`, bookmarkID, userID); err != nil {
 		return err
+	}
+	mode := "off"
+	_ = tx.QueryRowContext(ctx, `SELECT value FROM user_settings WHERE user_id=? AND key=?`, userID, aiTaggingKey).Scan(&mode)
+	for _, name := range item.Tags {
+		slug := tagSlug(name)
+		if slug == "" {
+			continue
+		}
+		var tagID string
+		err := tx.QueryRowContext(ctx, `SELECT t.id FROM tags t LEFT JOIN tag_aliases a ON a.tag_id=t.id AND a.user_id=t.user_id WHERE t.user_id=? AND (t.slug=? OR a.alias_slug=?) LIMIT 1`, userID, slug, slug).Scan(&tagID)
+		if err == sql.ErrNoRows {
+			if mode != "allow-new" {
+				continue
+			}
+			tagID = ids.New()
+			_, err = tx.ExecContext(ctx, `INSERT INTO tags(id,user_id,name,slug,source,created_at,updated_at) VALUES(?,?,?,?, 'generated',?,?)`, tagID, userID, name, slug, nowString(), nowString())
+		}
+		if err == nil {
+			_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_tags(bookmark_id,tag_id,user_id,source,created_at) VALUES(?,?,?,'enrichment',?)`, bookmarkID, tagID, userID, nowString())
+		}
+		if err != nil {
+			return err
+		}
 	}
 	for _, entity := range item.Entities {
 		if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO bookmark_entities(bookmark_id,user_id,entity,normalized_key,entity_type,confidence,extraction_method,evidence_id,evidence_text,evidence_start,evidence_end,enrichment_version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, entity.Label, entity.NormalizedKey, entity.Type, entity.Confidence, entity.Method, nullableStringValue(evidenceID), entity.Evidence, entity.EvidenceStart, entity.EvidenceEnd, entity.Version); err != nil {

@@ -131,10 +131,25 @@ Legacy migrations use the JSON export process documented in
 
 ## Administration And Integrations
 
-Profile, imports/exports, settings, and administration are under the profile
-menu. Non-admin users do not see provider-secret controls. Admin provider fields
+Settings and administration are under the profile menu; imports and exports
+remain inside Settings rather than appearing as a duplicate profile action.
+Non-admin users do not see provider-secret controls. Admin provider fields
 remain generic: Model Provider, Model, API Key, and Base URL. Local/keyless
 providers remain supported.
+
+Settings Automation lets each user turn AI tagging off, restrict suggestions to
+their existing vocabulary, or allow new generated tags. It also provides RSS
+and Atom subscription add, pause/resume, status/error, and delete controls;
+accepted entries follow the normal Inbox and capture pipeline. Settings Sharing
+lists public links and revokes them. A bookmark's Share disclosure creates a
+snapshot link and shows its unrepeatable token once for immediate copying.
+That snapshot, including explicitly shared screenshot/PDF artifacts, remains
+available and unchanged if the private bookmark is later edited, recaptured, or
+deleted; update the share membership explicitly to publish a new snapshot.
+
+Bookmark reader pages persist scroll progress, show capture-attempt history,
+list authorized source, screenshot, and PDF artifacts, and expose the retained
+source-evidence provenance and quality metadata when available.
 
 Arivu keeps source evidence separate from generated artifacts. Short captures
 may have only a short summary, and incomplete captures may have none. A missing
@@ -142,8 +157,9 @@ summary is preferable to unsupported expansion. Highlights quote their source;
 generated entities and concepts must have supporting evidence.
 
 CLI and agent audience routes keep scoped bookmark capture/search, saved-item
-reads, notes, tasks, reminders, and decisions. Web, CLI, and extension tokens
-cannot cross audience boundaries.
+reads, notes, tasks, reminders, decisions, collections, feed subscriptions, and
+public-share management. Web, CLI, and extension tokens cannot cross audience
+boundaries.
 
 ## Compatibility URLs
 

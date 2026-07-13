@@ -26,7 +26,8 @@ migration-manifest.json
 .impeccable/
 .reference/
 openwiki/.last-update.json
-
+.stfolder/
+.playwright-mcp/
 # Temporary planning artifacts
 /docs/plan/
 /docs/plans/

@@ -1,5 +1,0 @@
-# This directory is a Syncthing folder marker.
-# Do not delete.
-
-folderID: iervi-xzmjy
-created: 2026-07-12T14:25:39+05:30

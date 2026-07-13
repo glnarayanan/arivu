@@ -2,6 +2,7 @@ package bookmarks
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/auth"
+	"github.com/glnarayanan/arivu/internal/browsercapture"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/safefetch"
@@ -33,6 +35,15 @@ type qualityProcessMeta struct {
 }
 
 func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string) error {
+	if jobType == "feed.poll" {
+		var b struct {
+			SubscriptionID string `json:"subscription_id"`
+		}
+		if json.Unmarshal([]byte(payload), &b) != nil || b.SubscriptionID == "" {
+			return errors.New("invalid feed poll payload")
+		}
+		return s.pollFeed(ctx, b.SubscriptionID)
+	}
 	switch jobType {
 	case "bookmark.process":
 		var body struct {
@@ -41,6 +52,7 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 			ImportJobID          string `json:"import_job_id"`
 			QualityRunID         string `json:"quality_reprocess_run_id"`
 			ExpectedEvidenceHash string `json:"expected_evidence_hash"`
+			AttemptID            string `json:"capture_attempt_id"`
 		}
 		if err := json.Unmarshal([]byte(payload), &body); err != nil {
 			return err
@@ -49,7 +61,19 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 		if !s.startQualityProcess(ctx, body.BookmarkID, meta) {
 			return nil
 		}
-		err := s.processBookmark(ctx, body.BookmarkID, body.URL)
+		attemptID := body.AttemptID
+		if attemptID == "" {
+			attemptID = s.ensureAttempt(ctx, body.BookmarkID, body.URL, "")
+		}
+		_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET status='running',started_at=? WHERE id=? AND status='queued'`, nowString(), attemptID)
+		err := s.processBookmarkAttempt(ctx, body.BookmarkID, body.URL, attemptID)
+		status, code := "complete", ""
+		if errors.Is(err, errPartialExtraction) {
+			status = "partial"
+		} else if err != nil {
+			status, code = "failed", safefetch.FailureReason(err)
+		}
+		_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET status=?,error_code=CASE WHEN ?='' THEN error_code ELSE ? END,finished_at=? WHERE id=?`, status, code, code, nowString(), attemptID)
 		return s.finishBookmarkProcessWithMeta(ctx, body.BookmarkID, body.ImportJobID, meta, err)
 	default:
 		return fmt.Errorf("unknown job type %s", jobType)
@@ -117,6 +141,10 @@ func (s *Service) completeQualityProcess(ctx context.Context, bookmarkID string,
 }
 
 func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL string) error {
+	return s.processBookmarkAttempt(ctx, bookmarkID, rawURL, "")
+}
+
+func (s *Service) processBookmarkAttempt(ctx context.Context, bookmarkID string, rawURL string, attemptID string) error {
 	userID, ok := s.bookmarkOwner(ctx, bookmarkID)
 	if !ok {
 		return errors.New("bookmark not found")
@@ -146,6 +174,21 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 	if err != nil {
 		return err
 	}
+	if s.assets != nil && attemptID != "" && len(result.Body) > 0 {
+		key, digest, size, storeErr := s.assets.Put(bytes.NewReader(result.Body))
+		if storeErr != nil {
+			return storeErr
+		}
+		mime := strings.TrimSpace(strings.Split(result.ContentType, ";")[0])
+		if mime == "" {
+			mime = "application/octet-stream"
+		}
+		storeErr = s.commitArtifact(ctx, ids.New(), userID, bookmarkID, attemptID, storedEvidence.ID, "source_response", mime, size, digest, key)
+		if storeErr != nil {
+			return storeErr
+		}
+		_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET final_url=?,engine_version=? WHERE id=?`, result.URL, safefetch.ExtractorVersion, attemptID)
+	}
 	if result.Quality.Status != safefetch.QualityComplete {
 		now := nowString()
 		title := fallback(result.Title, result.Domain)
@@ -159,7 +202,23 @@ func (s *Service) processBookmark(ctx context.Context, bookmarkID string, rawURL
 		s.refreshSearchIndex(ctx, userID)
 		return errPartialExtraction
 	}
-	return s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, result.Domain), result.Description, result.Domain, storedEvidence)
+	if err := s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, result.Domain), result.Description, result.Domain, storedEvidence); err != nil {
+		return err
+	}
+	if s.browser.Enabled && attemptID != "" && s.assets != nil {
+		err := browsercapture.Run(ctx, s.browser, result.URL, func(a browsercapture.Artifact, r io.Reader) error {
+			key, digest, size, err := s.assets.Put(r)
+			if err != nil {
+				return err
+			}
+			return s.commitArtifact(ctx, ids.New(), userID, bookmarkID, attemptID, storedEvidence.ID, a.Type, a.MIME, size, digest, key)
+		})
+		if err != nil {
+			_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET error_code=? WHERE id=?`, err.Error(), attemptID)
+			return errPartialExtraction
+		}
+	}
+	return nil
 }
 
 func (s *Service) processXBookmark(ctx context.Context, userID, bookmarkID, rawURL, title, description, domain, contentKind, tweetURL string) error {
@@ -312,6 +371,7 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 	if evidence.QualityStatus == string(providers.QualityComplete) {
 		enrichment = s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text, semanticResult)
 	}
+	enrichment.Tags = s.allowedAITags(ctx, userID, generated.SuggestedTags)
 	highlightSpans := highlightSpansJSON(evidence.ID, evidence.Text, generated.Highlights)
 	generatedAt := nullableTimeString(generated.GeneratedAt)
 	htmlContent := evidence.SanitizedHTML
@@ -549,6 +609,7 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreDailyNotes(ctx, userID, backup["daily_notes"], now)
 	s.restoreKnowledgeObjects(ctx, userID, backup["knowledge_objects"], oldBookmarks, oldNotes, oldObjects, now)
 	s.restoreTags(ctx, userID, backup["tags"], now)
+	s.restoreCollections(ctx, userID, backup["collections"], oldBookmarks, now)
 	s.restoreSavedSearches(ctx, userID, backup["saved_searches"], now)
 	s.restoreReviewEvents(ctx, userID, backup["review_events"], oldBookmarks, oldNotes, now)
 	s.restoreItemStates(ctx, userID, backup["item_states"], oldBookmarks, oldNotes, now)
@@ -1056,6 +1117,7 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"daily_notes":         s.exportDailyNotes(ctx, userID),
 		"knowledge_objects":   s.exportKnowledgeObjects(ctx, userID),
 		"tags":                s.exportTags(ctx, userID),
+		"collections":         s.exportCollections(ctx, userID),
 		"saved_searches":      s.exportSavedSearches(ctx, userID),
 		"import_jobs":         s.exportImportJobs(ctx, userID),
 		"import_sources":      s.exportImportSources(ctx, userID),
@@ -1068,6 +1130,80 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"knowledge_feedback":  s.exportKnowledgeFeedback(ctx, userID),
 		"insight_impressions": s.exportInsightImpressions(ctx, userID),
 	}, nil
+}
+
+func (s *Service) exportCollections(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,name,description,color,parent_id,sibling_order,created_at,updated_at FROM collections WHERE user_id=? ORDER BY COALESCE(parent_id,''),sibling_order,name`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	result := []map[string]any{}
+	for rows.Next() {
+		var id, name, description, color, created, updated string
+		var parent sql.NullString
+		var order int
+		if rows.Scan(&id, &name, &description, &color, &parent, &order, &created, &updated) == nil {
+			result = append(result, map[string]any{"id": id, "name": name, "description": description, "color": color, "parent_id": nullString(parent), "sibling_order": order, "bookmark_ids": []string{}, "created_at": created, "updated_at": updated})
+		}
+	}
+	rows.Close()
+	for _, collection := range result {
+		memberships := []string{}
+		members, _ := s.db.QueryContext(ctx, `SELECT bookmark_id FROM collection_bookmarks WHERE collection_id=? AND user_id=? ORDER BY added_at`, collection["id"], userID)
+		if members != nil {
+			for members.Next() {
+				var bookmark string
+				_ = members.Scan(&bookmark)
+				memberships = append(memberships, bookmark)
+			}
+			members.Close()
+		}
+		collection["bookmark_ids"] = memberships
+	}
+	return result
+}
+
+func (s *Service) restoreCollections(ctx context.Context, userID string, raw any, bookmarks map[string]string, now string) {
+	items := mapList(raw)
+	remap := map[string]string{}
+	// First pass creates roots so old exports (which have no hierarchy fields) remain valid.
+	for _, item := range items {
+		old := stringValue(item["id"])
+		id := fallback(old, ids.New())
+		name := strings.TrimSpace(stringValue(item["name"]))
+		if name == "" {
+			continue
+		}
+		res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO collections(id,user_id,name,description,color,sibling_order,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, id, userID, name, stringValue(item["description"]), stringValue(item["color"]), intValue(item["sibling_order"]), fallback(stringValue(item["created_at"]), now), fallback(stringValue(item["updated_at"]), now))
+		if err != nil {
+			continue
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			_ = s.db.QueryRowContext(ctx, `SELECT id FROM collections WHERE user_id=? AND name=?`, userID, name).Scan(&id)
+		}
+		if old != "" {
+			remap[old] = id
+		}
+	}
+	for _, item := range items {
+		id := remap[stringValue(item["id"])]
+		if id == "" {
+			continue
+		}
+		parent := remap[stringValue(item["parent_id"])]
+		if parent != "" && parent != id && !s.collectionDescendant(ctx, userID, id, parent) {
+			_, _ = s.db.ExecContext(ctx, `UPDATE collections SET parent_id=? WHERE id=? AND user_id=?`, parent, id, userID)
+		}
+		for _, oldBookmark := range stringSlice(item["bookmark_ids"]) {
+			bookmark := bookmarks[oldBookmark]
+			if bookmark == "" {
+				bookmark = oldBookmark
+			}
+			if s.ownsBookmark(ctx, userID, bookmark) {
+				_, _ = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, id, bookmark, userID, now)
+			}
+		}
+	}
 }
 
 func (s *Service) exportBookmarkEvidence(ctx context.Context, userID, bookmarkID string) []map[string]any {
@@ -2178,13 +2314,29 @@ func jsonListString(value any) string {
 	return string(raw)
 }
 
-func bookmarkProcessPayload(bookmarkID, rawURL, importJobID string) string {
+func bookmarkProcessPayload(bookmarkID, rawURL, importJobID string, attemptID ...string) string {
 	payload := map[string]string{"bookmark_id": bookmarkID, "url": rawURL}
 	if importJobID != "" {
 		payload["import_job_id"] = importJobID
 	}
+	if len(attemptID) > 0 && attemptID[0] != "" {
+		payload["capture_attempt_id"] = attemptID[0]
+	}
 	raw, _ := json.Marshal(payload)
 	return string(raw)
+}
+
+func (s *Service) ensureAttempt(ctx context.Context, bookmarkID, rawURL, retryOf string) string {
+	userID, ok := s.bookmarkOwner(ctx, bookmarkID)
+	if !ok {
+		return ""
+	}
+	id := ids.New()
+	_, err := s.db.ExecContext(ctx, `INSERT INTO capture_attempts(id,bookmark_id,user_id,retry_of_id,status,requested_url,engine,engine_version,queued_at) VALUES(?,?,?,NULLIF(?,''),'queued',?,'direct_http',?,?)`, id, bookmarkID, userID, retryOf, rawURL, safefetch.ExtractorVersion, nowString())
+	if err != nil {
+		return ""
+	}
+	return id
 }
 
 // ProcessPayload builds the durable bookmark processing payload used by
