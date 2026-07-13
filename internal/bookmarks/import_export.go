@@ -2,7 +2,6 @@ package bookmarks
 
 import (
 	"archive/zip"
-	"bytes"
 	"context"
 	"database/sql"
 	"encoding/csv"
@@ -19,7 +18,6 @@ import (
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/auth"
-	"github.com/glnarayanan/arivu/internal/browsercapture"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/safefetch"
@@ -156,69 +154,7 @@ func (s *Service) processBookmarkAttempt(ctx context.Context, bookmarkID string,
 	if source == "x" {
 		return s.processXBookmark(ctx, userID, bookmarkID, rawURL, currentTitle, currentDescription, currentDomain, contentKind, tweetURL)
 	}
-	result, err := s.fetcher.Fetch(ctx, rawURL)
-	if err != nil {
-		_, _ = s.UpsertEvidence(ctx, userID, bookmarkID, BookmarkEvidence{
-			Kind: "fetched_article", Origin: "web_fetch", CanonicalURL: rawURL, ExtractionMethod: "generic_web",
-			QualityStatus: "failed", QualityReasons: []string{safefetch.FailureReason(err)}, ExtractorVersion: safefetch.ExtractorVersion,
-		})
-		return err
-	}
-	evidence := BookmarkEvidence{
-		Kind: "fetched_article", Origin: "web_fetch", Authority: 70, Text: result.Text, SanitizedHTML: result.HTML,
-		CanonicalURL: result.URL, PublisherKey: result.Domain, ExtractionMethod: result.Quality.Method,
-		QualityStatus: string(result.Quality.Status), QualityReasons: result.Quality.Reasons, ExtractorVersion: result.Quality.Version,
-		Selected: false,
-	}
-	storedEvidence, err := s.UpsertEvidence(ctx, userID, bookmarkID, evidence)
-	if err != nil {
-		return err
-	}
-	if s.assets != nil && attemptID != "" && len(result.Body) > 0 {
-		key, digest, size, storeErr := s.assets.Put(bytes.NewReader(result.Body))
-		if storeErr != nil {
-			return storeErr
-		}
-		mime := strings.TrimSpace(strings.Split(result.ContentType, ";")[0])
-		if mime == "" {
-			mime = "application/octet-stream"
-		}
-		storeErr = s.commitArtifact(ctx, ids.New(), userID, bookmarkID, attemptID, storedEvidence.ID, "source_response", mime, size, digest, key)
-		if storeErr != nil {
-			return storeErr
-		}
-		_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET final_url=?,engine_version=? WHERE id=?`, result.URL, safefetch.ExtractorVersion, attemptID)
-	}
-	if result.Quality.Status != safefetch.QualityComplete {
-		now := nowString()
-		title := fallback(result.Title, result.Domain)
-		if _, err := s.db.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=?,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`, result.URL, title, result.Description, result.Domain, now, safefetch.ExtractorVersion, bookmarkID, userID); err != nil {
-			return err
-		}
-		_, err := s.db.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET processing_status=CASE WHEN ai_summaries.processing_status IN ('completed','fallback') THEN ai_summaries.processing_status ELSE excluded.processing_status END,updated_at=excluded.updated_at`, ids.New(), bookmarkID, userID, string(result.Quality.Status), now, now)
-		if err != nil {
-			return err
-		}
-		s.refreshSearchIndex(ctx, userID)
-		return errPartialExtraction
-	}
-	if err := s.persistSelectedEvidence(ctx, userID, bookmarkID, fallback(result.Title, result.Domain), result.Description, result.Domain, storedEvidence); err != nil {
-		return err
-	}
-	if s.browser.Enabled && attemptID != "" && s.assets != nil {
-		err := browsercapture.Run(ctx, s.browser, result.URL, func(a browsercapture.Artifact, r io.Reader) error {
-			key, digest, size, err := s.assets.Put(r)
-			if err != nil {
-				return err
-			}
-			return s.commitArtifact(ctx, ids.New(), userID, bookmarkID, attemptID, storedEvidence.ID, a.Type, a.MIME, size, digest, key)
-		})
-		if err != nil {
-			_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET error_code=? WHERE id=?`, err.Error(), attemptID)
-			return errPartialExtraction
-		}
-	}
-	return nil
+	return s.processWebBookmarkAttempt(ctx, userID, bookmarkID, rawURL, attemptID, currentTitle, currentDescription, currentDomain)
 }
 
 func (s *Service) processXBookmark(ctx context.Context, userID, bookmarkID, rawURL, title, description, domain, contentKind, tweetURL string) error {
@@ -341,7 +277,15 @@ func (s *Service) markInsufficientEvidence(ctx context.Context, bookmarkID, qual
 }
 
 func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence) error {
+	return s.persistSelectedEvidenceForAttempt(ctx, userID, bookmarkID, title, description, domain, evidence, "")
+}
+
+func (s *Service) persistSelectedEvidenceForAttempt(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence, attemptID string) error {
 	title = fallback(title, domain)
+	activated, err := s.activateSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, evidence, attemptID)
+	if err != nil || !activated {
+		return err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	request := s.summaryRequestForEvidence(ctx, userID, bookmarkID, title, evidence)
 	generated, generationErr := s.aiClient(ctx).GenerateSummary(ctx, request)
@@ -374,23 +318,28 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 	enrichment.Tags = s.allowedAITags(ctx, userID, generated.SuggestedTags)
 	highlightSpans := highlightSpansJSON(evidence.ID, evidence.Text, generated.Highlights)
 	generatedAt := nullableTimeString(generated.GeneratedAt)
-	htmlContent := evidence.SanitizedHTML
-	if htmlContent == "" {
-		htmlContent = html.EscapeString(evidence.Text)
-	}
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_evidence SET is_selected=0,updated_at=? WHERE bookmark_id=? AND user_id=?`, now, bookmarkID, userID); err != nil {
+	if attemptID != "" {
+		var currentAttempt string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM capture_attempts WHERE user_id=? AND bookmark_id=? ORDER BY queued_at DESC,rowid DESC LIMIT 1`, userID, bookmarkID).Scan(&currentAttempt); err != nil {
+			return err
+		}
+		if currentAttempt != attemptID {
+			return tx.Commit()
+		}
+	}
+	var selectedID, selectedHash string
+	if err := tx.QueryRowContext(ctx, `SELECT id,content_hash FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? AND is_selected=1`, bookmarkID, userID).Scan(&selectedID, &selectedHash); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_evidence SET is_selected=1,updated_at=? WHERE id=? AND bookmark_id=? AND user_id=?`, now, evidence.ID, bookmarkID, userID); err != nil {
-		return err
+	if selectedID != evidence.ID || selectedHash != evidence.ContentHash {
+		return tx.Commit()
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=?,summary_version=?,enrichment_version=? WHERE id=? AND user_id=?`,
-		evidence.CanonicalURL, evidence.CanonicalURL, title, description, domain, domain, sanitize.HTML(htmlContent), evidence.Text, readingTime(evidence.Text), now, fallback(evidence.ExtractorVersion, safefetch.ExtractorVersion), providers.SummaryPromptVersion, providers.SemanticVersion, bookmarkID, userID); err != nil {
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET summary_version=?,enrichment_version=? WHERE id=? AND user_id=?`, providers.SummaryPromptVersion, providers.SemanticVersion, bookmarkID, userID); err != nil {
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,provider,model,prompt_version,validator_version,evidence_hash,validation_status,validation_reasons_json,highlight_spans_json,generated_at,created_at,updated_at)
@@ -407,6 +356,43 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 	}
 	s.refreshSearchIndex(ctx, userID)
 	return nil
+}
+
+func (s *Service) activateSelectedEvidence(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence, attemptID string) (bool, error) {
+	now := nowString()
+	htmlContent := evidence.SanitizedHTML
+	if htmlContent == "" {
+		htmlContent = html.EscapeString(evidence.Text)
+	}
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback()
+	if attemptID != "" {
+		var currentAttempt string
+		if err := tx.QueryRowContext(ctx, `SELECT id FROM capture_attempts WHERE user_id=? AND bookmark_id=? ORDER BY queued_at DESC,rowid DESC LIMIT 1`, userID, bookmarkID).Scan(&currentAttempt); err != nil {
+			return false, err
+		}
+		if currentAttempt != attemptID {
+			return false, tx.Commit()
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_evidence SET is_selected=0,updated_at=? WHERE bookmark_id=? AND user_id=?`, now, bookmarkID, userID); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_evidence SET is_selected=1,updated_at=? WHERE id=? AND bookmark_id=? AND user_id=?`, now, evidence.ID, bookmarkID, userID); err != nil {
+		return false, err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`,
+		evidence.CanonicalURL, evidence.CanonicalURL, title, description, domain, domain, sanitize.HTML(htmlContent), evidence.Text, readingTime(evidence.Text), now, fallback(evidence.ExtractorVersion, safefetch.ExtractorVersion), bookmarkID, userID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(); err != nil {
+		return false, err
+	}
+	s.refreshSearchIndex(ctx, userID)
+	return true, nil
 }
 
 func (s *Service) summaryRequestForEvidence(ctx context.Context, userID, bookmarkID, title string, evidence BookmarkEvidence) providers.SummaryRequest {

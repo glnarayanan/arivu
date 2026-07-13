@@ -29,6 +29,7 @@ type Service struct {
 	db            *sql.DB
 	jobs          *jobs.Queue
 	fetcher       *safefetch.Client
+	fetchPage     func(context.Context, string) (safefetch.Result, error)
 	ai            func(context.Context) providers.GeminiClient
 	assets        *assets.Store
 	browser       config.BrowserCaptureConfig
@@ -50,6 +51,9 @@ type CountsResult struct {
 
 func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, client providers.GeminiClient) *Service {
 	s := &Service{db: db, jobs: jobs, fetcher: fetcher, ai: func(context.Context) providers.GeminiClient { return client }}
+	if fetcher != nil {
+		s.fetchPage = fetcher.Fetch
+	}
 	s.enqueueCreate = jobs.EnqueueWithIDTx
 	return s
 }
