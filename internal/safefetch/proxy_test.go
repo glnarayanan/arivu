@@ -62,6 +62,9 @@ func TestCaptureProxyRequiresAuthenticationBeforeForwarding(t *testing.T) {
 	if response.Code != http.StatusProxyAuthRequired || calls.Load() != 0 {
 		t.Fatalf("status=%d upstream calls=%d", response.Code, calls.Load())
 	}
+	if got := response.Header().Get("Proxy-Authenticate"); got != `Basic realm="arivu-capture"` {
+		t.Fatalf("authentication challenge=%q", got)
+	}
 }
 
 func TestCaptureProxyAcceptsPerAttemptBasicCredentials(t *testing.T) {

@@ -86,6 +86,7 @@ type v2Request struct {
 	ProxySocket         string   `json:"proxy_socket"`
 	ProxyToken          string   `json:"proxy_token"`
 	Formats             []string `json:"formats"`
+	AttemptTimeoutMS    int64    `json:"attempt_timeout_ms"`
 	NavigationTimeoutMS int64    `json:"navigation_timeout_ms"`
 	MaxFileBytes        int64    `json:"max_file_bytes"`
 	MaxTotalBytes       int64    `json:"max_total_bytes"`
@@ -132,7 +133,7 @@ func RunV2(ctx context.Context, cfg config.BrowserCaptureConfig, rawURL string, 
 
 	request := v2Request{
 		Version: 2, URL: rawURL, Token: rand.Text(), ProxySocket: filepath.Join(attemptDir, "egress.sock"), ProxyToken: rand.Text(),
-		Formats: requestedFormats(cfg), NavigationTimeoutMS: cfg.NavigationTimeout.Milliseconds(),
+		Formats: requestedFormats(cfg), AttemptTimeoutMS: timeout.Milliseconds(), NavigationTimeoutMS: cfg.NavigationTimeout.Milliseconds(),
 		MaxFileBytes: cfg.MaxFileBytes, MaxTotalBytes: cfg.MaxTotalBytes, MaxMediaFiles: cfg.MaxMediaFiles,
 		MaxMediaFileBytes: cfg.MaxMediaFileBytes, MaxMediaTotalBytes: cfg.MaxMediaTotalBytes,
 	}
@@ -166,7 +167,7 @@ func callV2(ctx context.Context, socket string, request v2Request, cfg config.Br
 	dialer := net.Dialer{}
 	conn, err := dialer.DialContext(ctx, "unix", socket)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if contextTimedOut(ctx) {
 			return V2Result{}, code("browser_timeout")
 		}
 		return V2Result{}, code("browser_helper_unavailable")
@@ -176,7 +177,7 @@ func callV2(ctx context.Context, socket string, request v2Request, cfg config.Br
 		_ = conn.SetDeadline(deadline)
 	}
 	if err := json.NewEncoder(conn).Encode(request); err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if contextTimedOut(ctx) {
 			return V2Result{}, code("browser_timeout")
 		}
 		return V2Result{}, code("browser_helper_failed")
@@ -184,7 +185,7 @@ func callV2(ctx context.Context, socket string, request v2Request, cfg config.Br
 	reader := bufio.NewReaderSize(conn, maxV2HeaderBytes+1)
 	response, err := decodeV2Header(reader)
 	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if contextTimedOut(ctx) {
 			return V2Result{}, code("browser_timeout")
 		}
 		return V2Result{}, err
@@ -209,12 +210,20 @@ func callV2(ctx context.Context, socket string, request v2Request, cfg config.Br
 	response.root = root
 	if err := receiveV2Files(reader, root, &response.V2Result); err != nil {
 		os.RemoveAll(root)
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		if contextTimedOut(ctx) {
 			return V2Result{}, code("browser_timeout")
 		}
 		return V2Result{}, err
 	}
 	return response.V2Result, nil
+}
+
+func contextTimedOut(ctx context.Context) bool {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return true
+	}
+	deadline, ok := ctx.Deadline()
+	return ok && !time.Now().Before(deadline)
 }
 
 func decodeV2Header(reader *bufio.Reader) (v2Response, error) {

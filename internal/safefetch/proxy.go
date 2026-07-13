@@ -82,7 +82,7 @@ func newCaptureProxy(token string, limits ProxyLimits, transport http.RoundTripp
 
 func (p *CaptureProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !p.authorized(r.Header.Get("Proxy-Authorization")) {
-		w.Header().Set("Proxy-Authenticate", "Bearer")
+		w.Header().Set("Proxy-Authenticate", `Basic realm="arivu-capture"`)
 		http.Error(w, "proxy authentication required", http.StatusProxyAuthRequired)
 		return
 	}

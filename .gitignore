@@ -31,3 +31,6 @@ openwiki/.last-update.json
 # Temporary planning artifacts
 /docs/plan/
 /docs/plans/
+# Isolated browser-capture dependencies and local runtime output.
+/capture/node_modules/
+/capture/.playwright/
