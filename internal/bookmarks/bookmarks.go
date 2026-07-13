@@ -405,6 +405,7 @@ func evidencePayload(items []BookmarkEvidence) []map[string]any {
 			"authority": item.Authority, "canonical_url": item.CanonicalURL,
 			"publisher_key": item.PublisherKey, "published_at": item.PublishedAt,
 			"extraction_method": item.ExtractionMethod, "quality_status": item.QualityStatus,
+			"quality_score":   item.QualityScore,
 			"quality_reasons": item.QualityReasons, "extractor_version": item.ExtractorVersion,
 			"selected": item.Selected, "preview": truncateText(item.Text, 800),
 		})

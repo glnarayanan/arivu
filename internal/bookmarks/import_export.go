@@ -682,6 +682,7 @@ func (s *Service) restoreBookmarkEvidence(ctx context.Context, userID, bookmarkI
 			ExtractionMethod: stringValue(item["extraction_method"]),
 			ContentHash:      stringValue(item["content_hash"]),
 			QualityStatus:    stringValue(item["quality_status"]),
+			QualityScore:     int(numberValue(item["quality_score"])),
 			QualityReasons:   stringSlice(item["quality_reasons"]),
 			ExtractorVersion: stringValue(item["extractor_version"]),
 			Selected:         boolValue(item["selected"]),
@@ -1218,7 +1219,7 @@ func (s *Service) exportBookmarkEvidence(ctx context.Context, userID, bookmarkID
 			"text": item.Text, "sanitized_html": item.SanitizedHTML, "canonical_url": item.CanonicalURL,
 			"author_id": item.AuthorID, "publisher_key": item.PublisherKey, "published_at": nullableExportString(item.PublishedAt),
 			"extraction_method": item.ExtractionMethod, "content_hash": item.ContentHash,
-			"quality_status": item.QualityStatus, "quality_reasons": item.QualityReasons,
+			"quality_status": item.QualityStatus, "quality_score": item.QualityScore, "quality_reasons": item.QualityReasons,
 			"extractor_version": item.ExtractorVersion, "selected": item.Selected,
 			"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
 		})

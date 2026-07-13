@@ -32,6 +32,7 @@ type BookmarkEvidence struct {
 	ExtractionMethod string
 	ContentHash      string
 	QualityStatus    string
+	QualityScore     int
 	QualityReasons   []string
 	ExtractorVersion string
 	Selected         bool
@@ -60,6 +61,11 @@ func (s *Service) upsertEvidence(ctx context.Context, userID, bookmarkID string,
 	evidence.Kind = fallback(evidence.Kind, "legacy_scrape")
 	evidence.Origin = fallback(evidence.Origin, "legacy")
 	evidence.QualityStatus = fallback(evidence.QualityStatus, "failed")
+	if evidence.QualityScore < 0 {
+		evidence.QualityScore = 0
+	} else if evidence.QualityScore > 100 {
+		evidence.QualityScore = 100
+	}
 	evidence.QualityReasons = cleanReasonCodes(evidence.QualityReasons)
 	evidence.SanitizedHTML = sanitize.HTML(evidence.SanitizedHTML)
 	evidence.ContentHash = fallback(evidence.ContentHash, evidenceContentHash(evidence))
@@ -78,15 +84,15 @@ func (s *Service) upsertEvidence(ctx context.Context, userID, bookmarkID string,
 			return BookmarkEvidence{}, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO bookmark_evidence(id,bookmark_id,user_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,published_at,extraction_method,content_hash,quality_status,quality_reasons_json,extractor_version,is_selected,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+	_, err = tx.ExecContext(ctx, `INSERT INTO bookmark_evidence(id,bookmark_id,user_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,published_at,extraction_method,content_hash,quality_status,quality_score,quality_reasons_json,extractor_version,is_selected,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(bookmark_id,evidence_kind,content_hash,extractor_version) DO UPDATE SET
-			evidence_origin=excluded.evidence_origin,authority=excluded.authority,content_text=excluded.content_text,sanitized_html=excluded.sanitized_html,canonical_url=excluded.canonical_url,author_id=excluded.author_id,publisher_key=excluded.publisher_key,published_at=excluded.published_at,extraction_method=excluded.extraction_method,quality_status=excluded.quality_status,quality_reasons_json=excluded.quality_reasons_json,is_selected=CASE WHEN excluded.is_selected=1 THEN 1 ELSE bookmark_evidence.is_selected END,updated_at=excluded.updated_at`,
-		evidence.ID, bookmarkID, userID, evidence.Kind, evidence.Origin, evidence.Authority, evidence.Text, evidence.SanitizedHTML, evidence.CanonicalURL, evidence.AuthorID, evidence.PublisherKey, nullableStringValue(evidence.PublishedAt), evidence.ExtractionMethod, evidence.ContentHash, evidence.QualityStatus, string(reasons), evidence.ExtractorVersion, evidence.Selected, evidence.CreatedAt, evidence.UpdatedAt)
+			evidence_origin=excluded.evidence_origin,authority=excluded.authority,content_text=excluded.content_text,sanitized_html=excluded.sanitized_html,canonical_url=excluded.canonical_url,author_id=excluded.author_id,publisher_key=excluded.publisher_key,published_at=excluded.published_at,extraction_method=excluded.extraction_method,quality_status=excluded.quality_status,quality_score=CASE WHEN excluded.quality_score=0 AND excluded.quality_status=bookmark_evidence.quality_status THEN bookmark_evidence.quality_score ELSE excluded.quality_score END,quality_reasons_json=excluded.quality_reasons_json,is_selected=CASE WHEN excluded.is_selected=1 THEN 1 ELSE bookmark_evidence.is_selected END,updated_at=excluded.updated_at`,
+		evidence.ID, bookmarkID, userID, evidence.Kind, evidence.Origin, evidence.Authority, evidence.Text, evidence.SanitizedHTML, evidence.CanonicalURL, evidence.AuthorID, evidence.PublisherKey, nullableStringValue(evidence.PublishedAt), evidence.ExtractionMethod, evidence.ContentHash, evidence.QualityStatus, evidence.QualityScore, string(reasons), evidence.ExtractorVersion, evidence.Selected, evidence.CreatedAt, evidence.UpdatedAt)
 	if err != nil {
 		return BookmarkEvidence{}, err
 	}
-	row := tx.QueryRowContext(ctx, `SELECT id,bookmark_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,COALESCE(published_at,''),extraction_method,content_hash,quality_status,quality_reasons_json,extractor_version,is_selected,created_at,updated_at FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? AND evidence_kind=? AND content_hash=? AND extractor_version=?`, bookmarkID, userID, evidence.Kind, evidence.ContentHash, evidence.ExtractorVersion)
+	row := tx.QueryRowContext(ctx, `SELECT id,bookmark_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,COALESCE(published_at,''),extraction_method,content_hash,quality_status,quality_score,quality_reasons_json,extractor_version,is_selected,created_at,updated_at FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? AND evidence_kind=? AND content_hash=? AND extractor_version=?`, bookmarkID, userID, evidence.Kind, evidence.ContentHash, evidence.ExtractorVersion)
 	stored, err := scanEvidence(row)
 	if err != nil {
 		return BookmarkEvidence{}, err
@@ -114,7 +120,7 @@ func evidenceContentHash(evidence BookmarkEvidence) string {
 
 // Evidence returns only evidence owned by userID for the requested bookmark.
 func (s *Service) Evidence(ctx context.Context, userID, bookmarkID string) ([]BookmarkEvidence, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,bookmark_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,COALESCE(published_at,''),extraction_method,content_hash,quality_status,quality_reasons_json,extractor_version,is_selected,created_at,updated_at FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? ORDER BY is_selected DESC,authority DESC,created_at ASC,id ASC`, bookmarkID, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,bookmark_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,COALESCE(published_at,''),extraction_method,content_hash,quality_status,quality_score,quality_reasons_json,extractor_version,is_selected,created_at,updated_at FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? ORDER BY is_selected DESC,authority DESC,created_at ASC,id ASC`, bookmarkID, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -134,7 +140,7 @@ func scanEvidence(row scanner) (BookmarkEvidence, error) {
 	var evidence BookmarkEvidence
 	var reasons string
 	var selected bool
-	err := row.Scan(&evidence.ID, &evidence.BookmarkID, &evidence.Kind, &evidence.Origin, &evidence.Authority, &evidence.Text, &evidence.SanitizedHTML, &evidence.CanonicalURL, &evidence.AuthorID, &evidence.PublisherKey, &evidence.PublishedAt, &evidence.ExtractionMethod, &evidence.ContentHash, &evidence.QualityStatus, &reasons, &evidence.ExtractorVersion, &selected, &evidence.CreatedAt, &evidence.UpdatedAt)
+	err := row.Scan(&evidence.ID, &evidence.BookmarkID, &evidence.Kind, &evidence.Origin, &evidence.Authority, &evidence.Text, &evidence.SanitizedHTML, &evidence.CanonicalURL, &evidence.AuthorID, &evidence.PublisherKey, &evidence.PublishedAt, &evidence.ExtractionMethod, &evidence.ContentHash, &evidence.QualityStatus, &evidence.QualityScore, &reasons, &evidence.ExtractorVersion, &selected, &evidence.CreatedAt, &evidence.UpdatedAt)
 	if err != nil {
 		return BookmarkEvidence{}, err
 	}

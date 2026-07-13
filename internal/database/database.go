@@ -81,6 +81,9 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureBookmarkProvenance(ctx, db); err != nil {
 		return err
 	}
+	if err := ensureColumn(ctx, db, "bookmark_evidence", "quality_score", "INTEGER NOT NULL DEFAULT 0 CHECK(quality_score BETWEEN 0 AND 100)"); err != nil {
+		return err
+	}
 	if err := ensureColumn(ctx, db, "annotations", "evidence_id", "TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL"); err != nil {
 		return err
 	}
@@ -518,6 +521,7 @@ func ensureBookmarkProvenance(ctx context.Context, db *sql.DB) error {
 			extraction_method TEXT NOT NULL DEFAULT '',
 			content_hash TEXT NOT NULL DEFAULT '',
 			quality_status TEXT NOT NULL DEFAULT 'failed',
+			quality_score INTEGER NOT NULL DEFAULT 0 CHECK(quality_score BETWEEN 0 AND 100),
 			quality_reasons_json TEXT NOT NULL DEFAULT '[]',
 			extractor_version TEXT NOT NULL DEFAULT '',
 			is_selected INTEGER NOT NULL DEFAULT 0 CHECK(is_selected IN (0,1)),
