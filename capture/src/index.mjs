@@ -4,12 +4,15 @@ import net from 'node:net';
 import { dirname } from 'node:path';
 import { capturePage, failedResponse } from './capture.mjs';
 import { readRequest, writeResponse } from './protocol.mjs';
+import { verifyRuntime } from './preflight.mjs';
 
 const socketPath = process.env.ARIVU_CAPTURE_SOCKET || process.argv[2];
 if (!socketPath) {
   process.stderr.write('ARIVU_CAPTURE_SOCKET or a socket path argument is required\n');
   process.exit(2);
 }
+
+await verifyRuntime();
 
 await mkdir(dirname(socketPath), { recursive: true });
 try {

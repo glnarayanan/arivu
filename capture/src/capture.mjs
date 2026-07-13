@@ -170,7 +170,7 @@ export function failedResponse(request, error) {
   };
 }
 
-function extractPage(renderedHTML, finalURL) {
+export function extractPage(renderedHTML, finalURL) {
   const dom = new JSDOM(renderedHTML, { url: finalURL, contentType: 'text/html' });
   try {
     const document = dom.window.document;
@@ -196,7 +196,7 @@ function extractPage(renderedHTML, finalURL) {
   }
 }
 
-function readerImageURLs(readerHTML, baseURL) {
+export function readerImageURLs(readerHTML, baseURL) {
   const dom = new JSDOM(readerHTML, { url: baseURL, contentType: 'text/html' });
   try {
     const result = new Set();

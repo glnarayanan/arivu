@@ -15,8 +15,34 @@ services:
       SIGNUPS_ENABLED: "false"
       ADMIN_EMAILS: "admin@example.com"
       SECRET_KEY: "replace-with-at-least-32-random-bytes"
+      ARIVU_BROWSER_CAPTURE_ENABLED: "${ARIVU_BROWSER_CAPTURE_ENABLED:-false}"
+      ARIVU_BROWSER_CAPTURE_PROTOCOL: "2"
+      ARIVU_BROWSER_CAPTURE_SOCKET: "/run/arivu-capture/helper.sock"
+      ARIVU_BROWSER_CAPTURE_RUNTIME_DIR: "/run/arivu-capture/attempts"
+      ARIVU_BROWSER_CAPTURE_SCREENSHOT: "true"
+      ARIVU_BROWSER_CAPTURE_PDF: "false"
+      ARIVU_BROWSER_CAPTURE_SELF_CONTAINED_HTML: "true"
     volumes:
       - arivu-data:/data
+      - capture-runtime:/run/arivu-capture
+
+  capture:
+    profiles: ["capture"]
+    build:
+      context: ../capture
+    image: arivu-capture:local
+    restart: unless-stopped
+    network_mode: "none"
+    read_only: true
+    cap_drop: ["ALL"]
+    security_opt:
+      - no-new-privileges:true
+    shm_size: "1gb"
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=512m
+    volumes:
+      - capture-runtime:/run/arivu-capture
 
 volumes:
   arivu-data:
+  capture-runtime:

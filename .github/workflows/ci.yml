@@ -27,6 +27,18 @@ jobs:
       - run: node --check extension/url-utils.js
       - run: node extension/url-utils.test.mjs
       - run: node extension/content.test.mjs
+      - name: Verify isolated capture bundle
+        run: |
+          npm ci --prefix capture
+          npm test --prefix capture
+          npm audit --omit=dev --prefix capture
+          docker build -t arivu-capture:test capture
+          docker compose -f deploy/compose.yaml config >/dev/null
+          systemd-analyze verify deploy/arivu-capture.service
+          tar -czf /tmp/arivu-capture-bundle.tgz \
+            -C capture package.json package-lock.json src README.md Dockerfile \
+            -C ../deploy arivu-capture.service
+          tar -tzf /tmp/arivu-capture-bundle.tgz | grep -qx arivu-capture.service
       - run: go test ./...
       - name: Build release artifact
         run: |

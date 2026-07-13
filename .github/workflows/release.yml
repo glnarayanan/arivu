@@ -62,11 +62,23 @@ jobs:
         with:
           path: dist
           merge-multiple: true
+      - name: Verify isolated capture release
+        run: |
+          npm ci --prefix capture
+          npm test --prefix capture
+          npm audit --omit=dev --prefix capture
+          docker build -t arivu-capture:release capture
+          docker compose -f deploy/compose.yaml config >/dev/null
+          systemd-analyze verify deploy/arivu-capture.service
       - name: Prepare release bundle
         run: |
           cp deploy/install.sh dist/install.sh
+          tar -czf dist/arivu-capture-bundle.tgz \
+            -C capture package.json package-lock.json src README.md Dockerfile \
+            -C ../deploy arivu-capture.service
+          tar -tzf dist/arivu-capture-bundle.tgz | grep -qx arivu-capture.service
           go list -m -json all > dist/go-modules.inventory.jsonl
-          (cd dist && sha256sum arivu-linux-* arivu-installer-linux-* install.sh buildinfo-*.txt go-modules.inventory.jsonl > SHA256SUMS)
+          (cd dist && sha256sum arivu-linux-* arivu-installer-linux-* arivu-capture-bundle.tgz install.sh buildinfo-*.txt go-modules.inventory.jsonl > SHA256SUMS)
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

@@ -16,7 +16,8 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 10001 arivu \
   && useradd --system --uid 10001 --gid arivu --home-dir /var/lib/arivu --create-home arivu \
-  && install -d -o arivu -g arivu /data
+  && install -d -o arivu -g arivu /data \
+  && install -d -m 0770 -o arivu -g arivu /run/arivu-capture
 
 COPY --from=build /out/arivu /usr/local/bin/arivu
 
