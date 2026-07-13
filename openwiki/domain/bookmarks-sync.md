@@ -203,3 +203,24 @@ To keep the dependency surface small, Arivu bypasses vendor SDKs. External commu
 - **Use Case**: Syncs bookmarked, liked, or saved tweets directly into the user's permanent SQLite collection.
 - **Details**: Employs direct API endpoints wrapping OAuth state connections to ingest recent histories.
 - **Workers**: Managed securely in `/internal/app/x.go` by picking active synchronization tasks from the durable jobs queue and executing them in the background.
+# Nested collections
+
+RSS/Atom subscriptions are user-owned capture sources with optional collection
+and tag defaults. GUID, canonical URL, publication/update time, and content
+fingerprints suppress duplicates before a bookmark and ordinary processing job
+are created. Initial and later polls accept at most the bounded newest batch.
+
+AI tagging is user-controlled (`off`, existing vocabulary only, or allow new).
+Generated suggestions are capped, alias-normalized, provenance-marked, and
+never remove manual tags.
+
+Collections form an optional owner-scoped tree through `parent_id`; bookmarks
+remain many-to-many members and capture does not require a collection. The API
+lists the tree fields and supports create, rename/move/reorder, and delete.
+Parents must belong to the same user, ancestor walks are capped at 100, and
+moves that create cycles are rejected. Deletion is intentionally non-recursive:
+child collections must first be moved or deleted; deleting a leaf removes only
+its memberships, never bookmarks. Full JSON backups include hierarchy and
+memberships. Existing databases retain the historical global per-user collection
+name uniqueness during the additive SQLite migration; sibling-scoped duplicate
+names may be introduced by a future table-rebuild migration.

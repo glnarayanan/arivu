@@ -2,6 +2,37 @@
 
 Arivu is architected as a lean, concurrent, single-binary application.
 
+Public-share membership is an explicit publication boundary: selected evidence
+and public bookmark fields are copied into snapshot columns. Public projections
+never join live bookmark or evidence content. The embedded public-reader JS and
+CSS are served by the normal static asset path under the default self-only CSP.
+
+Optional browser preservation runs only after successful direct capture through
+the versioned stdin/stdout helper protocol documented in the deployment guide.
+Outputs enter a mode-0700 staging directory, are type/MIME/path/size checked,
+SHA-256 hashed while entering the private content-addressed asset store, and are
+served only through owner-authenticated artifact endpoints.
+
+## Capture attempts and local artifacts
+
+Direct HTTP processing records capture attempts with queued, running, complete,
+partial, and failed states. The same bounded, SSRF-protected fetch that creates
+evidence supplies the original response bytes without a second request. These
+`source_response` artifacts live outside the web root under `<database>.assets`.
+Writes use random staging files, enforce the fetch bound while hashing, fsync,
+and atomically rename to SHA-256-derived object keys before metadata is stored.
+Authenticated artifact APIs filter by owner and return content with `nosniff`
+and `no-store`.
+
+Rows can be made unreachable with `deleted_at`; physical garbage collection and
+orphan reconciliation are grace-based maintenance operations and never remove
+an object while any live row references it. Per-user artifact quota counts each
+logical live reference, even when content-addressed objects are shared. Installer
+backups copy adjacent live assets (excluding `.staging`) and verify a manifest.
+The bounded startup/hourly pass materializes all live keys before walking files
+(avoiding nested work on single-connection SQLite); `ARIVU_ASSET_GC_GRACE`
+defaults to 24 hours. Missing referenced files are logged without metadata loss.
+
 ---
 
 ## HTTP Runtime & Web Server
@@ -94,6 +125,12 @@ credential is never silently reused across providers.
 ---
 
 ## Durable Background Jobs Engine
+
+RSS polling is a durable `feed.poll` job. Due rows are materialized and their
+cursor is closed before enqueue/update work, which keeps the single-connection
+SQLite configuration safe from nested-query deadlocks. Polls use conditional
+requests, bounded SSRF-safe fetches, capped entry batches, duplicate keys and
+fingerprints, and exponential retry delay after transport failures.
 
 Asynchronous workflows (e.g., crawling bookmarks, querying LLMs, syncing X timelines, and due reminder email notifications) are powered by a SQLite-backed task queue.
 

@@ -1,5 +1,36 @@
 # Deployment
 
+Asset reconciliation runs at startup and hourly. Set `ARIVU_ASSET_GC_GRACE`
+(default `24h`) to control the minimum age before stale staging or unreferenced
+objects are removed; referenced objects are never garbage-collected, and missing
+referenced content is reported in server logs without changing SQLite metadata.
+
+## Optional browser preservation helper
+
+Arivu does not bundle Chromium, Playwright, Node, or a browser. Operators may opt
+in with `ARIVU_BROWSER_CAPTURE_ENABLED=true` and an absolute executable path in
+`ARIVU_BROWSER_CAPTURE_COMMAND`. The executable receives one bounded JSON v1
+request on stdin (`url`, private `output_dir`, random `token`, requested
+`formats`, and byte limits) and must return one JSON v1 response containing the
+same token and an `artifacts` array of relative `path`, `type`, and `mime`.
+Allowed pairs are `self_contained_html`/`text/html`, `screenshot`/`image/png`,
+and `pdf`/`application/pdf`. HTML is download-only. Screenshot and PDF requests
+are made only when their separate operator flags are true.
+
+The helper contract requires a fresh isolated browser context for each request,
+with no ambient cookies, credentials, extensions, proxy credentials, or shared
+cache. It must validate and intercept **every navigation, redirect, iframe,
+worker, websocket, and subresource request**, resolve DNS, and block loopback,
+private, link-local, multicast, local/localhost, metadata-service, and other
+non-public destinations (including DNS rebinding). Arivu validates the initial
+public HTTP(S) URL and strictly confines/limits returned files, but **cannot
+independently verify a third-party helper's internal interception**. Only deploy
+an audited helper in a sandbox with restricted network/filesystem privileges.
+
+Helper failure after direct HTTP capture marks the attempt partial; the normal
+sanitized reader remains available. Configure timeout and per-file/aggregate
+limits with the variables shown in `deploy/arivu.env-sample`.
+
 Arivu’s primary self-hosting path is the first-party installer CLI. It prepares
 a Linux VPS end to end, while preserving unrelated apps on shared hosts.
 
@@ -269,6 +300,12 @@ curl -fsS http://127.0.0.1:8080/api/health
 ```
 
 ## Container
+
+Backups now include the SQLite snapshot, adjacent asset directory, and a
+versioned size/SHA-256 manifest. Restore verifies a present manifest before
+activation; backups made by older releases without a manifest remain accepted.
+Browser preservation stays disabled unless its explicitly isolated helper and
+limits are configured.
 
 Docker remains an advanced/manual path.
 

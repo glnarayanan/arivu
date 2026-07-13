@@ -136,6 +136,18 @@ menu. Non-admin users do not see provider-secret controls. Admin provider fields
 remain generic: Model Provider, Model, API Key, and Base URL. Local/keyless
 providers remain supported.
 
+Settings Automation lets each user turn AI tagging off, restrict suggestions to
+their existing vocabulary, or allow new generated tags. It also provides RSS
+and Atom subscription add, pause/resume, status/error, and delete controls;
+accepted entries follow the normal Inbox and capture pipeline. Settings Sharing
+lists public links and revokes them. A bookmark's Share disclosure creates a
+snapshot link and shows its unrepeatable token once for immediate copying.
+That snapshot remains unchanged if the private bookmark is later edited or
+recaptured; update the share membership explicitly to publish a new snapshot.
+
+Bookmark reader pages persist scroll progress, show capture-attempt history,
+and list authorized source, screenshot, and PDF artifacts when available.
+
 Arivu keeps source evidence separate from generated artifacts. Short captures
 may have only a short summary, and incomplete captures may have none. A missing
 summary is preferable to unsupported expansion. Highlights quote their source;
