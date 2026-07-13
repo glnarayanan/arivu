@@ -66,6 +66,48 @@ type Result struct {
 	Text        string
 	Domain      string
 	Quality     Assessment
+	Body        []byte
+	ContentType string
+}
+
+// RawResult is a bounded response for non-HTML formats such as RSS/Atom. It
+// uses the same redirect and DNS-rebinding-safe transport as Fetch.
+type RawResult struct {
+	Status                          int
+	URL                             string
+	Body                            []byte
+	ETag, LastModified, ContentType string
+}
+
+func (c *Client) FetchRaw(ctx context.Context, rawURL, etag, modified string) (RawResult, error) {
+	req, err := c.newRequest(ctx, rawURL)
+	if err != nil {
+		return RawResult{}, err
+	}
+	req.Header.Set("Accept", "application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9")
+	if etag != "" {
+		req.Header.Set("If-None-Match", etag)
+	}
+	if modified != "" {
+		req.Header.Set("If-Modified-Since", modified)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return RawResult{}, &FetchError{Reason: "fetch_failed", Err: err}
+	}
+	defer resp.Body.Close()
+	result := RawResult{Status: resp.StatusCode, URL: resp.Request.URL.String(), ETag: resp.Header.Get("ETag"), LastModified: resp.Header.Get("Last-Modified"), ContentType: resp.Header.Get("Content-Type")}
+	if resp.StatusCode == http.StatusNotModified {
+		return result, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return RawResult{}, &FetchError{Reason: fmt.Sprintf("upstream_http_%d", resp.StatusCode), Err: fmt.Errorf("upstream status %d", resp.StatusCode)}
+	}
+	result.Body, err = io.ReadAll(io.LimitReader(resp.Body, MaxBodyBytes+1))
+	if err == nil && len(result.Body) > MaxBodyBytes {
+		err = &FetchError{Reason: "content_too_large", Err: errors.New("content too large")}
+	}
+	return result, err
 }
 
 type Quality string
@@ -174,12 +216,12 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 	raw := string(body)
 	if strings.Contains(contentType, "text/plain") {
 		text := strings.Join(strings.Fields(raw), " ")
-		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname(), Quality: Assess("plain_text", "document", parsed.Hostname(), text)}, nil
+		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname(), Quality: Assess("plain_text", "document", parsed.Hostname(), text), Body: body, ContentType: contentType}, nil
 	}
 	title := ExtractTitle(raw)
 	articleHTML, text, description := extractPage(raw)
 	text = trimLeadingChrome(text, title)
-	return Result{URL: parsed.String(), Title: title, Description: description, HTML: articleHTML, Text: text, Domain: parsed.Hostname(), Quality: Assess("article_extraction", "article", title, text)}, nil
+	return Result{URL: parsed.String(), Title: title, Description: description, HTML: articleHTML, Text: text, Domain: parsed.Hostname(), Quality: Assess("article_extraction", "article", title, text), Body: body, ContentType: contentType}, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, rawURL string) (*http.Request, error) {

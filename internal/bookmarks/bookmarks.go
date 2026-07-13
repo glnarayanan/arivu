@@ -12,9 +12,12 @@ import (
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/glnarayanan/arivu/internal/assets"
 	"github.com/glnarayanan/arivu/internal/auth"
+	"github.com/glnarayanan/arivu/internal/config"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/jobs"
 	"github.com/glnarayanan/arivu/internal/providers"
@@ -23,11 +26,19 @@ import (
 )
 
 type Service struct {
-	db      *sql.DB
-	jobs    *jobs.Queue
-	fetcher *safefetch.Client
-	ai      func(context.Context) providers.GeminiClient
+	db            *sql.DB
+	jobs          *jobs.Queue
+	fetcher       *safefetch.Client
+	ai            func(context.Context) providers.GeminiClient
+	assets        *assets.Store
+	browser       config.BrowserCaptureConfig
+	artifactQuota int64
+	artifactMu    sync.Mutex
 }
+
+func (s *Service) SetAssetStore(store *assets.Store)                 { s.assets = store }
+func (s *Service) SetBrowserCapture(cfg config.BrowserCaptureConfig) { s.browser = cfg }
+func (s *Service) SetArtifactQuota(bytes int64)                      { s.artifactQuota = bytes }
 
 type CountsResult struct {
 	Users       int
@@ -98,7 +109,24 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 		tagJSON, _ := json.Marshal(cleanStringList(body.Tags, 20))
 		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
 	}
-	jobID, _ := s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, ""))
+	tx, txErr := s.db.BeginTx(r.Context(), nil)
+	jobID := ""
+	if txErr == nil {
+		attemptID := ids.New()
+		_, txErr = tx.ExecContext(r.Context(), `INSERT INTO capture_attempts(id,bookmark_id,user_id,status,requested_url,engine,engine_version,queued_at) VALUES(?,?,?,'queued',?,'direct_http',?,?)`, attemptID, bookmarkID, user.ID, body.URL, safefetch.ExtractorVersion, now)
+		if txErr == nil {
+			jobID, txErr = s.jobs.EnqueueWithIDTx(r.Context(), tx, user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, "", attemptID))
+		}
+		if txErr == nil {
+			txErr = tx.Commit()
+		} else {
+			_ = tx.Rollback()
+		}
+	}
+	if txErr != nil {
+		writeError(w, http.StatusInternalServerError, "Bookmark saved but capture could not be queued")
+		return
+	}
 	bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
 	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
@@ -128,12 +156,20 @@ func (s *Service) Reprocess(w http.ResponseWriter, r *http.Request, user auth.Us
 		return
 	}
 	now := nowString()
+	var retryOf string
+	_ = tx.QueryRowContext(r.Context(), `SELECT id FROM capture_attempts WHERE bookmark_id=? AND user_id=? ORDER BY queued_at DESC LIMIT 1`, bookmarkID, user.ID).Scan(&retryOf)
+	attemptID := ids.New()
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO capture_attempts(id,bookmark_id,user_id,retry_of_id,status,requested_url,engine,engine_version,queued_at) VALUES(?,?,?,NULLIF(?,''),'queued',?,'direct_http',?,?)`, attemptID, bookmarkID, user.ID, retryOf, rawURL, safefetch.ExtractorVersion, now)
+	if err != nil {
+		writeError(w, 500, "Could not queue bookmark")
+		return
+	}
 	_, err = tx.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(bookmark_id) DO UPDATE SET processing_status='pending',updated_at=excluded.updated_at`, ids.New(), bookmarkID, user.ID, "pending", now, now)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not reset bookmark processing")
 		return
 	}
-	jobID, err := s.jobs.EnqueueWithIDTx(r.Context(), tx, user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, rawURL, ""))
+	jobID, err := s.jobs.EnqueueWithIDTx(r.Context(), tx, user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, rawURL, "", attemptID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not queue bookmark")
 		return
@@ -344,7 +380,30 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bm["links"] = s.itemLinks(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	bm["reminders"] = s.itemReminders(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	bm["action_items"] = s.itemActionItems(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	bm["capture_attempts"] = s.captureAttempts(r.Context(), user.ID, r.PathValue("id"))
+	bm["artifacts"] = s.bookmarkArtifacts(r.Context(), user.ID, r.PathValue("id"))
+	bm["capture_status"] = s.captureStatus(r.Context(), user.ID, r.PathValue("id"))
 	writeJSON(w, http.StatusOK, bm)
+}
+
+func (s *Service) ReadingProgress(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		Progress float64 `json:"progress"`
+	}
+	if decodeJSON(r, &body) != nil || body.Progress < 0 || body.Progress > 1 {
+		writeError(w, http.StatusBadRequest, "progress must be between 0 and 1")
+		return
+	}
+	result, err := s.db.ExecContext(r.Context(), `UPDATE bookmarks SET reading_progress=?,updated_at=? WHERE id=? AND user_id=?`, body.Progress, nowString(), r.PathValue("id"), user.ID)
+	if err != nil {
+		writeError(w, 500, "Could not save reading progress")
+		return
+	}
+	if n, _ := result.RowsAffected(); n == 0 {
+		writeError(w, 404, "Bookmark not found")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"reading_progress": body.Progress})
 }
 
 func (s *Service) Delete(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -503,7 +562,7 @@ func (s *Service) Related(w http.ResponseWriter, r *http.Request, user auth.User
 }
 
 func (s *Service) Collections(w http.ResponseWriter, r *http.Request, user auth.User) {
-	rows, err := s.db.QueryContext(r.Context(), `SELECT id,name,description,color,created_at,updated_at FROM collections WHERE user_id=? ORDER BY created_at DESC`, user.ID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT id,name,description,color,created_at,updated_at,parent_id,sibling_order FROM collections WHERE user_id=? ORDER BY COALESCE(parent_id,''),sibling_order,name COLLATE NOCASE`, user.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load collections")
 		return
@@ -511,18 +570,21 @@ func (s *Service) Collections(w http.ResponseWriter, r *http.Request, user auth.
 	defer rows.Close()
 	var result []map[string]any
 	for rows.Next() {
-		var id, name, description, color, created, updated sql.NullString
-		_ = rows.Scan(&id, &name, &description, &color, &created, &updated)
-		result = append(result, map[string]any{"id": id.String, "name": name.String, "description": description.String, "color": color.String, "created_at": created.String, "updated_at": updated.String})
+		var id, name, description, color, created, updated, parent sql.NullString
+		var order int
+		_ = rows.Scan(&id, &name, &description, &color, &created, &updated, &parent, &order)
+		result = append(result, map[string]any{"id": id.String, "name": name.String, "description": description.String, "color": color.String, "parent_id": nullString(parent), "sibling_order": order, "created_at": created.String, "updated_at": updated.String})
 	}
 	writeJSON(w, http.StatusOK, result)
 }
 
 func (s *Service) CreateCollection(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var body struct {
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Color       string `json:"color"`
+		Name         string `json:"name"`
+		Description  string `json:"description"`
+		Color        string `json:"color"`
+		ParentID     string `json:"parent_id"`
+		SiblingOrder int    `json:"sibling_order"`
 	}
 	if err := decodeJSON(r, &body); err != nil || strings.TrimSpace(body.Name) == "" {
 		writeError(w, http.StatusBadRequest, "Name is required")
@@ -530,12 +592,96 @@ func (s *Service) CreateCollection(w http.ResponseWriter, r *http.Request, user 
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	id := ids.New()
-	_, err := s.db.ExecContext(r.Context(), `INSERT INTO collections(id,user_id,name,description,color,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, user.ID, strings.TrimSpace(body.Name), body.Description, body.Color, now, now)
+	if body.ParentID != "" && !s.ownsCollection(r.Context(), user.ID, body.ParentID) {
+		writeError(w, http.StatusNotFound, "Parent collection not found")
+		return
+	}
+	_, err := s.db.ExecContext(r.Context(), `INSERT INTO collections(id,user_id,parent_id,sibling_order,name,description,color,created_at,updated_at) VALUES(?,?,NULLIF(?,''),?,?,?,?,?,?)`, id, user.ID, body.ParentID, body.SiblingOrder, strings.TrimSpace(body.Name), body.Description, body.Color, now, now)
 	if err != nil {
 		writeError(w, http.StatusConflict, "Collection already exists")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": body.Name, "description": body.Description, "color": body.Color, "created_at": now, "updated_at": now})
+	writeJSON(w, http.StatusOK, map[string]any{"id": id, "name": body.Name, "parent_id": nullableExportString(body.ParentID), "sibling_order": body.SiblingOrder, "description": body.Description, "color": body.Color, "created_at": now, "updated_at": now})
+}
+
+// UpdateCollection renames, reorders, or moves a collection. Traversal is capped
+// to protect corrupt/imported databases from unbounded recursive work.
+func (s *Service) UpdateCollection(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		Name         *string `json:"name"`
+		ParentID     *string `json:"parent_id"`
+		SiblingOrder *int    `json:"sibling_order"`
+	}
+	if decodeJSON(r, &body) != nil || !s.ownsCollection(r.Context(), user.ID, r.PathValue("id")) {
+		writeError(w, 404, "Collection not found")
+		return
+	}
+	if body.Name != nil && strings.TrimSpace(*body.Name) == "" {
+		writeError(w, 400, "Name is required")
+		return
+	}
+	parent := ""
+	_ = s.db.QueryRowContext(r.Context(), `SELECT COALESCE(parent_id,'') FROM collections WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID).Scan(&parent)
+	if body.ParentID != nil {
+		parent = strings.TrimSpace(*body.ParentID)
+	}
+	if parent != "" && !s.ownsCollection(r.Context(), user.ID, parent) {
+		writeError(w, 404, "Parent collection not found")
+		return
+	}
+	if parent == r.PathValue("id") || s.collectionDescendant(r.Context(), user.ID, r.PathValue("id"), parent) {
+		writeError(w, 409, "Move would create a cycle")
+		return
+	}
+	name := ""
+	order := 0
+	_ = s.db.QueryRowContext(r.Context(), `SELECT name,sibling_order FROM collections WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID).Scan(&name, &order)
+	if body.Name != nil {
+		name = strings.TrimSpace(*body.Name)
+	}
+	if body.SiblingOrder != nil {
+		order = *body.SiblingOrder
+	}
+	if _, err := s.db.ExecContext(r.Context(), `UPDATE collections SET name=?,parent_id=NULLIF(?,''),sibling_order=?,updated_at=? WHERE id=? AND user_id=?`, name, parent, order, nowString(), r.PathValue("id"), user.ID); err != nil {
+		writeError(w, 409, "Collection name already exists")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"id": r.PathValue("id"), "name": name, "parent_id": nullableExportString(parent), "sibling_order": order})
+}
+
+func (s *Service) collectionDescendant(ctx context.Context, userID, ancestor, candidate string) bool {
+	for depth := 0; candidate != "" && depth < 100; depth++ {
+		if candidate == ancestor {
+			return true
+		}
+		var next string
+		if s.db.QueryRowContext(ctx, `SELECT COALESCE(parent_id,'') FROM collections WHERE id=? AND user_id=?`, candidate, userID).Scan(&next) != nil {
+			return false
+		}
+		candidate = next
+	}
+	return candidate != ""
+}
+
+// DeleteCollection is deliberately non-recursive. Children must be moved or
+// deleted first; bookmark records are never deleted (only memberships cascade).
+func (s *Service) DeleteCollection(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var children int
+	_ = s.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM collections WHERE parent_id=? AND user_id=?`, r.PathValue("id"), user.ID).Scan(&children)
+	if children > 0 {
+		writeError(w, 409, "Collection has child collections; move or delete them first")
+		return
+	}
+	res, err := s.db.ExecContext(r.Context(), `DELETE FROM collections WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID)
+	if err != nil {
+		writeError(w, 500, "Could not delete collection")
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeError(w, 404, "Collection not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Service) AddToCollection(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -959,6 +1105,9 @@ func (s *Service) getBookmark(ctx context.Context, userID, id string) (map[strin
 	if bm["id"] == "" {
 		return nil, errors.New("not found")
 	}
+	var progress float64
+	_ = s.db.QueryRowContext(ctx, `SELECT reading_progress FROM bookmarks WHERE id=? AND user_id=?`, id, userID).Scan(&progress)
+	bm["reading_progress"] = progress
 	return bm, nil
 }
 
