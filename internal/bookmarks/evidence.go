@@ -56,6 +56,23 @@ func (s *Service) UpsertEvidence(ctx context.Context, userID, bookmarkID string,
 }
 
 func (s *Service) upsertEvidence(ctx context.Context, userID, bookmarkID string, evidence BookmarkEvidence) (BookmarkEvidence, error) {
+	evidence, reasons, now := prepareEvidence(bookmarkID, evidence)
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return BookmarkEvidence{}, err
+	}
+	defer tx.Rollback()
+	stored, err := upsertEvidenceTx(ctx, tx, userID, bookmarkID, evidence, reasons, now)
+	if err != nil {
+		return BookmarkEvidence{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return BookmarkEvidence{}, err
+	}
+	return stored, nil
+}
+
+func prepareEvidence(bookmarkID string, evidence BookmarkEvidence) (BookmarkEvidence, string, string) {
 	evidence.ID = fallback(evidence.ID, ids.New())
 	evidence.BookmarkID = bookmarkID
 	evidence.Kind = fallback(evidence.Kind, "legacy_scrape")
@@ -73,31 +90,26 @@ func (s *Service) upsertEvidence(ctx context.Context, userID, bookmarkID string,
 	evidence.CreatedAt = fallback(evidence.CreatedAt, now)
 	evidence.UpdatedAt = fallback(evidence.UpdatedAt, evidence.CreatedAt)
 	reasons, _ := json.Marshal(evidence.QualityReasons)
+	return evidence, string(reasons), now
+}
 
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return BookmarkEvidence{}, err
-	}
-	defer tx.Rollback()
+func upsertEvidenceTx(ctx context.Context, tx *sql.Tx, userID, bookmarkID string, evidence BookmarkEvidence, reasons, now string) (BookmarkEvidence, error) {
 	if evidence.Selected {
 		if _, err := tx.ExecContext(ctx, `UPDATE bookmark_evidence SET is_selected=0,updated_at=? WHERE bookmark_id=? AND user_id=? AND is_selected=1`, now, bookmarkID, userID); err != nil {
 			return BookmarkEvidence{}, err
 		}
 	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO bookmark_evidence(id,bookmark_id,user_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,published_at,extraction_method,content_hash,quality_status,quality_score,quality_reasons_json,extractor_version,is_selected,created_at,updated_at)
+	_, err := tx.ExecContext(ctx, `INSERT INTO bookmark_evidence(id,bookmark_id,user_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,published_at,extraction_method,content_hash,quality_status,quality_score,quality_reasons_json,extractor_version,is_selected,created_at,updated_at)
 		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 		ON CONFLICT(bookmark_id,evidence_kind,content_hash,extractor_version) DO UPDATE SET
 			evidence_origin=excluded.evidence_origin,authority=excluded.authority,content_text=excluded.content_text,sanitized_html=excluded.sanitized_html,canonical_url=excluded.canonical_url,author_id=excluded.author_id,publisher_key=excluded.publisher_key,published_at=excluded.published_at,extraction_method=excluded.extraction_method,quality_status=excluded.quality_status,quality_score=CASE WHEN excluded.quality_score=0 AND excluded.quality_status=bookmark_evidence.quality_status THEN bookmark_evidence.quality_score ELSE excluded.quality_score END,quality_reasons_json=excluded.quality_reasons_json,is_selected=CASE WHEN excluded.is_selected=1 THEN 1 ELSE bookmark_evidence.is_selected END,updated_at=excluded.updated_at`,
-		evidence.ID, bookmarkID, userID, evidence.Kind, evidence.Origin, evidence.Authority, evidence.Text, evidence.SanitizedHTML, evidence.CanonicalURL, evidence.AuthorID, evidence.PublisherKey, nullableStringValue(evidence.PublishedAt), evidence.ExtractionMethod, evidence.ContentHash, evidence.QualityStatus, evidence.QualityScore, string(reasons), evidence.ExtractorVersion, evidence.Selected, evidence.CreatedAt, evidence.UpdatedAt)
+		evidence.ID, bookmarkID, userID, evidence.Kind, evidence.Origin, evidence.Authority, evidence.Text, evidence.SanitizedHTML, evidence.CanonicalURL, evidence.AuthorID, evidence.PublisherKey, nullableStringValue(evidence.PublishedAt), evidence.ExtractionMethod, evidence.ContentHash, evidence.QualityStatus, evidence.QualityScore, reasons, evidence.ExtractorVersion, evidence.Selected, evidence.CreatedAt, evidence.UpdatedAt)
 	if err != nil {
 		return BookmarkEvidence{}, err
 	}
 	row := tx.QueryRowContext(ctx, `SELECT id,bookmark_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,COALESCE(published_at,''),extraction_method,content_hash,quality_status,quality_score,quality_reasons_json,extractor_version,is_selected,created_at,updated_at FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? AND evidence_kind=? AND content_hash=? AND extractor_version=?`, bookmarkID, userID, evidence.Kind, evidence.ContentHash, evidence.ExtractorVersion)
 	stored, err := scanEvidence(row)
 	if err != nil {
-		return BookmarkEvidence{}, err
-	}
-	if err := tx.Commit(); err != nil {
 		return BookmarkEvidence{}, err
 	}
 	return stored, nil

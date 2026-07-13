@@ -19,7 +19,9 @@ func (s *Service) ReconcileAssets(ctx context.Context, store *assets.Store, grac
 	s.artifactMu.Lock()
 	defer s.artifactMu.Unlock()
 	rows, err := s.db.QueryContext(ctx, `SELECT storage_key FROM artifacts WHERE deleted_at IS NULL
-		UNION SELECT storage_key FROM public_share_artifacts`)
+		UNION SELECT storage_key FROM public_share_artifacts
+		UNION SELECT storage_key FROM bookmark_media WHERE deleted_at IS NULL
+		UNION SELECT storage_key FROM public_share_media`)
 	if err != nil {
 		return assets.ReconcileReport{}, err
 	}
@@ -41,6 +43,14 @@ func (s *Service) ReconcileAssets(ctx context.Context, store *assets.Store, grac
 }
 
 func (s *Service) commitArtifact(ctx context.Context, id, userID, bookmarkID, attemptID, evidenceID, kind, mime string, size int64, digest, key string) error {
+	return s.commitArtifactBatch(ctx, id, userID, bookmarkID, attemptID, "", evidenceID, kind, mime, size, digest, key, false)
+}
+
+func (s *Service) commitStagedArtifact(ctx context.Context, id, userID, bookmarkID, attemptID, batchID, evidenceID, kind, mime string, size int64, digest, key string) error {
+	return s.commitArtifactBatch(ctx, id, userID, bookmarkID, attemptID, batchID, evidenceID, kind, mime, size, digest, key, true)
+}
+
+func (s *Service) commitArtifactBatch(ctx context.Context, id, userID, bookmarkID, attemptID, batchID, evidenceID, kind, mime string, size int64, digest, key string, staged bool) error {
 	s.artifactMu.Lock()
 	defer s.artifactMu.Unlock()
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -48,25 +58,45 @@ func (s *Service) commitArtifact(ctx context.Context, id, userID, bookmarkID, at
 		return err
 	}
 	defer tx.Rollback()
-	var existing int
-	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM artifacts WHERE capture_attempt_id=? AND artifact_type=? AND deleted_at IS NULL`, attemptID, kind).Scan(&existing); err != nil {
+	var existingActive int
+	if err = tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM artifacts WHERE capture_attempt_id=? AND artifact_type=? AND is_staged=0 AND deleted_at IS NULL`, attemptID, kind).Scan(&existingActive); err != nil {
 		return err
 	}
-	if existing > 0 {
+	if existingActive > 0 {
 		return tx.Commit()
 	}
+	replacementBookmarkID := ""
+	if staged {
+		var stagedMedia int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM bookmark_media WHERE user_id=? AND bookmark_id=? AND capture_batch_id=? AND is_staged=1 AND deleted_at IS NULL`, userID, bookmarkID, batchID).Scan(&stagedMedia); err != nil {
+			return err
+		}
+		if stagedMedia > 0 {
+			replacementBookmarkID = bookmarkID
+		}
+	}
 	var used int64
-	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(SUM(byte_size),0) FROM artifacts WHERE user_id=? AND deleted_at IS NULL`, userID).Scan(&used); err != nil {
+	if used, err = usedAssetBytesReplacingBookmark(ctx, tx, userID, replacementBookmarkID); err != nil {
 		return err
 	}
 	if s.artifactQuota > 0 && (size > s.artifactQuota || used > s.artifactQuota-size) {
 		return ErrArtifactQuota
 	}
-	_, err = tx.ExecContext(ctx, `INSERT OR IGNORE INTO artifacts(id,user_id,bookmark_id,capture_attempt_id,evidence_id,artifact_type,mime_type,byte_size,sha256,storage_key,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, id, userID, bookmarkID, attemptID, evidenceID, kind, mime, size, digest, key, nowString())
+	_, err = tx.ExecContext(ctx, `INSERT INTO artifacts(id,user_id,bookmark_id,capture_attempt_id,capture_batch_id,evidence_id,artifact_type,mime_type,byte_size,sha256,storage_key,is_staged,created_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)
+		ON CONFLICT(capture_attempt_id,artifact_type) DO UPDATE SET capture_batch_id=excluded.capture_batch_id,evidence_id=excluded.evidence_id,mime_type=excluded.mime_type,byte_size=excluded.byte_size,sha256=excluded.sha256,storage_key=excluded.storage_key,is_staged=excluded.is_staged,created_at=excluded.created_at,deleted_at=NULL`, id, userID, bookmarkID, attemptID, batchID, evidenceID, kind, mime, size, digest, key, staged, nowString())
 	if err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+func usedAssetBytesReplacingBookmark(ctx context.Context, tx *sql.Tx, userID, replacementBookmarkID string) (int64, error) {
+	var used int64
+	err := tx.QueryRowContext(ctx, `SELECT
+		COALESCE((SELECT SUM(byte_size) FROM artifacts WHERE user_id=? AND deleted_at IS NULL),0)+
+		COALESCE((SELECT SUM(byte_size) FROM bookmark_media WHERE user_id=? AND deleted_at IS NULL AND (?='' OR bookmark_id<>? OR is_staged=1)),0)`, userID, userID, replacementBookmarkID, replacementBookmarkID).Scan(&used)
+	return used, err
 }
 
 func (s *Service) captureAttempts(ctx context.Context, userID, bookmarkID string) []map[string]any {
@@ -85,7 +115,7 @@ func (s *Service) captureAttempts(ctx context.Context, userID, bookmarkID string
 }
 
 func (s *Service) bookmarkArtifacts(ctx context.Context, userID, bookmarkID string) []map[string]any {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,capture_attempt_id,COALESCE(evidence_id,''),artifact_type,mime_type,byte_size,sha256,created_at FROM artifacts WHERE user_id=? AND bookmark_id=? AND deleted_at IS NULL ORDER BY created_at DESC`, userID, bookmarkID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,capture_attempt_id,COALESCE(evidence_id,''),artifact_type,mime_type,byte_size,sha256,created_at FROM artifacts WHERE user_id=? AND bookmark_id=? AND is_staged=0 AND deleted_at IS NULL ORDER BY created_at DESC`, userID, bookmarkID)
 	if err != nil {
 		return []map[string]any{}
 	}
@@ -120,7 +150,7 @@ func (s *Service) captureStatus(ctx context.Context, userID, bookmarkID string) 
 func (s *Service) ArtifactMetadata(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var id, bookmarkID, kind, mime, digest, created string
 	var size int64
-	err := s.db.QueryRowContext(r.Context(), `SELECT id,bookmark_id,artifact_type,mime_type,byte_size,sha256,created_at FROM artifacts WHERE id=? AND user_id=? AND deleted_at IS NULL`, r.PathValue("id"), user.ID).Scan(&id, &bookmarkID, &kind, &mime, &size, &digest, &created)
+	err := s.db.QueryRowContext(r.Context(), `SELECT id,bookmark_id,artifact_type,mime_type,byte_size,sha256,created_at FROM artifacts WHERE id=? AND user_id=? AND is_staged=0 AND deleted_at IS NULL`, r.PathValue("id"), user.ID).Scan(&id, &bookmarkID, &kind, &mime, &size, &digest, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, 404, "Artifact not found")
 		return
@@ -135,7 +165,7 @@ func (s *Service) ArtifactMetadata(w http.ResponseWriter, r *http.Request, user 
 func (s *Service) ArtifactContent(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var key, mime, kind string
 	var size int64
-	err := s.db.QueryRowContext(r.Context(), `SELECT storage_key,mime_type,artifact_type,byte_size FROM artifacts WHERE id=? AND user_id=? AND deleted_at IS NULL`, r.PathValue("id"), user.ID).Scan(&key, &mime, &kind, &size)
+	err := s.db.QueryRowContext(r.Context(), `SELECT storage_key,mime_type,artifact_type,byte_size FROM artifacts WHERE id=? AND user_id=? AND is_staged=0 AND deleted_at IS NULL`, r.PathValue("id"), user.ID).Scan(&key, &mime, &kind, &size)
 	if errors.Is(err, sql.ErrNoRows) || s.assets == nil {
 		writeError(w, 404, "Artifact not found")
 		return

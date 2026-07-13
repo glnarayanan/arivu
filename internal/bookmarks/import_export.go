@@ -281,9 +281,16 @@ func (s *Service) persistSelectedEvidence(ctx context.Context, userID, bookmarkI
 }
 
 func (s *Service) persistSelectedEvidenceForAttempt(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence, attemptID string) error {
+	return s.persistSelectedEvidenceForAttemptWithMedia(ctx, userID, bookmarkID, title, description, domain, evidence, attemptID, "")
+}
+
+func (s *Service) persistSelectedEvidenceForAttemptWithMedia(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence, attemptID, mediaBatchID string) error {
 	title = fallback(title, domain)
-	activated, err := s.activateSelectedEvidence(ctx, userID, bookmarkID, title, description, domain, evidence, attemptID)
+	activated, err := s.activateSelectedEvidenceWithMedia(ctx, userID, bookmarkID, title, description, domain, evidence, attemptID, mediaBatchID)
 	if err != nil || !activated {
+		if !activated && mediaBatchID != "" {
+			s.discardCaptureMedia(ctx, userID, bookmarkID, mediaBatchID)
+		}
 		return err
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -359,6 +366,12 @@ func (s *Service) persistSelectedEvidenceForAttempt(ctx context.Context, userID,
 }
 
 func (s *Service) activateSelectedEvidence(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence, attemptID string) (bool, error) {
+	return s.activateSelectedEvidenceWithMedia(ctx, userID, bookmarkID, title, description, domain, evidence, attemptID, "")
+}
+
+func (s *Service) activateSelectedEvidenceWithMedia(ctx context.Context, userID, bookmarkID, title, description, domain string, evidence BookmarkEvidence, attemptID, mediaBatchID string) (bool, error) {
+	s.artifactMu.Lock()
+	defer s.artifactMu.Unlock()
 	now := nowString()
 	htmlContent := evidence.SanitizedHTML
 	if htmlContent == "" {
@@ -384,8 +397,40 @@ func (s *Service) activateSelectedEvidence(ctx context.Context, userID, bookmark
 	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_evidence SET is_selected=1,updated_at=? WHERE id=? AND bookmark_id=? AND user_id=?`, now, evidence.ID, bookmarkID, userID); err != nil {
 		return false, err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`,
-		evidence.CanonicalURL, evidence.CanonicalURL, title, description, domain, domain, sanitize.HTML(htmlContent), evidence.Text, readingTime(evidence.Text), now, fallback(evidence.ExtractorVersion, safefetch.ExtractorVersion), bookmarkID, userID); err != nil {
+	replacementBookmarkID := ""
+	var mediaCount int
+	if evidence.Origin == "browser_render" {
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM bookmark_media WHERE user_id=? AND bookmark_id=? AND evidence_id=? AND capture_batch_id=? AND is_staged=1 AND deleted_at IS NULL`, userID, bookmarkID, evidence.ID, mediaBatchID).Scan(&mediaCount); err != nil {
+			return false, err
+		}
+		if mediaCount > 0 {
+			replacementBookmarkID = bookmarkID
+		}
+	}
+	if mediaBatchID != "" {
+		used, err := usedAssetBytesReplacingBookmark(ctx, tx, userID, replacementBookmarkID)
+		if err != nil {
+			return false, err
+		}
+		if s.artifactQuota > 0 && used > s.artifactQuota {
+			return false, ErrArtifactQuota
+		}
+		if mediaCount > 0 {
+			if _, err := tx.ExecContext(ctx, `UPDATE bookmark_media SET deleted_at=? WHERE user_id=? AND bookmark_id=? AND media_role='reader_image' AND is_staged=0 AND deleted_at IS NULL`, now, userID, bookmarkID); err != nil {
+				return false, err
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE bookmark_media SET is_staged=0 WHERE user_id=? AND bookmark_id=? AND evidence_id=? AND capture_batch_id=? AND is_staged=1 AND deleted_at IS NULL`, userID, bookmarkID, evidence.ID, mediaBatchID); err != nil {
+				return false, err
+			}
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE artifacts SET is_staged=0 WHERE user_id=? AND bookmark_id=? AND capture_batch_id=? AND is_staged=1 AND deleted_at IS NULL`, userID, bookmarkID, mediaBatchID); err != nil {
+			return false, err
+		}
+	}
+	var thumbnail string
+	_ = tx.QueryRowContext(ctx, `SELECT '/api/media/'||id FROM bookmark_media WHERE user_id=? AND bookmark_id=? AND evidence_id=? AND media_role='reader_image' AND is_staged=0 AND deleted_at IS NULL ORDER BY ordinal,id LIMIT 1`, userID, bookmarkID, evidence.ID).Scan(&thumbnail)
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,thumbnail=CASE WHEN ?='' THEN thumbnail ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`,
+		evidence.CanonicalURL, evidence.CanonicalURL, title, description, domain, domain, thumbnail, thumbnail, sanitize.HTML(htmlContent), evidence.Text, readingTime(evidence.Text), now, fallback(evidence.ExtractorVersion, safefetch.ExtractorVersion), bookmarkID, userID); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -1066,6 +1111,13 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		var tweetID, authorUsername, authorName, tweetURL, metrics sql.NullString
 		var canonicalURL, contentKind, publishedAt, sourceAuthorID, publisherKey, processedAt, fetchVersion, summaryVersion, enrichmentVersion sql.NullString
 		bookmark := scanBookmarkRow(rows, &tweetID, &authorUsername, &authorName, &tweetURL, &metrics, &canonicalURL, &contentKind, &publishedAt, &sourceAuthorID, &publisherKey, &processedAt, &fetchVersion, &summaryVersion, &enrichmentVersion)
+		if strings.HasPrefix(stringValue(bookmark["thumbnail"]), "/api/media/") {
+			bookmark["thumbnail"] = nil
+		}
+		if strings.HasPrefix(stringValue(bookmark["favicon"]), "/api/media/") {
+			bookmark["favicon"] = nil
+		}
+		bookmark["html_content"] = portableReaderHTML(stringValue(bookmark["html_content"]))
 		bookmark["x_tweet_id"] = nullString(tweetID)
 		bookmark["x_author_username"] = nullString(authorUsername)
 		bookmark["x_author_name"] = nullString(authorName)
@@ -1202,7 +1254,7 @@ func (s *Service) exportBookmarkEvidence(ctx context.Context, userID, bookmarkID
 	for _, item := range evidence {
 		result = append(result, map[string]any{
 			"id": item.ID, "kind": item.Kind, "origin": item.Origin, "authority": item.Authority,
-			"text": item.Text, "sanitized_html": item.SanitizedHTML, "canonical_url": item.CanonicalURL,
+			"text": item.Text, "sanitized_html": portableReaderHTML(item.SanitizedHTML), "canonical_url": item.CanonicalURL,
 			"author_id": item.AuthorID, "publisher_key": item.PublisherKey, "published_at": nullableExportString(item.PublishedAt),
 			"extraction_method": item.ExtractionMethod, "content_hash": item.ContentHash,
 			"quality_status": item.QualityStatus, "quality_score": item.QualityScore, "quality_reasons": item.QualityReasons,

@@ -72,6 +72,12 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureArtifactStorageReferences(ctx, db); err != nil {
 		return err
 	}
+	if err := ensureColumn(ctx, db, "artifacts", "capture_batch_id", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		return err
+	}
+	if err := ensureColumn(ctx, db, "artifacts", "is_staged", "INTEGER NOT NULL DEFAULT 0 CHECK(is_staged IN (0,1))"); err != nil {
+		return err
+	}
 	if _, err := db.ExecContext(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_attempt_type ON artifacts(capture_attempt_id,artifact_type)`); err != nil {
 		return err
 	}

@@ -21,9 +21,10 @@ type directCapture struct {
 }
 
 type renderedCapture struct {
-	evidence BookmarkEvidence
-	metadata captureMetadata
-	err      error
+	evidence     BookmarkEvidence
+	metadata     captureMetadata
+	mediaBatchID string
+	err          error
 }
 
 type captureMetadata struct {
@@ -82,6 +83,9 @@ func (s *Service) processWebBookmarkAttempt(ctx context.Context, userID, bookmar
 	}
 
 	rendered := <-renderedChannel
+	if rendered.mediaBatchID != "" {
+		defer s.discardCaptureMedia(ctx, userID, bookmarkID, rendered.mediaBatchID)
+	}
 
 	evidenceRows, err := s.Evidence(ctx, userID, bookmarkID)
 	if err != nil {
@@ -125,7 +129,11 @@ func (s *Service) processWebBookmarkAttempt(ctx context.Context, userID, bookmar
 		selectedEvidence = rendered.evidence
 		selectedMetadata = rendered.metadata
 	}
-	if err := s.persistSelectedEvidenceForAttempt(ctx, userID, bookmarkID, selectedMetadata.title, selectedMetadata.description, selectedMetadata.domain, selectedEvidence, attemptID); err != nil {
+	mediaBatchID := ""
+	if rendered.evidence.ID != "" && selectedEvidence.ID == rendered.evidence.ID {
+		mediaBatchID = rendered.mediaBatchID
+	}
+	if err := s.persistSelectedEvidenceForAttemptWithMedia(ctx, userID, bookmarkID, selectedMetadata.title, selectedMetadata.description, selectedMetadata.domain, selectedEvidence, attemptID, mediaBatchID); err != nil {
 		return err
 	}
 	directComplete := direct.err == nil && storedDirect.QualityStatus == string(capture.QualityComplete)
@@ -143,7 +151,7 @@ func (s *Service) processWebBookmarkAttempt(ctx context.Context, userID, bookmar
 }
 
 func (s *Service) captureRendered(ctx context.Context, userID, bookmarkID, rawURL, attemptID string) renderedCapture {
-	var captured renderedCapture
+	captured := renderedCapture{mediaBatchID: ids.New()}
 	err := browsercapture.RunV2(ctx, s.browser, rawURL, func(result browsercapture.V2Result) error {
 		htmlBody, err := os.ReadFile(result.Content.HTML.Path)
 		if err != nil {
@@ -154,17 +162,26 @@ func (s *Service) captureRendered(ctx context.Context, userID, bookmarkID, rawUR
 			return err
 		}
 		canonical := fallback(result.Metadata.CanonicalURL, result.Metadata.FinalURL)
-		evidence, err := s.UpsertEvidence(ctx, userID, bookmarkID, BookmarkEvidence{
+		storedMedia, mediaErr := s.storeCaptureMedia(ctx, userID, bookmarkID, attemptID, captured.mediaBatchID, result.Media)
+		mediaLinked := false
+		defer func() {
+			if !mediaLinked {
+				s.discardCaptureMedia(ctx, userID, bookmarkID, captured.mediaBatchID)
+			}
+		}()
+		htmlBody = []byte(rewriteReaderMedia(string(htmlBody), canonical, storedMedia))
+		evidence, err := s.storeRenderedEvidenceWithMedia(ctx, userID, bookmarkID, attemptID, captured.mediaBatchID, BookmarkEvidence{
 			Kind: "rendered_article", Origin: "browser_render", Authority: 75,
 			Text: string(textBody), SanitizedHTML: string(htmlBody), CanonicalURL: canonical,
 			PublisherKey: publisherForURL(canonical), PublishedAt: result.Metadata.PublishedAt,
 			ExtractionMethod: "mozilla_readability", QualityStatus: string(result.Content.QualityStatus),
 			QualityScore: result.Content.QualityScore, QualityReasons: result.Content.QualityReasons,
-			ExtractorVersion: result.EngineVersion,
-		})
+			ExtractorVersion: result.EngineVersion + "+attempt-" + attemptID + "+batch-" + captured.mediaBatchID,
+		}, storedMedia)
 		if err != nil {
 			return err
 		}
+		mediaLinked = true
 		captured.evidence = evidence
 		captured.metadata = captureMetadata{title: result.Metadata.Title, description: result.Metadata.Description, domain: publisherForURL(canonical)}
 		if s.assets != nil {
@@ -178,13 +195,13 @@ func (s *Service) captureRendered(ctx context.Context, userID, bookmarkID, rawUR
 				if storeErr != nil {
 					return storeErr
 				}
-				if err := s.commitArtifact(ctx, ids.New(), userID, bookmarkID, attemptID, evidence.ID, artifact.Type, artifact.MIME, size, digest, key); err != nil {
+				if err := s.commitStagedArtifact(ctx, ids.New(), userID, bookmarkID, attemptID, captured.mediaBatchID, evidence.ID, artifact.Type, artifact.MIME, size, digest, key); err != nil {
 					return err
 				}
 			}
 		}
 		_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET final_url=?,engine='direct_http+browser',engine_version=? WHERE id=? AND user_id=?`, result.Metadata.FinalURL, result.EngineVersion, attemptID, userID)
-		return nil
+		return mediaErr
 	})
 	captured.err = err
 	if err != nil && attemptID != "" {

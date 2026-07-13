@@ -561,35 +561,50 @@ func verifyArtifactRows(dbPath, assetRoot string) error {
 		return err
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT storage_key,byte_size,sha256 FROM artifacts WHERE deleted_at IS NULL`)
-	if err != nil { // Legacy databases predate artifacts.
-		if strings.Contains(err.Error(), "no such table") {
-			return nil
-		}
-		return err
+	queries := []string{
+		`SELECT storage_key,byte_size,sha256 FROM artifacts WHERE deleted_at IS NULL`,
+		`SELECT storage_key,byte_size,sha256 FROM bookmark_media WHERE deleted_at IS NULL`,
+		`SELECT storage_key,byte_size,sha256 FROM public_share_media`,
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var key, digest string
-		var expected int64
-		if err = rows.Scan(&key, &expected, &digest); err != nil {
+	for _, query := range queries {
+		rows, err := db.Query(query)
+		if err != nil { // Older backups may predate any one asset table.
+			if strings.Contains(err.Error(), "no such table") {
+				continue
+			}
 			return err
 		}
-		if strings.Contains(key, "..") || filepath.IsAbs(key) {
-			return errors.New("invalid artifact storage key")
+		for rows.Next() {
+			var key, digest string
+			var expected int64
+			if err = rows.Scan(&key, &expected, &digest); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if strings.Contains(key, "..") || filepath.IsAbs(key) {
+				_ = rows.Close()
+				return errors.New("invalid artifact storage key")
+			}
+			f, e := os.Open(filepath.Join(assetRoot, "objects", filepath.FromSlash(key)))
+			if e != nil {
+				_ = rows.Close()
+				return fmt.Errorf("live artifact %s missing: %w", key, e)
+			}
+			h := sha256.New()
+			n, e := io.Copy(h, f)
+			_ = f.Close()
+			if e != nil || n != expected || hex.EncodeToString(h.Sum(nil)) != digest {
+				_ = rows.Close()
+				return fmt.Errorf("live artifact %s integrity check failed", key)
+			}
 		}
-		f, e := os.Open(filepath.Join(assetRoot, "objects", filepath.FromSlash(key)))
-		if e != nil {
-			return fmt.Errorf("live artifact %s missing: %w", key, e)
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
 		}
-		h := sha256.New()
-		n, e := io.Copy(h, f)
-		f.Close()
-		if e != nil || n != expected || hex.EncodeToString(h.Sum(nil)) != digest {
-			return fmt.Errorf("live artifact %s integrity check failed", key)
-		}
+		_ = rows.Close()
 	}
-	return rows.Err()
+	return nil
 }
 
 func copyTree(src, dst string) error {

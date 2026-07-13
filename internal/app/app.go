@@ -147,6 +147,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/bookmarks/{id}/reprocess", a.withUserQuota(quotaBookmarkCreate, a.bookmarks.Reprocess))
 	mux.HandleFunc("GET /api/artifacts/{id}", a.withUser(a.bookmarks.ArtifactMetadata))
 	mux.HandleFunc("GET /api/artifacts/{id}/content", a.withUser(a.bookmarks.ArtifactContent))
+	mux.HandleFunc("GET /api/media/{id}", a.withUser(a.bookmarks.MediaContent))
 	mux.HandleFunc("PATCH /api/bookmarks/{id}/read-status", a.withUser(a.bookmarks.ReadStatus))
 	mux.HandleFunc("POST /api/bookmarks/{id}/accessed", a.withUser(a.bookmarks.Accessed))
 	mux.HandleFunc("PUT /api/bookmarks/{id}/reading-progress", a.withUser(a.bookmarks.ReadingProgress))
@@ -303,6 +304,7 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /s/{token}", a.bookmarks.PublicSharePage)
 	mux.HandleFunc("GET /s/{token}/rss.xml", a.bookmarks.PublicRSS)
 	mux.HandleFunc("GET /s/{token}/artifacts/{artifact}", a.bookmarks.PublicArtifact)
+	mux.HandleFunc("GET /s/{token}/media/{media}", a.bookmarks.PublicMedia)
 
 	mux.HandleFunc("/", a.frontend)
 

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/glnarayanan/arivu/internal/assets"
 	"github.com/glnarayanan/arivu/internal/config"
 	"github.com/glnarayanan/arivu/internal/database"
 	"github.com/glnarayanan/arivu/internal/jobs"
@@ -209,6 +210,11 @@ func TestLateAIResultCannotOverwriteNewerAttemptForSameEvidence(t *testing.T) {
 
 func TestRenderedCaptureOutranksDirectAndPersistsBothEvidenceRows(t *testing.T) {
 	service, db := capturePipelineService(t)
+	store, err := assets.New(filepath.Join(t.TempDir(), "capture.sqlite3"), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetAssetStore(store)
 	runtimeDir, err := os.MkdirTemp("/tmp", "arivu-bookmark-capture-")
 	if err != nil {
 		t.Fatal(err)
@@ -240,16 +246,20 @@ func TestRenderedCaptureOutranksDirectAndPersistsBothEvidenceRows(t *testing.T) 
 	if err := <-helperDone; err != nil {
 		t.Fatal(err)
 	}
-	var origin, text string
-	if err := db.QueryRow(`SELECT e.evidence_origin,b.text_content FROM bookmark_evidence e JOIN bookmarks b ON b.id=e.bookmark_id WHERE e.bookmark_id='bookmark-1' AND e.is_selected=1`).Scan(&origin, &text); err != nil {
+	var origin, text, readerHTML, thumbnail string
+	if err := db.QueryRow(`SELECT e.evidence_origin,b.text_content,b.sanitized_html,COALESCE(b.thumbnail,'') FROM bookmark_evidence e JOIN bookmarks b ON b.id=e.bookmark_id WHERE e.bookmark_id='bookmark-1' AND e.is_selected=1`).Scan(&origin, &text, &readerHTML, &thumbnail); err != nil {
 		t.Fatal(err)
 	}
 	var evidenceCount int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmark_evidence WHERE bookmark_id='bookmark-1' AND evidence_origin IN ('web_fetch','browser_render')`).Scan(&evidenceCount); err != nil {
 		t.Fatal(err)
 	}
-	if origin != "browser_render" || text != "Rendered evidence" || evidenceCount != 2 {
-		t.Fatalf("origin=%q text=%q evidence_count=%d", origin, text, evidenceCount)
+	var mediaCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmark_media WHERE bookmark_id='bookmark-1' AND deleted_at IS NULL`).Scan(&mediaCount); err != nil {
+		t.Fatal(err)
+	}
+	if origin != "browser_render" || text != "Rendered evidence" || evidenceCount != 2 || mediaCount != 1 || !strings.Contains(readerHTML, `<img src="/api/media/`) || strings.Contains(readerHTML, "https://example.com/image.png") || !strings.HasPrefix(thumbnail, "/api/media/") {
+		t.Fatalf("origin=%q text=%q evidence_count=%d media_count=%d html=%q thumbnail=%q", origin, text, evidenceCount, mediaCount, readerHTML, thumbnail)
 	}
 }
 
@@ -306,7 +316,106 @@ func TestDirectReaderActivatesBeforeRenderedCaptureFinishes(t *testing.T) {
 	}
 }
 
+func TestMediaStorageFailureKeepsRenderedReaderEvidence(t *testing.T) {
+	service, db := capturePipelineService(t)
+	store, err := assets.New(filepath.Join(t.TempDir(), "capture.sqlite3"), 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetAssetStore(store)
+	runtimeDir, err := os.MkdirTemp("/tmp", "arivu-bookmark-capture-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runtimeDir) })
+	listener, err := net.Listen("unix", filepath.Join(runtimeDir, "helper.sock"))
+	if err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			t.Skip("unix sockets are unavailable in this sandbox")
+		}
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	helperDone := make(chan error, 1)
+	go func() { helperDone <- serveRenderedCaptureFixture(listener, nil, nil) }()
+	service.SetBrowserCapture(config.BrowserCaptureConfig{
+		Enabled: true, Protocol: 2, Socket: listener.Addr().String(), RuntimeDir: runtimeDir,
+		Timeout: 2 * time.Second, NavigationTimeout: time.Second,
+		MaxFileBytes: 1024, MaxTotalBytes: 4096, MaxMediaFiles: 1, MaxMediaFileBytes: 1024, MaxMediaTotalBytes: 1024,
+	})
+	service.fetchPage = func(context.Context, string) (safefetch.Result, error) {
+		return completeDirectResult("Direct evidence", 99), nil
+	}
+	err = service.processWebBookmarkAttempt(t.Context(), "user-1", "bookmark-1", "https://example.com/article", "attempt-1", "Example", "", "example.com")
+	if !errors.Is(err, errPartialExtraction) {
+		t.Fatalf("capture error=%v", err)
+	}
+	if err := <-helperDone; err != nil {
+		t.Fatal(err)
+	}
+	var origin, text string
+	if err := db.QueryRow(`SELECT e.evidence_origin,b.text_content FROM bookmark_evidence e JOIN bookmarks b ON b.id=e.bookmark_id WHERE e.bookmark_id='bookmark-1' AND e.is_selected=1`).Scan(&origin, &text); err != nil {
+		t.Fatal(err)
+	}
+	if origin != "browser_render" || text != "Rendered evidence" {
+		t.Fatalf("origin=%q text=%q", origin, text)
+	}
+}
+
+func TestRejectedRenderedCandidateReleasesStagedBatch(t *testing.T) {
+	service, db := capturePipelineService(t)
+	store, err := assets.New(filepath.Join(t.TempDir(), "capture.sqlite3"), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetAssetStore(store)
+	runtimeDir, err := os.MkdirTemp("/tmp", "arivu-bookmark-capture-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(runtimeDir) })
+	listener, err := net.Listen("unix", filepath.Join(runtimeDir, "helper.sock"))
+	if err != nil {
+		if errors.Is(err, os.ErrPermission) {
+			t.Skip("unix sockets are unavailable in this sandbox")
+		}
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	helperDone := make(chan error, 1)
+	go func() { helperDone <- serveRenderedCaptureFixtureWithChallenge(listener) }()
+	service.SetBrowserCapture(config.BrowserCaptureConfig{
+		Enabled: true, Protocol: 2, Socket: listener.Addr().String(), RuntimeDir: runtimeDir,
+		Timeout: 2 * time.Second, NavigationTimeout: time.Second,
+		MaxFileBytes: 1024, MaxTotalBytes: 4096, MaxMediaFiles: 1, MaxMediaFileBytes: 1024, MaxMediaTotalBytes: 1024,
+	})
+	service.fetchPage = func(context.Context, string) (safefetch.Result, error) {
+		return safefetch.Result{}, errors.New("direct fetch failed")
+	}
+	if err := service.processWebBookmarkAttempt(t.Context(), "user-1", "bookmark-1", "https://example.com/article", "attempt-1", "Example", "", "example.com"); err == nil {
+		t.Fatal("rejected direct and rendered candidates unexpectedly succeeded")
+	}
+	if err := <-helperDone; err != nil {
+		t.Fatal(err)
+	}
+	var staged int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmark_media WHERE is_staged=1 AND deleted_at IS NULL`).Scan(&staged); err != nil {
+		t.Fatal(err)
+	}
+	if staged != 0 {
+		t.Fatalf("orphaned staged media=%d", staged)
+	}
+}
+
 func serveRenderedCaptureFixture(listener net.Listener, accepted chan<- struct{}, release <-chan struct{}) error {
+	return serveRenderedCaptureFixtureResponse(listener, accepted, release, false)
+}
+
+func serveRenderedCaptureFixtureWithChallenge(listener net.Listener) error {
+	return serveRenderedCaptureFixtureResponse(listener, nil, nil, true)
+}
+
+func serveRenderedCaptureFixtureResponse(listener net.Listener, accepted chan<- struct{}, release <-chan struct{}, challenge bool) error {
 	conn, err := listener.Accept()
 	if err != nil {
 		return err
@@ -325,16 +434,21 @@ func serveRenderedCaptureFixture(listener net.Listener, accepted chan<- struct{}
 	if release != nil {
 		<-release
 	}
-	htmlBody := "<article><p>Rendered evidence</p></article>"
+	htmlBody := `<article><p>Rendered evidence</p><figure><img src="https://example.com/image.png" alt="Example image"></figure></article>`
 	textBody := "Rendered evidence"
+	mediaBody := "png"
+	reasons := []string{}
+	if challenge {
+		reasons = []string{"challenge_detected"}
+	}
 	response := map[string]any{
 		"version": 2, "token": request.Token, "engine_version": "fixture-v2",
 		"metadata": map[string]any{"final_url": request.URL, "canonical_url": request.URL, "title": "Rendered title", "description": "Rendered description"},
 		"content": map[string]any{
 			"html": map[string]any{"mime": "text/html", "size": len(htmlBody)}, "text": map[string]any{"mime": "text/plain", "size": len(textBody)},
-			"quality_status": "complete", "quality_score": 80, "quality_reasons": []string{}, "challenge": false,
+			"quality_status": "complete", "quality_score": 80, "quality_reasons": reasons, "challenge": challenge,
 		},
-		"artifacts": []any{}, "media": []any{},
+		"artifacts": []any{}, "media": []any{map[string]any{"source_url": "https://example.com/image.png", "role": "reader_image", "width": 800, "height": 600, "mime": "image/png", "size": len(mediaBody)}},
 		"components": map[string]any{"browser": map[string]any{"status": "complete", "error_code": ""}, "readability": map[string]any{"status": "complete", "error_code": ""}},
 		"error_code": "",
 	}
@@ -343,7 +457,7 @@ func serveRenderedCaptureFixture(listener net.Listener, accepted chan<- struct{}
 		_, err = conn.Write(append(header, '\n'))
 	}
 	if err == nil {
-		_, err = io.WriteString(conn, htmlBody+textBody)
+		_, err = io.WriteString(conn, htmlBody+textBody+mediaBody)
 	}
 	return err
 }

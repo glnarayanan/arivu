@@ -1802,8 +1802,8 @@ func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID 
 	mergedTitle := preferString(keepTitle, dupTitle)
 	mergedDescription := preferString(keepDescription, dupDescription)
 	mergedFavicon := preferString(keepFavicon, dupFavicon)
-	mergedThumbnail := preferString(keepThumbnail, dupThumbnail)
-	mergedHTML := preferString(keepHTML, dupHTML)
+	mergedThumbnail := preferPortableMediaString(keepThumbnail, dupThumbnail)
+	mergedHTML := preferPortableMediaString(keepHTML, dupHTML)
 	mergedText := preferString(keepText, dupText)
 	mergedLast := maxTimeString(keepLast, dupLast)
 	mergedRead := keepRead.Bool || dupRead.Bool
@@ -1831,6 +1831,16 @@ func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID 
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM bookmarks WHERE id=? AND user_id=?`, deleteID, userID)
 	return err
+}
+
+func preferPortableMediaString(primary, secondary sql.NullString) string {
+	if primary.Valid && strings.TrimSpace(primary.String) != "" {
+		return primary.String
+	}
+	if secondary.Valid && !strings.Contains(secondary.String, "/api/media/") {
+		return secondary.String
+	}
+	return ""
 }
 
 func mergeSummary(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID string) error {
