@@ -1,6 +1,6 @@
 # OpenWiki Quickstart
 
-Welcome to **Arivu**, a secure, self-hosted bookmarking, semantic knowledge graph, and search engine. The core product is a low-dependency, high-performance, single-binary Go application with SQLite persistence and an embedded dependency-free web frontend. Operators can separately opt into the isolated browser-capture bundle for rendered preservation.
+Welcome to **Arivu**, a secure, self-hosted bookmarking, semantic knowledge graph, and search engine. The core product is a low-dependency, high-performance, single-binary Go application with SQLite persistence and an embedded dependency-free web frontend. The installer can additionally manage an isolated native browser-capture runtime for rendered preservation.
 
 This directory contains the project documentation for developers and AI
 assistants.
@@ -32,7 +32,9 @@ Use the following section pages to explore specific areas of the repository:
 
 ## Running and Developing
 
-Arivu's default direct-capture path runs completely from one compiled binary. Node, Chromium, Readability, JSDOM, and Monolith are required only when an operator explicitly deploys the isolated capture service.
+Arivu's direct-capture path runs completely from one compiled binary. The
+installer downloads and manages Node, Chromium, Readability, JSDOM, and Monolith
+only when complete capture is enabled; operators never install them manually.
 
 ### Local Verification
 

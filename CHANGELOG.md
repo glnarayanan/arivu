@@ -15,9 +15,12 @@ All notable changes to this project will be documented in this file.
   responsive figures, screenshots, PDFs, source responses, and self-contained
   HTML preservation. Offline previews are lazy, sandboxed, server-inerted, and
   capped separately from downloadable artifacts.
-- Added first-party Docker Compose and hardened systemd deployment definitions,
-  production capture dependency checks, and a checksummed release source bundle
-  while keeping the default Go binary and embedded frontend dependency-free.
+- Added installer-managed native capture artifacts for AMD64 and ARM64 with
+  streaming checksum verification, safe bounded extraction, dependency and
+  preflight checks, hardened systemd activation, opt-out/reconfigure controls,
+  bounded downloads, Ubuntu 22.04+/Debian 12+ native compatibility, and
+  transactional upgrade rollback. Operators never need Docker or npm, while the
+  Go binary and embedded frontend remain dependency-free.
 
 ## [1.3.0] - 2026-07-13
 

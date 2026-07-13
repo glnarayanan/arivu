@@ -5,13 +5,13 @@ Asset reconciliation runs at startup and hourly. Set `ARIVU_ASSET_GC_GRACE`
 objects are removed; referenced objects are never garbage-collected, and missing
 referenced content is reported in server logs without changing SQLite metadata.
 
-## Optional complete browser capture
+## Complete browser capture
 
-The default install remains the Go binary's bounded direct-HTTP path. Operators
-who want rendered pages, locally stored reader images, screenshots, PDFs, and a
-self-contained offline copy can opt into the isolated `capture/` service. It is
-the only production bundle that contains Node, Playwright/Chromium, Mozilla
-Readability, JSDOM, and Monolith.
+Fresh installer runs enable the isolated `capture/` service by default, with an
+explicit opt-out for core-only hosts. The Go binary's bounded direct-HTTP path
+remains the independent fallback and the complete runtime is the only production
+bundle that contains Node, Playwright/Chromium, Mozilla Readability, JSDOM, and
+Monolith.
 
 Capture is fully background and headless. It never opens a tab in the user's
 browser, never reads a browser profile, and never receives the user's cookies.
@@ -28,68 +28,41 @@ HTML or replace the last good copy. Self-contained HTML downloads remain raw;
 the in-app preview is separately transformed inert, placed in a scriptless
 sandbox, and limited to 8 MiB to bound DOM parsing memory.
 
-Recommended opt-in defaults are screenshot and self-contained HTML enabled,
-with PDF disabled because it adds substantial storage. The direct reader is
-available independently, and any browser or Monolith failure becomes a partial
-capture rather than losing successful evidence. Configure time, artifact,
-media, and per-user storage limits with `deploy/arivu.env-sample`.
+Fresh installer runs enable screenshot and self-contained HTML preservation by
+default; PDF stays off because of its storage cost. The installer asks before
+applying the plan, and `--browser-capture=false` keeps the pure Go direct-capture
+path. Complete capture supports Ubuntu 22.04+ and Debian 12+ on AMD64 and ARM64;
+older supported core-only hosts must opt out. Existing installations retain
+their current setting during reconfigure.
 
-### Docker Compose
+No Docker, npm, Node, Chromium, Rust, or Monolith setup is required from the
+operator. Tagged releases contain a checksummed, architecture-specific
+`arivu-capture-linux-<arch>.tar.gz` with the pinned runtime. `arivu-installer`:
 
-Docker is the simplest complete-capture deployment because the image contains
-the exact browser and Monolith versions without adding them to the app image:
+1. Streams and verifies the archive against the release `SHA256SUMS`.
+2. Rejects unsafe archive paths, links, unsupported entries, and size excesses.
+3. Installs only Chromium's required host libraries through the bundled,
+   approved Playwright runtime.
+4. Launch-checks Chromium and verifies Monolith 2.10.1 as the unprivileged
+   `arivu-capture` user.
+5. Atomically activates `/usr/local/lib/arivu-capture`, writes the hardened
+   systemd unit, starts capture before Arivu, and checks both services.
 
-```bash
-cd deploy
-ARIVU_BROWSER_CAPTURE_ENABLED=true docker compose --profile capture up -d --build
-docker compose ps
-```
-
-The containers share only the capture runtime volume. The capture container is
-non-root, read-only, capability-free, has no container network, and cannot read
-the SQLite or asset volume. Its only outbound path is the attempt-scoped Unix
-proxy owned by Arivu. Disabling the feature is reversible:
-
-```bash
-docker compose stop capture
-# restart the app with ARIVU_BROWSER_CAPTURE_ENABLED=false
-```
-
-Existing reader content and preserved files remain available.
-
-### Manual systemd
-
-Manual hosts should use the checksummed `arivu-capture-bundle.tgz` from the
-matching release. Verify it through `SHA256SUMS`, install Node 22.13.0 or newer,
-extract the bundle under `/usr/local/lib/arivu-capture`, and install from the
-lockfile. Install the lockfile-selected Chromium in a service-readable fixed
-path and install its host libraries; do not rely on a root user's cache:
+`sudo arivu-installer upgrade` updates the app, installer, and enabled capture
+runtime from the same release. Activation failure restores all prior artifacts
+and restarts the previous services. Use reconfigure to change the choice:
 
 ```bash
-cd /usr/local/lib/arivu-capture
-sudo npm ci --omit=dev
-sudo env PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers \
-  npx playwright install --with-deps chromium
+sudo arivu-installer reconfigure                  # interactive
+sudo arivu-installer reconfigure --browser-capture=false
+sudo arivu-installer reconfigure --browser-capture=true
+sudo arivu-installer status
 ```
 
-Install Monolith 2.10.1 at `/usr/local/lib/arivu-capture/monolith`, verify
-`monolith --version`, and then:
-
-```bash
-sudo useradd --system --no-create-home --gid arivu --shell /usr/sbin/nologin arivu-capture
-sudo install -m 0644 arivu-capture.service /etc/systemd/system/arivu-capture.service
-sudo systemctl daemon-reload
-sudo systemctl enable --now arivu-capture
-sudo systemctl status arivu-capture --no-pager
-```
-
-Copy the protocol-v2 variables from `deploy/arivu.env-sample` into
-`/etc/arivu/arivu.env`, enable capture only after the helper is healthy, and
-restart `arivu.service`. The unit uses a private network namespace: Chromium can
-use its local relay and Unix sockets, while only Arivu owns external egress.
-The helper fails startup if Chromium is unavailable or Monolith is not exactly
-2.10.1, so an active unit or healthy container represents the complete runtime,
-not merely an existing socket.
+Disabling capture removes its systemd unit and bundled runtime but preserves
+existing reader content and saved artifacts. The default direct reader remains
+available independently, and browser or Monolith failure becomes a partial
+capture rather than discarding successful evidence.
 
 Arivu’s primary self-hosting path is the first-party installer CLI. It prepares
 a Linux VPS end to end, while preserving unrelated apps on shared hosts.
@@ -120,6 +93,7 @@ The installer asks for:
 - Proxy mode.
 - Signup policy.
 - Backup policy.
+- Complete browser capture policy.
 - Optional provider settings later through Admin > Settings.
 
 ## Shared VPS Behavior
@@ -187,7 +161,8 @@ sudo arivu-installer uninstall
 
 Release builds inject the Git tag into both binaries. A packaged release should
 report the same tag for the application and installer; `devel` is reserved for
-untagged local builds. Install and upgrade write app and installer binaries with
+untagged local builds. Releases also publish a native capture runtime for each
+supported architecture. Install and upgrade write app and installer binaries with
 explicit mode `0755` so a restrictive root umask cannot leave them
 non-executable. If an upgrade health check fails, the installer rolls back the
 previous binaries and includes best-effort `systemctl status` / `journalctl`
@@ -210,10 +185,12 @@ On a root-managed reconfigure, turning backups off also disables the existing
 
 - `/usr/local/bin/arivu`
 - `/usr/local/bin/arivu-installer`
+- `/usr/local/lib/arivu-capture/` when complete capture is enabled
 - `/etc/arivu/arivu.env`
 - `/var/lib/arivu/arivu.sqlite3`
 - `/var/backups/arivu/`
 - `/etc/systemd/system/arivu.service`
+- `/etc/systemd/system/arivu-capture.service` when enabled
 - `/etc/systemd/system/arivu-backup.service`
 - `/etc/systemd/system/arivu-backup.timer`
 

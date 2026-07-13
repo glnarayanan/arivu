@@ -24,18 +24,18 @@ X are called through narrow direct HTTP clients.
   `go version -m` build info, `go list -m -json all` module inventory, and
   SHA-256 checksums. This keeps artifact provenance inspectable without adding
   a production dependency or a separate SBOM generator.
-- Release tags publish Linux AMD64 and ARM64 `arivu` and `arivu-installer`
-  binaries, the bootstrap `install.sh`, build info, module inventory,
-  `SHA256SUMS`, and GitHub artifact provenance attestations.
+- Release tags publish Linux AMD64 and ARM64 `arivu`, `arivu-installer`, and
+  native capture runtime artifacts, plus the bootstrap `install.sh`, build
+  info, module inventory, `SHA256SUMS`, and provenance attestations.
 - The bootstrap installer verifies release `SHA256SUMS` before executing
   `arivu-installer`. The installer verifies the Arivu binary checksum before
   replacing `/usr/local/bin/arivu`. Release attestations are still published for
   independent verification, but the target host does not need GitHub CLI auth.
 - CI runs first-party browser JavaScript syntax checks and the extension
-  URL/origin self-test with the GitHub runner's bundled Node runtime; Arivu
+  URL/origin self-test with the workflow's pinned Node runtime; Arivu
   still ships no npm dependency tree.
-- Dependabot monitors Go modules, GitHub Actions, capture npm packages, and both
-  production Dockerfiles weekly.
+- Dependabot monitors Go modules, GitHub Actions, and capture npm packages
+  weekly.
 - The scheduled documentation workflow pins both the OpenWiki CLI version and
   the third-party pull-request action commit; generated documentation may
   update ordinary `openwiki/` pages and the lean `AGENTS.md`, but cannot rewrite
@@ -72,6 +72,12 @@ HTML DOM, and a self-contained archive engine are materially harder and less
 safe to recreate in the core application. CI installs from the lockfile, runs
 the capture protocol suite, and audits production npm dependencies. Updates
 require explicit approval plus security, integration, and capture-corpus review.
+Production releases bundle the pinned Node executable, Playwright Chromium,
+node modules, and Monolith into one architecture-specific archive. The installer
+is the only supported production lifecycle: it verifies, installs, upgrades,
+disables, and rolls back that archive without exposing npm or Docker to users.
+Both architectures build on the declared Ubuntu 22.04 compatibility baseline,
+matching the complete runtime's Ubuntu 22.04+ and Debian 12+ support policy.
 
 ## Adding A Dependency
 
