@@ -47,6 +47,8 @@ var blockedPrefixes = []netip.Prefix{
 	netip.MustParsePrefix("ff00::/8"),
 }
 
+var outboundDialer = &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
+
 const (
 	MaxBodyBytes     = 10 << 20
 	DefaultUserAgent = "Arivu/2.0"
@@ -154,24 +156,7 @@ func NewWithUserAgent(userAgent string) *Client {
 	if userAgent == "" {
 		userAgent = DefaultUserAgent
 	}
-	dialer := &net.Dialer{Timeout: 10 * time.Second, KeepAlive: 30 * time.Second}
-	transport := &http.Transport{
-		Proxy: nil,
-		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			host, port, err := net.SplitHostPort(address)
-			if err != nil {
-				return nil, err
-			}
-			ip, err := resolveSafe(ctx, host)
-			if err != nil {
-				return nil, err
-			}
-			return dialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
-		},
-		TLSHandshakeTimeout:   10 * time.Second,
-		ResponseHeaderTimeout: 15 * time.Second,
-		IdleConnTimeout:       30 * time.Second,
-	}
+	transport := newSafeTransport()
 	return &Client{http: &http.Client{
 		Transport: transport,
 		Timeout:   RequestTimeout,
@@ -182,6 +167,28 @@ func NewWithUserAgent(userAgent string) *Client {
 			return ValidateURL(req.URL.String())
 		},
 	}, userAgent: userAgent}
+}
+
+func newSafeTransport() *http.Transport {
+	return &http.Transport{
+		Proxy:                 nil,
+		DialContext:           safeDialContext,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ResponseHeaderTimeout: 15 * time.Second,
+		IdleConnTimeout:       30 * time.Second,
+	}
+}
+
+func safeDialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil, err
+	}
+	ip, err := resolveSafe(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	return outboundDialer.DialContext(ctx, network, net.JoinHostPort(ip.String(), port))
 }
 
 func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
