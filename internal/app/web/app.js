@@ -41,14 +41,14 @@ const routes = [
   { prefix: "/dashboard", page: () => compatibilityRedirect("/library", { view: "capture" }), access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
   { prefix: "/inbox", page: () => compatibilityRedirect("/library", { view: "inbox", stage: "inbox" }), access: "protected" },
-  { prefix: "/focus", page: () => compatibilityRedirect("/today", { view: "focus" }), access: "protected" },
+  { prefix: "/focus", page: focusCompatibilityRedirect, access: "protected" },
   { prefix: "/assistant", page: () => compatibilityRedirect("/search", { mode: "ask", review: "actions" }), access: "protected" },
   { prefix: "/notes/", page: notesPage, access: "protected" },
   { prefix: "/notes", page: notesPage, access: "protected" },
   { prefix: "/objects", page: () => compatibilityRedirect("/library", { type: "knowledge_object" }), access: "protected" },
   { prefix: "/evolution", page: () => compatibilityRedirect("/insights", { family: "changed_thinking", legacy: "evolution" }), access: "protected" },
-  { prefix: "/board", page: () => compatibilityRedirect("/today", { view: "board" }), access: "protected" },
-  { prefix: "/review", page: () => compatibilityRedirect("/today", { view: "review" }), access: "protected" },
+  { prefix: "/board", page: () => homeViewRedirect("board"), access: "protected" },
+  { prefix: "/review", page: () => homeViewRedirect("review"), access: "protected" },
   { prefix: "/duplicates", page: () => compatibilityRedirect("/library", { management: "duplicates" }), access: "protected" },
   { prefix: "/settings", page: settingsPage, access: "protected" },
   { prefix: "/imports", page: () => navigate("/settings?section=import", true), access: "protected" },
@@ -63,6 +63,20 @@ function compatibilityRedirect(path, defaults = {}) {
     if (!params.has(key)) params.set(key, value);
   });
   navigate(`${path}${params.size ? `?${params}` : ""}`, true);
+}
+
+function homeViewRedirect(view) {
+  const params = new URLSearchParams(location.search);
+  params.set("view", view);
+  navigate(`/today?${params}`, true);
+}
+
+function focusCompatibilityRedirect() {
+  const params = new URLSearchParams(location.search);
+  const legacyFilter = params.get("view");
+  params.set("view", "focus");
+  if (["pending", "overdue", "today", "upcoming", "completed"].includes(legacyFilter)) params.set("focus", legacyFilter);
+  navigate(`/today?${params}`, true);
 }
 
 async function api(path, options = {}) {
@@ -740,14 +754,9 @@ async function todayPage() {
   const openActions = (actions.action_items || []).filter((item) => item.status !== "completed").slice(0, 6);
   const dueReminders = (reminders.reminders || []).filter((item) => item.status !== "completed" && ["overdue", "today"].includes(item.due_state)).slice(0, 6);
   const note = daily.daily_note || { body: "" };
-  setRoot(shell("Home", `
-    <nav class="view-tabs" aria-label="Home views">
-      <a href="/today" aria-current="page">Pulse</a>
-      <a href="/today?view=focus">Focus</a>
-      <a href="/today?view=review">Review</a>
-      <a href="/today?view=board">Board</a>
-    </nav>
-    <section class="split">
+  setRoot(shell("Home", `<div class="home-view home-pulse">
+    ${homeViewTabs("pulse")}
+    <section class="home-overview">
       <form class="panel form" id="daily-note-form">
         <span class="meta">${escapeHTML(date)}</span>
         <h2>Daily note</h2>
@@ -755,43 +764,45 @@ async function todayPage() {
         <p class="form-message" id="daily-note-message" data-form-message hidden></p>
         <button type="submit">Save daily note</button>
       </form>
-      <section class="panel">
-        <span class="meta">Knowledge pulse</span>
-        <h2>${Number((inbox.counts || {}).inbox || 0)} new · ${openActions.length + dueReminders.length} active · ${(review.items || []).length} worth revisiting</h2>
-        <p>Continue a thread, revisit a useful memory, and notice what your recent material is beginning to connect.</p>
-        <div class="chips">
-          <a href="/library?view=capture">Capture</a>
-          <a href="/library?stage=inbox">Triage</a>
-          <a href="/today?view=focus">Continue</a>
-          <a href="/today?view=review">Review</a>
-        </div>
-      </section>
+      <div class="home-overview-rail stack">
+        <section class="panel">
+          <span class="meta">Knowledge pulse</span>
+          <h2>${Number((inbox.counts || {}).inbox || 0)} new · ${openActions.length + dueReminders.length} active · ${(review.items || []).length} worth revisiting</h2>
+          <p>Continue a thread, revisit a useful memory, and notice what your recent material is beginning to connect.</p>
+          <div class="chips">
+            <a href="/library?view=capture">Capture</a>
+            <a href="/library?stage=inbox">Triage</a>
+            <a href="/today?view=focus">Continue</a>
+            <a href="/today?view=review">Review</a>
+          </div>
+        </section>
+        ${memoryCard(memory)}
+        <section class="panel">
+          <h2>Fast capture</h2>
+          <p>Save a link, note, quote, or file without deciding where it belongs first.</p>
+          <div class="chips">
+            <a href="/library?view=capture">Capture</a>
+            <a href="/notes">New note</a>
+            <a href="/search?mode=ask">Ask Arivu</a>
+          </div>
+        </section>
+      </div>
     </section>
-    <section class="split">
-      ${todayList("New captures", inbox.items || [], "/library?stage=inbox", todayInboxItem)}
-      ${todayList("Continue thinking", [...openActions, ...dueReminders].slice(0, 8), "/today?view=focus", todayWorkItem)}
+    <section class="home-pulse-grid">
+      <div class="home-primary stack">
+        ${todayList("New captures", inbox.items || [], "/library?stage=inbox", todayInboxItem)}
+        ${todayList("Worth revisiting", review.items || [], "/today?view=review", todayReviewItem)}
+      </div>
+      <div class="home-sidebar stack">
+        ${todayList("Continue thinking", [...openActions, ...dueReminders].slice(0, 8), "/today?view=focus", todayWorkItem)}
+        <section class="panel">
+          <h2>Recent notes</h2>
+          ${todayListBody((notes.notes || []).slice(0, 5), todayNoteItem)}
+          <p><a class="text-link" href="/notes">Open notes</a></p>
+        </section>
+      </div>
     </section>
-    <section class="split">
-      ${todayList("Worth revisiting", review.items || [], "/today?view=review", todayReviewItem)}
-      <section class="panel">
-        <h2>Recent notes</h2>
-        ${todayListBody((notes.notes || []).slice(0, 5), todayNoteItem)}
-        <p><a class="text-link" href="/notes">Open notes</a></p>
-      </section>
-    </section>
-    <section class="split">
-      ${memoryCard(memory)}
-      <section class="panel">
-        <h2>Fast capture</h2>
-        <p>Save a link, note, quote, or file without deciding where it belongs first.</p>
-        <div class="chips">
-          <a href="/library?view=capture">Capture</a>
-          <a href="/notes">New note</a>
-          <a href="/search?mode=ask">Ask Arivu</a>
-        </div>
-      </section>
-    </section>
-  `));
+  </div>`));
   const form = document.querySelector("#daily-note-form");
   bindVoiceCapture();
   form.addEventListener("submit", async (event) => {
@@ -809,6 +820,16 @@ async function todayPage() {
       done();
     }
   });
+}
+
+function homeViewTabs(active) {
+  const views = [
+    ["pulse", "Pulse", "/today"],
+    ["focus", "Focus", "/today?view=focus"],
+    ["review", "Review", "/today?view=review"],
+    ["board", "Board", "/today?view=board"],
+  ];
+  return `<nav class="view-tabs" aria-label="Home views">${views.map(([id, label, href]) => `<a href="${href}"${id === active ? ` aria-current="page"` : ""}>${label}</a>`).join("")}</nav>`;
 }
 
 function localDateKey(value = new Date()) {
@@ -1700,15 +1721,16 @@ function saveItemState(itemID, stage, importance, nextAction) {
 async function focusPage() {
   await requireUser();
   const params = new URLSearchParams(location.search);
-  const view = params.get("view") || "pending";
+  const view = params.get("focus") || (location.pathname === "/focus" ? params.get("view") : "") || "pending";
   const [actions, reminders] = await Promise.all([
     api("/action-items?status=all"),
     api("/reminders?status=all"),
   ]);
   const actionItems = focusActionFilter(actions.action_items || [], view);
   const reminderItems = focusReminderFilter(reminders.reminders || [], view);
-  setRoot(shell("Focus", `
-    <section class="split">
+  setRoot(shell("Focus", `<div class="home-view focus-view">
+    ${homeViewTabs("focus")}
+    <section class="focus-overview">
       <section class="panel">
         <span class="meta">${escapeHTML(focusViewLabel(view))}</span>
         <h2>${actionItems.length + reminderItems.length} tasks and reminders</h2>
@@ -1718,17 +1740,15 @@ async function focusPage() {
         <h2>Queue</h2>
         <div class="chips">
           <a href="/inbox?stage=processing">Working</a>
-          <a href="/review">Review</a>
+          <a href="/today?view=review">Review</a>
           <a href="/assistant">Assistant</a>
         </div>
       </section>
     </section>
-    <section class="panel">
-      <div class="chips stage-tabs">
-        ${["pending", "overdue", "today", "upcoming", "completed"].map((name) => `<a class="${name === view ? "active" : ""}" ${name === view ? `aria-current="page"` : ""} href="/focus?view=${name}">${escapeHTML(focusViewLabel(name))}</a>`).join("")}
-      </div>
-    </section>
-    <section class="split">
+    <nav class="chips stage-tabs focus-filters" aria-label="Focus filters">
+      ${["pending", "overdue", "today", "upcoming", "completed"].map((name) => `<a class="${name === view ? "active" : ""}" ${name === view ? `aria-current="page"` : ""} href="/today?view=focus&amp;focus=${name}">${escapeHTML(focusViewLabel(name))}</a>`).join("")}
+    </nav>
+    <section class="focus-columns">
       <section class="panel">
         <h2>Action items</h2>
         ${focusActionItems(actionItems, view)}
@@ -1738,7 +1758,7 @@ async function focusPage() {
         ${focusReminders(reminderItems, view)}
       </section>
     </section>
-  `));
+  </div>`));
   bindActionItemControls();
   bindReminderControls();
 }
@@ -2532,25 +2552,27 @@ function evolutionItem(item) {
 async function boardPage() {
   await requireUser();
   const board = await api("/today-board");
-  setRoot(shell("Board", `
-    <section class="board-grid">
-      ${(board.columns || []).map(boardColumn).join("")}
-    </section>
-  `));
+  setRoot(shell("Board", `<div class="home-view board-view">
+    ${homeViewTabs("board")}
+    <div class="board-scroller" role="region" aria-label="Knowledge workflow board" tabindex="0">
+      <section class="board-grid">
+        ${(board.columns || []).map(boardColumn).join("")}
+      </section>
+    </div>
+  </div>`));
 }
 
 function boardColumn(column) {
   const items = column.items || [];
   return `<section class="panel board-column">
-    <span class="meta">${items.length} items</span>
-    <h2>${escapeHTML(column.title || "Column")}</h2>
-    <div class="stack">${items.map(boardItem).join("") || `<p class="meta">Nothing here.</p>`}</div>
+    <header class="board-column-header"><span class="meta">${items.length} items</span><h2>${escapeHTML(column.title || "Column")}</h2></header>
+    <div class="stack board-column-items">${items.map(boardItem).join("") || `<p class="meta">Nothing here.</p>`}</div>
   </section>`;
 }
 
 function boardItem(item) {
   const href = item.href || (item.item_type === "note" ? `/notes/${encodeURIComponent(item.id)}` : item.item_type === "bookmark" ? `/bookmark/${encodeURIComponent(item.id)}` : "/objects");
-  return `<article class="annotation compact-object">
+  return `<article class="annotation compact-object board-item">
     <p><strong>${escapeHTML(item.title || "Untitled")}</strong></p>
     <p class="meta">${escapeHTML(item.item_type || item.object_type || "object")} ${item.next_action ? `· ${escapeHTML(item.next_action)}` : ""}</p>
     <p>${escapeHTML(item.description || item.body || "")}</p>
@@ -4278,8 +4300,9 @@ async function reviewPage() {
     api("/review?limit=12"),
     api("/memory-jogger").catch(() => ({ has_memory: false })),
   ]);
-  setRoot(shell("Review", `
-    <section class="split">
+  setRoot(shell("Review", `<div class="home-view review-view">
+    ${homeViewTabs("review")}
+    <section class="review-overview">
       ${memoryCard(memory)}
       <section class="panel">
         <span class="meta">Daily review</span>
@@ -4287,10 +4310,10 @@ async function reviewPage() {
         <p>Complete what is useful, snooze what needs time, archive what should stop coming back for review.</p>
       </section>
     </section>
-    <section class="grid" aria-label="Review queue">
+    <section class="review-grid" aria-label="Review queue">
       ${(queue.items || []).map(reviewCard).join("") || emptyState({ eyebrow: "Clear", title: "No review items due", body: "Arivu will bring older or high-signal saves back when they are ready." })}
     </section>
-  `));
+  </div>`));
   document.querySelectorAll("[data-review-complete]").forEach((button) => {
     button.addEventListener("click", () => reviewAction(button, "complete"));
   });

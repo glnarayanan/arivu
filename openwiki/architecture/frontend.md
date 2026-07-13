@@ -60,7 +60,9 @@ canonical destination:
 - `/knowledge-graph` -> `/graph`
 - `/analytics` -> `/insights`
 - `/inbox` -> `/library?view=inbox&stage=inbox`
-- `/focus`, `/review`, `/board` -> matching `/today?view=...` contexts
+- `/focus`, `/review`, `/board` -> matching `/today?view=...` contexts. Legacy
+  Focus `view` filters are translated to the canonical `focus` query parameter
+  so they do not collide with the Home context selector.
 - `/assistant` -> `/search?mode=ask&review=actions`
 - `/objects` -> `/library?type=knowledge_object`
 - `/evolution` -> the changed-thinking Insights context with the existing

@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Fixed Home so Pulse, Focus, Review, and Board keep their shared navigation;
+  separated Focus status filters from Home routing; improved Pulse and Review
+  spacing; and restored Board as a horizontally scrollable Kanban layout.
 - Added owner-scoped nested collections with ordered siblings, safe moves and
   cycle prevention, non-recursive deletion, and hierarchy-aware backup restore.
 - Added an opt-in, dependency-free browser preservation helper boundary with

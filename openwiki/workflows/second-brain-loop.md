@@ -60,7 +60,9 @@ Home (`/today`) is the daily knowledge pulse. It keeps the dated daily note and
 surfaces new material, active work, review candidates, recent notes, and a
 memory. Focus, Review, and Board remain contextual Home views, and Inbox remains
 a contextual Library view. Their existing APIs, tasks, reminders, completion,
-snooze, and triage behavior are preserved.
+snooze, and triage behavior are preserved. The four Home contexts retain one
+shared view switcher; Focus keeps its status filters within that context, while
+Board presents the workflow as horizontally scrollable Kanban lanes.
 
 ## No-Provider Guarantee
 

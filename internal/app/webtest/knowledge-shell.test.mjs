@@ -36,6 +36,28 @@ test("keeps legacy deep links as explicit query-preserving aliases", () => {
     assert.match(app, new RegExp(`prefix: ["']/${route.replace("-", "\\-")}["']`));
   assert.ok(app.includes("function compatibilityRedirect"));
   assert.ok(app.includes("new URLSearchParams(location.search)"));
+  assert.ok(app.includes("function focusCompatibilityRedirect()"));
+  assert.ok(app.includes('params.set("focus", legacyFilter)'));
+  assert.ok(app.includes('page: () => homeViewRedirect("review")'));
+  assert.ok(app.includes('page: () => homeViewRedirect("board")'));
+});
+
+test("keeps Home navigation and purpose-built layouts across every view", () => {
+  for (const active of ["pulse", "focus", "review", "board"])
+    assert.ok(app.includes(`homeViewTabs("${active}")`), `missing Home tabs for ${active}`);
+  for (const contract of [
+    '["pulse", "Pulse", "/today"]',
+    '["focus", "Focus", "/today?view=focus"]',
+    '["review", "Review", "/today?view=review"]',
+    '["board", "Board", "/today?view=board"]',
+  ]) assert.ok(app.includes(contract), `missing Home tab contract: ${contract}`);
+  assert.ok(app.includes('params.get("focus")'));
+  assert.ok(app.includes('href="/today?view=focus&amp;focus=${name}"'));
+  assert.ok(app.includes('class="review-grid" aria-label="Review queue"'));
+  assert.ok(app.includes('class="board-scroller" role="region" aria-label="Knowledge workflow board" tabindex="0"'));
+  assert.match(styles, /\.review-grid \{\s+display: grid;\s+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(styles, /\.board-grid \{[\s\S]*?grid-auto-flow: column;[\s\S]*?grid-auto-columns: minmax\(280px, 320px\);/);
+  assert.match(styles, /\.home-pulse-grid \{\s+display: grid;\s+grid-template-columns: minmax\(0, 1\.35fr\) minmax\(280px, 0\.65fr\);/);
 });
 
 test("uses additive knowledge APIs and approachable object fields", () => {
