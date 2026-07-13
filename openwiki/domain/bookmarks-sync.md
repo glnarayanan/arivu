@@ -10,8 +10,10 @@ Saving a bookmark initiates several processing stages to build a structured grap
 
 1. **Extraction**: `safefetch` validates URLs, enforces SSRF and size limits,
    removes chrome, and records complete, partial, metadata-only, or failed
-   evidence with stable reasons. Source-native X evidence and linked articles
-   remain separate; generic scraping cannot overwrite higher-authority text.
+   evidence with stable reasons. When the isolated capture service is enabled,
+   headless Chromium and Readability can contribute rendered evidence and local
+   reader images. Deterministic authority and quality rules choose the result;
+   a challenge page cannot overwrite stronger direct or source-native evidence.
 2. **Analysis**: Selected evidence drives bounded summaries, extractive
    highlights, and supported phrase-level semantics. Short evidence may produce
    only a sentence; metadata-only or failed evidence produces no synthetic

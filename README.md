@@ -50,6 +50,9 @@ Existing product deep links remain compatibility routes.
 - Outbound fetching is SSRF-shielded, archived HTML is sanitized on the backend,
   and provider integrations use direct HTTP clients for model providers, Resend,
   and X.
+- Complete rendered preservation is an operator opt-in: a separate headless
+  capture service can add local reader images, screenshots, PDFs, and an offline
+  page without putting Node or browser dependencies in the core application.
 
 ## Quick Start
 
@@ -127,6 +130,13 @@ docker run --rm \
 ```
 
 A Compose sample is available at `deploy/compose.yaml`.
+
+To include the isolated complete-capture service:
+
+```bash
+cd deploy
+ARIVU_BROWSER_CAPTURE_ENABLED=true docker compose --profile capture up -d --build
+```
 
 ## Migration
 

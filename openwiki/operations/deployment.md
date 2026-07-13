@@ -5,31 +5,91 @@ Asset reconciliation runs at startup and hourly. Set `ARIVU_ASSET_GC_GRACE`
 objects are removed; referenced objects are never garbage-collected, and missing
 referenced content is reported in server logs without changing SQLite metadata.
 
-## Optional browser preservation helper
+## Optional complete browser capture
 
-Arivu does not bundle Chromium, Playwright, Node, or a browser. Operators may opt
-in with `ARIVU_BROWSER_CAPTURE_ENABLED=true` and an absolute executable path in
-`ARIVU_BROWSER_CAPTURE_COMMAND`. The executable receives one bounded JSON v1
-request on stdin (`url`, private `output_dir`, random `token`, requested
-`formats`, and byte limits) and must return one JSON v1 response containing the
-same token and an `artifacts` array of relative `path`, `type`, and `mime`.
-Allowed pairs are `self_contained_html`/`text/html`, `screenshot`/`image/png`,
-and `pdf`/`application/pdf`. HTML is download-only. Screenshot and PDF requests
-are made only when their separate operator flags are true.
+The default install remains the Go binary's bounded direct-HTTP path. Operators
+who want rendered pages, locally stored reader images, screenshots, PDFs, and a
+self-contained offline copy can opt into the isolated `capture/` service. It is
+the only production bundle that contains Node, Playwright/Chromium, Mozilla
+Readability, JSDOM, and Monolith.
 
-The helper contract requires a fresh isolated browser context for each request,
-with no ambient cookies, credentials, extensions, proxy credentials, or shared
-cache. It must validate and intercept **every navigation, redirect, iframe,
-worker, websocket, and subresource request**, resolve DNS, and block loopback,
-private, link-local, multicast, local/localhost, metadata-service, and other
-non-public destinations (including DNS rebinding). Arivu validates the initial
-public HTTP(S) URL and strictly confines/limits returned files, but **cannot
-independently verify a third-party helper's internal interception**. Only deploy
-an audited helper in a sandbox with restricted network/filesystem privileges.
+Capture is fully background and headless. It never opens a tab in the user's
+browser, never reads a browser profile, and never receives the user's cookies.
+For every attempt Arivu creates an authenticated Unix-socket egress proxy;
+Chromium and Monolith can reach the network only through that proxy. The Go
+process performs public-address validation, DNS-rebinding protection, redirect
+checks, response limits, and aggregate byte accounting.
 
-Helper failure after direct HTTP capture marks the attempt partial; the normal
-sanitized reader remains available. Configure timeout and per-file/aggregate
-limits with the variables shown in `deploy/arivu.env-sample`.
+Protocol v2 returns rendered reader HTML/text, metadata, component status,
+bounded artifacts, and bounded reader images over one Unix socket. Arivu
+validates the entire manifest before ingesting any payload. Media and evidence
+activate as one staged batch, so a failed retry cannot leave half-updated reader
+HTML or replace the last good copy. Self-contained HTML downloads remain raw;
+the in-app preview is separately transformed inert, placed in a scriptless
+sandbox, and limited to 8 MiB to bound DOM parsing memory.
+
+Recommended opt-in defaults are screenshot and self-contained HTML enabled,
+with PDF disabled because it adds substantial storage. The direct reader is
+available independently, and any browser or Monolith failure becomes a partial
+capture rather than losing successful evidence. Configure time, artifact,
+media, and per-user storage limits with `deploy/arivu.env-sample`.
+
+### Docker Compose
+
+Docker is the simplest complete-capture deployment because the image contains
+the exact browser and Monolith versions without adding them to the app image:
+
+```bash
+cd deploy
+ARIVU_BROWSER_CAPTURE_ENABLED=true docker compose --profile capture up -d --build
+docker compose ps
+```
+
+The containers share only the capture runtime volume. The capture container is
+non-root, read-only, capability-free, has no container network, and cannot read
+the SQLite or asset volume. Its only outbound path is the attempt-scoped Unix
+proxy owned by Arivu. Disabling the feature is reversible:
+
+```bash
+docker compose stop capture
+# restart the app with ARIVU_BROWSER_CAPTURE_ENABLED=false
+```
+
+Existing reader content and preserved files remain available.
+
+### Manual systemd
+
+Manual hosts should use the checksummed `arivu-capture-bundle.tgz` from the
+matching release. Verify it through `SHA256SUMS`, install Node 22.13.0 or newer,
+extract the bundle under `/usr/local/lib/arivu-capture`, and install from the
+lockfile. Install the lockfile-selected Chromium in a service-readable fixed
+path and install its host libraries; do not rely on a root user's cache:
+
+```bash
+cd /usr/local/lib/arivu-capture
+sudo npm ci --omit=dev
+sudo env PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers \
+  npx playwright install --with-deps chromium
+```
+
+Install Monolith 2.10.1 at `/usr/local/lib/arivu-capture/monolith`, verify
+`monolith --version`, and then:
+
+```bash
+sudo useradd --system --no-create-home --gid arivu --shell /usr/sbin/nologin arivu-capture
+sudo install -m 0644 arivu-capture.service /etc/systemd/system/arivu-capture.service
+sudo systemctl daemon-reload
+sudo systemctl enable --now arivu-capture
+sudo systemctl status arivu-capture --no-pager
+```
+
+Copy the protocol-v2 variables from `deploy/arivu.env-sample` into
+`/etc/arivu/arivu.env`, enable capture only after the helper is healthy, and
+restart `arivu.service`. The unit uses a private network namespace: Chromium can
+use its local relay and Unix sockets, while only Arivu owns external egress.
+The helper fails startup if Chromium is unavailable or Monolith is not exactly
+2.10.1, so an active unit or healthy container represents the complete runtime,
+not merely an existing socket.
 
 Arivu’s primary self-hosting path is the first-party installer CLI. It prepares
 a Linux VPS end to end, while preserving unrelated apps on shared hosts.
@@ -304,7 +364,7 @@ curl -fsS http://127.0.0.1:8080/api/health
 Backups now include the SQLite snapshot, adjacent asset directory, and a
 versioned size/SHA-256 manifest. Restore verifies a present manifest before
 activation; backups made by older releases without a manifest remain accepted.
-Browser preservation stays disabled unless its explicitly isolated helper and
+Browser preservation stays disabled unless its isolated capture service and
 limits are configured.
 
 Docker remains an advanced/manual path.

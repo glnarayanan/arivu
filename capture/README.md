@@ -11,6 +11,10 @@ extracts a reader projection with Mozilla Readability and JSDOM, optionally
 creates a JPEG screenshot and PDF, and passes the rendered DOM through Monolith
 for a self-contained HTML archive.
 
+Startup fails closed unless the lockfile-selected Chromium launches and
+Monolith reports exactly version 2.10.1. Container health rechecks the immutable
+executables and verifies that the service socket accepts connections.
+
 ## Approved production dependencies
 
 Direct package versions are exact in `package.json` and `package-lock.json`:
@@ -32,6 +36,7 @@ The service requires:
 ARIVU_CAPTURE_SOCKET=/run/arivu-capture/helper.sock
 ARIVU_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts
 ARIVU_MONOLITH_PATH=/usr/local/lib/arivu-capture/monolith
+PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers
 node capture/src/index.mjs
 ```
 
@@ -80,4 +85,36 @@ ARIVU_CAPTURE_INTEGRATION=1 go test ./internal/browsercapture \
 
 The integration test uses a deterministic Monolith test double. Release and
 installer validation must additionally exercise the pinned Linux Monolith
-binary and the synthetic capture corpus.
+binary. The default Node suite includes a deterministic capture corpus for
+static articles, post-JavaScript DOMs, metadata/figures, reader-media URL
+handling, and challenge detection.
+
+## Container deployment
+
+The first-party image builds Monolith from the exact locked crate version and
+installs Chromium from Playwright's lockfile-selected runtime:
+
+```sh
+docker build -t arivu-capture:local capture
+ARIVU_BROWSER_CAPTURE_ENABLED=true docker compose -f deploy/compose.yaml --profile capture up -d --build
+```
+
+The app and helper share only `/run/arivu-capture`. The helper container is
+non-root, read-only, capability-free, has no container network, and has no
+access to Arivu's database or asset volume. Its browser is headless; there is
+no host display or user browser profile to open.
+
+## Manual systemd deployment
+
+Use the checksummed `arivu-capture-bundle.tgz` from the same Arivu release. The
+host must provide Node 22.13.0 or newer and a Monolith 2.10.1 executable.
+Extract the bundle at `/usr/local/lib/arivu-capture`, run
+`npm ci --omit=dev`, then install Chromium and its host libraries with
+`PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers npx playwright install --with-deps chromium`.
+Install Monolith at `/usr/local/lib/arivu-capture/monolith` and verify its
+reported version before enabling the unit.
+
+Create `arivu-capture` as an unprivileged system user in the existing `arivu`
+group, then install the bundled `arivu-capture.service`. Enable the helper before
+setting `ARIVU_BROWSER_CAPTURE_ENABLED=true`; this keeps a missing optional
+runtime from degrading ordinary direct capture.

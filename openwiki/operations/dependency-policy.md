@@ -1,4 +1,4 @@
-# Rewrite Dependency Policy
+# Dependency Policy
 
 The rewrite minimizes supply-chain surface by defaulting to the Go standard
 library and first-party browser code.
@@ -34,7 +34,8 @@ X are called through narrow direct HTTP clients.
 - CI runs first-party browser JavaScript syntax checks and the extension
   URL/origin self-test with the GitHub runner's bundled Node runtime; Arivu
   still ships no npm dependency tree.
-- Dependabot monitors Go modules and GitHub Actions weekly.
+- Dependabot monitors Go modules, GitHub Actions, capture npm packages, and both
+  production Dockerfiles weekly.
 - The scheduled documentation workflow pins both the OpenWiki CLI version and
   the third-party pull-request action commit; generated documentation may
   update ordinary `openwiki/` pages and the lean `AGENTS.md`, but cannot rewrite
@@ -53,6 +54,24 @@ self-hosts the official OFL-licensed Geist and Noto Serif WOFF2 files under
 runtime dependency is required.
 The extension popup also uses native system font stacks and does not import
 remote font CSS.
+
+## Isolated Capture Bundle
+
+The optional `capture/` service is the only production boundary allowed to
+carry browser and DOM dependencies. It is not linked into the Go binary and
+nothing from it is imported by the embedded frontend. Its approved direct
+dependencies are pinned in `capture/package.json` and its lockfile:
+
+- Playwright `1.61.1` with its pinned Chromium runtime.
+- Mozilla Readability `0.6.0`.
+- JSDOM `29.1.1`.
+- Monolith `2.10.1` as a separately pinned executable.
+
+They are justified because a real browser, a mature article projection, an
+HTML DOM, and a self-contained archive engine are materially harder and less
+safe to recreate in the core application. CI installs from the lockfile, runs
+the capture protocol suite, and audits production npm dependencies. Updates
+require explicit approval plus security, integration, and capture-corpus review.
 
 ## Adding A Dependency
 

@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Added the optional isolated browser-capture service using pinned Playwright /
+  Chromium, Mozilla Readability, JSDOM, and Monolith dependencies. Rendered
+  capture runs headlessly in the background through an attempt-scoped,
+  authenticated, SSRF-safe egress proxy and cannot open a user-visible tab.
+- Added evidence selection that can upgrade weak direct extraction from the
+  rendered DOM without allowing a challenge page or failed browser run to
+  replace the last good reader copy.
+- Added owner-scoped, content-addressed reader media, local library thumbnails,
+  responsive figures, screenshots, PDFs, source responses, and self-contained
+  HTML preservation. Offline previews are lazy, sandboxed, server-inerted, and
+  capped separately from downloadable artifacts.
+- Added first-party Docker Compose and hardened systemd deployment definitions,
+  production capture dependency checks, and a checksummed release source bundle
+  while keeping the default Go binary and embedded frontend dependency-free.
+
 ## [1.3.0] - 2026-07-13
 
 - Fixed Home so Pulse, Focus, Review, and Board keep their shared navigation;
