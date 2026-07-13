@@ -58,6 +58,10 @@
   --accent: var(--accent-600);
   --accent-hover: var(--accent-800);
   --accent-ink: white;
+  --interactive-bg: var(--sand-100);
+  --interactive-ink: var(--base-900);
+  --interactive-hover-bg: var(--accent-50);
+  --interactive-hover-ink: var(--accent-800);
   --accent-2: var(--accent-600);
   --danger: oklch(45% 0.17 25);
   --danger-surface: oklch(95% 0.025 25);
@@ -200,8 +204,8 @@ button,
 button.secondary,
 .button.secondary,
 button.icon-button {
-  background: var(--sand-100);
-  color: var(--base-900);
+  background: var(--interactive-bg);
+  color: var(--interactive-ink);
 }
 
 button.danger,
@@ -285,8 +289,8 @@ textarea:focus-visible,
 }
 
 .nav a:hover {
-  background: var(--sand-100);
-  color: var(--base-900);
+  background: var(--interactive-hover-bg);
+  color: var(--interactive-hover-ink);
 }
 
 .nav a.active {
@@ -829,8 +833,8 @@ progress::-moz-progress-bar {
 .stage-tabs a.active,
 .view-tabs a[aria-current="page"],
 .view-tabs a:hover {
-  background: var(--accent-50);
-  color: var(--accent-700);
+  background: var(--interactive-hover-bg);
+  color: var(--interactive-hover-ink);
 }
 
 .feedback-controls button.active,
@@ -978,13 +982,13 @@ progress::-moz-progress-bar {
 }
 
 .tab-list [role="tab"] {
-  background: var(--sand-100);
-  color: var(--ink);
+  background: var(--interactive-bg);
+  color: var(--interactive-ink);
 }
 
 .tab-list [role="tab"]:hover:not([aria-selected="true"]) {
-  background: var(--accent-50);
-  color: var(--accent-700);
+  background: var(--interactive-hover-bg);
+  color: var(--interactive-hover-ink);
 }
 
 .tab-list [role="tab"][aria-selected="true"] {
@@ -1415,7 +1419,8 @@ progress::-moz-progress-bar {
   text-anchor: middle;
 }
 
-.graph-node:focus circle,
+.graph-nodes a:hover .graph-node circle,
+.graph-nodes a:focus-visible .graph-node circle,
 .graph-node.selected circle {
   stroke: var(--focus);
   stroke-width: 5;
@@ -1497,12 +1502,12 @@ progress::-moz-progress-bar {
 }
 
 .graph-list-node:hover {
-  background: var(--sand-200);
-  color: var(--ink);
+  background: var(--interactive-hover-bg);
+  color: var(--interactive-hover-ink);
 }
 
 .graph-list-node:hover small {
-  color: var(--base-800);
+  color: var(--interactive-hover-ink);
 }
 
 .insights-heading label {
@@ -1581,7 +1586,12 @@ progress::-moz-progress-bar {
 }
 
 .evidence-list a:hover {
-  background: var(--accent-50);
+  background: var(--interactive-hover-bg);
+  color: var(--interactive-hover-ink);
+}
+
+.evidence-list a:hover small {
+  color: var(--interactive-hover-ink);
 }
 
 .evidence-list small {
@@ -1617,8 +1627,8 @@ progress::-moz-progress-bar {
   .button.secondary:hover:not([aria-disabled="true"]),
   button.icon-button:hover:not(:disabled),
   .menu [role="menuitem"]:hover {
-    background: var(--accent-50);
-    color: var(--accent-700);
+    background: var(--interactive-hover-bg);
+    color: var(--interactive-hover-ink);
   }
 
   button.danger:hover:not(:disabled),
@@ -1628,15 +1638,26 @@ progress::-moz-progress-bar {
   }
 
   .bookmark:hover {
-    background: var(--accent-50);
+    background: var(--interactive-hover-bg);
+    color: var(--interactive-hover-ink);
   }
 
   .chips a:hover,
   .stage-tabs a:hover,
-  .collection-tree a:hover,
+  .collection-tree a:hover {
+    background: var(--interactive-hover-bg);
+    color: var(--interactive-hover-ink);
+  }
+
+  summary:hover {
+    border-radius: var(--radius);
+    background: var(--interactive-hover-bg);
+    color: var(--interactive-hover-ink);
+  }
+
   .text-link:hover,
   .row-open:hover {
-    color: var(--accent-800);
+    color: var(--interactive-hover-ink);
     text-decoration-thickness: 2px;
   }
 }

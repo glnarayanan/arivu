@@ -94,8 +94,20 @@ test("uses the backend collection filter contract and exposes collection managem
 
 test("keeps imports inside Settings and uses legible interactive states", () => {
   assert.ok(!app.includes('{ label: "Imports and exports", action:'));
+  assert.ok(app.includes('{ label: "Settings", action: () => navigate("/settings") }'));
+  assert.ok(app.includes('["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."]'));
   assert.ok(styles.includes('background: var(--accent-hover);\n    color: var(--accent-ink);'));
-  assert.ok(styles.includes('.tab-list [role="tab"]:hover:not([aria-selected="true"])'));
+  assert.ok(styles.includes('--interactive-hover-bg: var(--accent-50);'));
+  assert.ok(styles.includes('--interactive-hover-ink: var(--accent-800);'));
+  assert.match(styles, /\.tab-list \[role="tab"\]:hover:not\(\[aria-selected="true"\]\) \{\s+background: var\(--interactive-hover-bg\);\s+color: var\(--interactive-hover-ink\);/);
+  assert.match(styles, /\.menu \[role="menuitem"\]:hover \{\s+background: var\(--interactive-hover-bg\);\s+color: var\(--interactive-hover-ink\);/);
+  assert.match(styles, /summary:hover \{\s+border-radius: var\(--radius\);\s+background: var\(--interactive-hover-bg\);\s+color: var\(--interactive-hover-ink\);/);
+  for (const selector of [".bookmark:hover", ".graph-list-node:hover", ".evidence-list a:hover"]) {
+    assert.match(styles, new RegExp(`${selector.replaceAll(".", "\\.")} \\{\\s+background: var\\(--interactive-hover-bg\\);\\s+color: var\\(--interactive-hover-ink\\);`));
+  }
+  assert.ok(styles.includes("button.secondary:hover:not(:disabled)"));
+  assert.match(styles, /\.chips a:hover,[\s\S]*?\.collection-tree a:hover \{\s+background: var\(--interactive-hover-bg\);\s+color: var\(--interactive-hover-ink\);/);
+  assert.ok(styles.includes(".graph-nodes a:focus-visible .graph-node circle"));
 });
 
 test("public shares use the product typography and labeled controls", () => {
