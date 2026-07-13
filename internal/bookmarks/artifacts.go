@@ -1,19 +1,24 @@
 package bookmarks
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/assets"
 	"github.com/glnarayanan/arivu/internal/auth"
+	"golang.org/x/net/html"
 )
 
 var ErrArtifactQuota = errors.New("artifact quota exceeded")
+
+const archivedHTMLPreviewLimit int64 = 8 << 20
 
 func (s *Service) ReconcileAssets(ctx context.Context, store *assets.Store, grace time.Duration, limit int) (assets.ReconcileReport, error) {
 	s.artifactMu.Lock()
@@ -125,7 +130,11 @@ func (s *Service) bookmarkArtifacts(ctx context.Context, userID, bookmarkID stri
 		var id, attempt, evidence, kind, mime, digest, created string
 		var size int64
 		_ = rows.Scan(&id, &attempt, &evidence, &kind, &mime, &size, &digest, &created)
-		out = append(out, map[string]any{"id": id, "capture_attempt_id": attempt, "evidence_id": evidence, "type": kind, "mime_type": mime, "byte_size": size, "sha256": digest, "created_at": created, "download_url": "/api/artifacts/" + id + "/content"})
+		artifact := map[string]any{"id": id, "capture_attempt_id": attempt, "evidence_id": evidence, "type": kind, "mime_type": mime, "byte_size": size, "sha256": digest, "created_at": created, "download_url": "/api/artifacts/" + id + "/content"}
+		if kind == "self_contained_html" && size <= archivedHTMLPreviewLimit {
+			artifact["preview_url"] = "/api/artifacts/" + id + "/content?view=1"
+		}
+		out = append(out, artifact)
 	}
 	return out
 }
@@ -174,6 +183,11 @@ func (s *Service) ArtifactContent(w http.ResponseWriter, r *http.Request, user a
 		writeError(w, 500, "Could not load artifact")
 		return
 	}
+	viewArchivedHTML := kind == "self_contained_html" && r.URL.Query().Get("view") == "1"
+	if viewArchivedHTML && size > archivedHTMLPreviewLimit {
+		writeError(w, http.StatusRequestEntityTooLarge, "This preserved page is too large to preview safely. Download it instead.")
+		return
+	}
 	f, err := s.assets.Open(key)
 	if err != nil {
 		writeError(w, 404, "Artifact content missing")
@@ -187,7 +201,87 @@ func (s *Service) ArtifactContent(w http.ResponseWriter, r *http.Request, user a
 	if kind == "screenshot" || kind == "pdf" {
 		disposition = "inline"
 	}
+	if viewArchivedHTML {
+		raw, readErr := io.ReadAll(io.LimitReader(f, size+1))
+		if readErr != nil || int64(len(raw)) != size {
+			writeError(w, http.StatusInternalServerError, "Preserved page could not be opened safely")
+			return
+		}
+		inert, transformErr := inertArchivedHTML(raw)
+		if transformErr != nil {
+			writeError(w, http.StatusInternalServerError, "Preserved page could not be opened safely")
+			return
+		}
+		w.Header().Del("X-Frame-Options")
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
+		w.Header().Set("Content-Security-Policy", "sandbox; default-src 'none'; img-src data: blob:; style-src 'unsafe-inline' data:; font-src data:; frame-ancestors 'self'")
+		w.Header().Set("Content-Disposition", `inline; filename="self_contained_html"`)
+		w.Header().Set("Content-Length", fmt.Sprint(len(inert)))
+		_, _ = w.Write(inert)
+		return
+	}
 	w.Header().Set("Content-Disposition", disposition+`; filename="`+kind+`"`)
 	w.Header().Set("Content-Length", fmt.Sprint(size))
 	_, _ = io.Copy(w, f)
+}
+
+func inertArchivedHTML(raw []byte) ([]byte, error) {
+	document, err := html.Parse(bytes.NewReader(raw))
+	if err != nil {
+		return nil, err
+	}
+	var scrub func(*html.Node)
+	scrub = func(parent *html.Node) {
+		for node := parent.FirstChild; node != nil; {
+			next := node.NextSibling
+			if node.Type == html.ElementNode && archiveViewerDropTag(strings.ToLower(node.Data)) {
+				parent.RemoveChild(node)
+				node = next
+				continue
+			}
+			if node.Type == html.ElementNode {
+				attrs := node.Attr[:0]
+				hasInert := false
+				for _, attr := range node.Attr {
+					name := strings.ToLower(attr.Key)
+					if archiveViewerNavigationAttr(name) || strings.HasPrefix(name, "on") {
+						continue
+					}
+					hasInert = hasInert || name == "inert"
+					attrs = append(attrs, attr)
+				}
+				if strings.EqualFold(node.Data, "body") && !hasInert {
+					attrs = append(attrs, html.Attribute{Key: "inert"})
+				}
+				node.Attr = attrs
+			}
+			scrub(node)
+			node = next
+		}
+	}
+	scrub(document)
+	var out bytes.Buffer
+	if err := html.Render(&out, document); err != nil {
+		return nil, err
+	}
+	return out.Bytes(), nil
+}
+
+func archiveViewerDropTag(tag string) bool {
+	switch tag {
+	case "base", "embed", "frame", "iframe", "link", "meta", "object", "portal", "script", "noscript":
+		return true
+	default:
+		return false
+	}
+}
+
+func archiveViewerNavigationAttr(name string) bool {
+	switch name {
+	case "action", "formaction", "href", "ping", "srcdoc", "target":
+		return true
+	default:
+		return false
+	}
 }

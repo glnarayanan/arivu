@@ -25,10 +25,12 @@ func TestLibraryItemsAreUserScopedStableAndCursorBounded(t *testing.T) {
 	seedKnowledgeBookmark(t, db, "u1", "b-new", "New", "2026-07-10T00:00:00Z")
 	seedKnowledgeBookmark(t, db, "u1", "b-old", "Old", "2026-07-09T00:00:00Z")
 	seedKnowledgeBookmark(t, db, "u2", "foreign", "Foreign", "2026-07-11T00:00:00Z")
+	_, _ = db.Exec(`UPDATE bookmarks SET thumbnail='/api/media/preview' WHERE id='b-new'`)
+	_, _ = db.Exec(`UPDATE bookmarks SET thumbnail='https://tracker.example/preview.png' WHERE id='b-old'`)
 
 	first := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=bookmark&limit=1", "")
 	items := first["items"].([]any)
-	if len(items) != 1 || items[0].(map[string]any)["id"] != "b-new" {
+	if len(items) != 1 || items[0].(map[string]any)["id"] != "b-new" || items[0].(map[string]any)["thumbnail"] != "/api/media/preview" {
 		t.Fatalf("unexpected first page: %#v", first)
 	}
 	cursor, _ := first["next_cursor"].(string)
@@ -37,7 +39,7 @@ func TestLibraryItemsAreUserScopedStableAndCursorBounded(t *testing.T) {
 	}
 	second := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=bookmark&limit=1&cursor="+cursor, "")
 	items = second["items"].([]any)
-	if len(items) != 1 || items[0].(map[string]any)["id"] != "b-old" {
+	if len(items) != 1 || items[0].(map[string]any)["id"] != "b-old" || items[0].(map[string]any)["thumbnail"] != "" {
 		t.Fatalf("unexpected second page: %#v", second)
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -343,5 +344,76 @@ func TestMediaContentIsOwnerScopedAndPublicSharesUseSnapshots(t *testing.T) {
 	service.PublicMedia(publicResponse, publicRequest)
 	if publicResponse.Code != http.StatusOK || publicResponse.Body.String() != "image" {
 		t.Fatalf("public media status=%d body=%q", publicResponse.Code, publicResponse.Body.String())
+	}
+}
+
+func TestPreservedHTMLViewerIsInlineAndLockedDown(t *testing.T) {
+	service, db := capturePipelineService(t)
+	store, err := assets.New(filepath.Join(t.TempDir(), "assets.sqlite3"), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetAssetStore(store)
+	body := `<html><head><base href="https://tracker.example/"><meta http-equiv="refresh" content="0;url=https://tracker.example/live"><script>location='https://tracker.example/script'</script></head><body><p>Offline copy</p><a href="https://tracker.example/link" onclick="alert(1)">Original link</a><iframe src="https://tracker.example/frame"></iframe><form action="https://tracker.example/form"><button formaction="https://tracker.example/button">Submit</button></form><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" alt="Embedded image"></body></html>`
+	key, digest, size, err := store.Put(strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO artifacts(id,user_id,bookmark_id,capture_attempt_id,artifact_type,mime_type,byte_size,sha256,storage_key,created_at) VALUES('html-artifact','user-1','bookmark-1','attempt-1','self_contained_html','text/html',?,?,?,?)`, size, digest, key, nowString()); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/artifacts/html-artifact/content?view=1", nil)
+	req.SetPathValue("id", "html-artifact")
+	recorder := httptest.NewRecorder()
+	recorder.Header().Set("X-Frame-Options", "DENY")
+	service.ArtifactContent(recorder, req, auth.User{ID: "user-1"})
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "Offline copy") {
+		t.Fatalf("viewer status=%d body=%q", recorder.Code, recorder.Body.String())
+	}
+	for _, unsafe := range []string{"tracker.example", "<script", "<iframe", " href=", " onclick=", " action=", " formaction="} {
+		if strings.Contains(recorder.Body.String(), unsafe) {
+			t.Fatalf("viewer retained navigation or active content %q in %q", unsafe, recorder.Body.String())
+		}
+	}
+	if !strings.Contains(recorder.Body.String(), "Original link") || !strings.Contains(recorder.Body.String(), "data:image/gif") {
+		t.Fatalf("viewer removed preserved text or embedded media: %q", recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "<body inert") {
+		t.Fatalf("viewer body is still interactive: %q", recorder.Body.String())
+	}
+	if disposition := recorder.Header().Get("Content-Disposition"); !strings.HasPrefix(disposition, "inline") {
+		t.Fatalf("viewer disposition=%q", disposition)
+	}
+	policy := recorder.Header().Get("Content-Security-Policy")
+	if !strings.Contains(policy, "sandbox") || !strings.Contains(policy, "default-src 'none'") || recorder.Header().Get("X-Frame-Options") != "" {
+		t.Fatalf("viewer headers=%v", recorder.Header())
+	}
+}
+
+func TestPreservedHTMLViewerRejectsOversizedPreview(t *testing.T) {
+	service, db := capturePipelineService(t)
+	store, err := assets.New(filepath.Join(t.TempDir(), "assets.sqlite3"), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetAssetStore(store)
+	key, digest, _, err := store.Put(strings.NewReader("<p>Offline copy</p>"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	size := archivedHTMLPreviewLimit + 1
+	if _, err := db.Exec(`INSERT INTO artifacts(id,user_id,bookmark_id,capture_attempt_id,artifact_type,mime_type,byte_size,sha256,storage_key,created_at) VALUES('large-html-artifact','user-1','bookmark-1','attempt-1','self_contained_html','text/html',?,?,?,?)`, size, digest, key, nowString()); err != nil {
+		t.Fatal(err)
+	}
+	artifacts := service.bookmarkArtifacts(t.Context(), "user-1", "bookmark-1")
+	if len(artifacts) != 1 || artifacts[0]["preview_url"] != nil {
+		t.Fatalf("oversized artifact unexpectedly previewable: %#v", artifacts)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/artifacts/large-html-artifact/content?view=1", nil)
+	req.SetPathValue("id", "large-html-artifact")
+	recorder := httptest.NewRecorder()
+	service.ArtifactContent(recorder, req, auth.User{ID: "user-1"})
+	if recorder.Code != http.StatusRequestEntityTooLarge || !strings.Contains(recorder.Body.String(), "too large to preview safely") {
+		t.Fatalf("viewer status=%d body=%q", recorder.Code, recorder.Body.String())
 	}
 }

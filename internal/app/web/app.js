@@ -911,7 +911,7 @@ async function libraryPage() {
     <section class="library-heading">
       <div>
         <p class="lede">Everything you have captured, connected, or developed lives here.</p>
-        <p class="meta">${items.length} items in this view${result.next_cursor ? " · more available" : ""}</p>
+        <p class="meta">${items.length} ${items.length === 1 ? "item" : "items"} in this view${result.next_cursor ? " · more available" : ""}</p>
       </div>
       <div class="button-row">
         <button type="button" id="library-capture">Capture</button>
@@ -962,8 +962,10 @@ function libraryFilterOptions(values, selected, emptyLabel) {
 
 function libraryItem(item) {
   const href = knowledgeItemHref(item.type, item.id, item.title);
-  return `<article class="library-row">
+  const thumbnail = item.type === "bookmark" && item.thumbnail ? `<div class="library-thumbnail" aria-hidden="true"><img src="${escapeHTML(item.thumbnail)}" alt="" loading="lazy" decoding="async"></div>` : "";
+  return `<article class="library-row${thumbnail ? " has-thumbnail" : ""}">
     <div class="library-kind" data-kind="${escapeHTML(item.type || "item")}">${escapeHTML(knowledgeTypeLabel(item.type))}</div>
+    ${thumbnail}
     <div class="library-copy">
       <h2><a href="${href}">${escapeHTML(item.title || "Untitled")}</a></h2>
       <p>${escapeHTML(String(item.body || "").slice(0, 220))}</p>
@@ -971,6 +973,50 @@ function libraryItem(item) {
     </div>
     <a class="row-open" href="${href}" aria-label="Open ${escapeHTML(item.title || knowledgeTypeLabel(item.type))}">Open</a>
   </article>`;
+}
+
+function preservationPanel(artifacts = [], captureStatus = "saved") {
+  const screenshot = artifacts.find((artifact) => artifact.type === "screenshot");
+  const preservedPage = artifacts.find((artifact) => artifact.type === "self_contained_html");
+  const status = String(captureStatus || "saved").replaceAll("_", " ");
+  const messages = {
+    processing: "Browser preservation is still running in the background. The reader remains available as soon as its text is ready.",
+    partially_preserved: "The reader is available. One or more preserved formats could not be completed; Reprocess can try them again.",
+    preserved: artifacts.length ? "Reader content and preserved files are stored on this instance." : "The reader copy is stored. Additional preserved formats are not enabled for this instance.",
+    failed: "The latest preservation attempt failed. Your last good reader copy remains available.",
+    saved: "Reader text is stored when available. Preserved page files have not been created yet.",
+  };
+  const actions = artifacts.map((artifact) => {
+    const labels = {
+      screenshot: "Open full screenshot",
+      pdf: "Open preserved PDF",
+      self_contained_html: "Download preserved page",
+      source_response: "Download source response",
+    };
+    const opens = artifact.type === "pdf" || artifact.type === "screenshot";
+    return `<li><a href="${escapeHTML(artifact.download_url)}" ${opens ? `target="_blank" rel="noopener"` : "download"}>${escapeHTML(labels[artifact.type] || `Download ${knowledgeTypeLabel(artifact.type)}`)}</a><span class="meta">${escapeHTML(artifact.mime_type)} · ${Math.ceil(Number(artifact.byte_size || 0) / 1024)} KB</span></li>`;
+  }).join("");
+  const viewer = preservedPage?.preview_url ? `<details class="preserved-page-viewer" data-preserved-page>
+    <summary>Preview preserved page</summary>
+    <div class="preserved-page-body">
+      <p class="meta">This offline copy opens in a locked-down viewer. Scripts, forms, and network access stay disabled.</p>
+      <iframe title="Preserved offline page" data-src="${escapeHTML(preservedPage.preview_url)}" sandbox referrerpolicy="no-referrer"></iframe>
+    </div>
+  </details>` : preservedPage ? `<p class="meta">This preserved page is too large to preview safely. Download it below to open the offline copy.</p>` : "";
+  const preview = screenshot ? `<figure class="preservation-preview"><a href="${escapeHTML(screenshot.download_url)}" target="_blank" rel="noopener"><img src="${escapeHTML(screenshot.download_url)}" alt="Preserved full-page screenshot" loading="lazy" decoding="async"></a><figcaption>Visual snapshot captured with the page.</figcaption></figure>` : "";
+  return `<section class="preservation" aria-labelledby="preservation-heading">
+    <div class="preservation-heading"><div><h2 id="preservation-heading">Preserved copies</h2><p class="preservation-status" data-status="${escapeHTML(captureStatus)}">${escapeHTML(messages[captureStatus] || `Capture status: ${status}.`)}</p></div>${artifacts.length ? `<span class="meta">${artifacts.length} ${artifacts.length === 1 ? "file" : "files"}</span>` : ""}</div>
+    ${viewer}${preview}
+    ${actions ? `<ul class="preservation-actions">${actions}</ul>` : ""}
+  </section>`;
+}
+
+function bindPreservedPageViewers() {
+  document.querySelectorAll("[data-preserved-page]").forEach((details) => details.addEventListener("toggle", () => {
+    if (!details.open) return;
+    const frame = details.querySelector("iframe[data-src]");
+    if (frame && !frame.src) frame.src = frame.dataset.src;
+  }, { once: true }));
 }
 
 function knowledgeTypeLabel(value = "item") {
@@ -2602,7 +2648,7 @@ async function bookmarkPage() {
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
       <div class="reader-content" tabindex="-1">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
-      <section aria-labelledby="artifacts-heading"><h2 id="artifacts-heading">Artifacts</h2>${artifacts.length ? `<ul>${artifacts.map((artifact) => `<li>${artifact.type === "screenshot" ? `<img src="${escapeHTML(artifact.download_url)}" alt="Preserved page screenshot" loading="lazy">` : ""}<a href="${escapeHTML(artifact.download_url)}" ${artifact.type === "pdf" ? `target="_blank" rel="noopener"` : "download"}>${escapeHTML(artifact.type === "source_response" ? "Source response" : knowledgeTypeLabel(artifact.type))}</a> <span class="meta">${escapeHTML(artifact.mime_type)} · ${Math.ceil(Number(artifact.byte_size || 0) / 1024)} KB</span></li>`).join("")}</ul>` : `<p class="meta">No source artifacts are available yet.</p>`}</section>
+      ${preservationPanel(artifacts, bookmark.capture_status || "saved")}
       ${evidencePanel(bookmark.evidence || [])}
       <details><summary>Capture attempt history (${(bookmark.capture_attempts || []).length})</summary><ul>${(bookmark.capture_attempts || []).map((attempt) => `<li><strong>${escapeHTML(attempt.status)}</strong> · ${escapeHTML(attempt.engine)} ${attempt.error_code ? `· ${escapeHTML(attempt.error_code)}` : ""}</li>`).join("")}</ul></details>
       <details class="panel"><summary>Share this bookmark</summary><form id="share-bookmark-form" class="form"><div class="field"><label for="share-title">Public title</label><input id="share-title" required maxlength="200" value="${escapeHTML(bookmark.title || "Shared bookmark")}"></div><div class="field"><label for="share-expiry">Expires (optional)</label><input id="share-expiry" type="datetime-local"></div><button type="submit">Create share link</button><p class="form-message" data-form-message hidden></p><div id="share-created" hidden></div></form></details>
@@ -2695,6 +2741,7 @@ async function bookmarkPage() {
       </section>
     </details>
   `));
+  bindPreservedPageViewers();
   const reader = document.querySelector(".reader-content");
   let progressTimer;
   const saveProgress = () => {
