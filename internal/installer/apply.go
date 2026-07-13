@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -338,7 +339,92 @@ func Backup(root string) (string, error) {
 	if err := sqliteBackup(source, target); err != nil {
 		return "", err
 	}
+	manifest := backupManifest{Version: 1}
+	if err := addManifestFile(targetDir, target, "arivu.sqlite3", &manifest); err != nil {
+		return "", err
+	}
+	assetSource := source + ".assets"
+	if _, err := os.Stat(assetSource); err == nil {
+		err = filepath.Walk(assetSource, func(path string, info os.FileInfo, walkErr error) error {
+			if walkErr != nil || info.IsDir() {
+				return walkErr
+			}
+			rel, err := filepath.Rel(assetSource, path)
+			if err != nil {
+				return err
+			}
+			dst := filepath.Join(targetDir, "arivu.sqlite3.assets", rel)
+			if strings.HasPrefix(filepath.ToSlash(rel), ".staging/") {
+				return nil
+			}
+			if err := copyRequired(path, dst); err != nil {
+				return err
+			}
+			return addManifestFile(targetDir, dst, filepath.ToSlash(filepath.Join("arivu.sqlite3.assets", rel)), &manifest)
+		})
+		if err != nil {
+			return "", err
+		}
+	}
+	raw, _ := json.MarshalIndent(manifest, "", "  ")
+	if err := os.WriteFile(filepath.Join(targetDir, "manifest.json"), raw, 0o640); err != nil {
+		return "", err
+	}
 	return targetDir, nil
+}
+
+type backupManifest struct {
+	Version int                  `json:"version"`
+	Files   []backupManifestFile `json:"files"`
+}
+type backupManifestFile struct {
+	Path   string `json:"path"`
+	Size   int64  `json:"size"`
+	SHA256 string `json:"sha256"`
+}
+
+func addManifestFile(root, path, name string, m *backupManifest) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	h := sha256.New()
+	size, err := io.Copy(h, f)
+	if err != nil {
+		return err
+	}
+	m.Files = append(m.Files, backupManifestFile{name, size, hex.EncodeToString(h.Sum(nil))})
+	return nil
+}
+func verifyManifest(dir string) error {
+	raw, err := os.ReadFile(filepath.Join(dir, "manifest.json"))
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var m backupManifest
+	if json.Unmarshal(raw, &m) != nil || m.Version != 1 {
+		return errors.New("unsupported backup manifest")
+	}
+	for _, f := range m.Files {
+		if filepath.IsAbs(f.Path) || strings.Contains(f.Path, "..") {
+			return errors.New("invalid backup manifest path")
+		}
+		file, err := os.Open(filepath.Join(dir, filepath.FromSlash(f.Path)))
+		if err != nil {
+			return fmt.Errorf("backup integrity: %s: %w", f.Path, err)
+		}
+		h := sha256.New()
+		size, copyErr := io.Copy(h, file)
+		file.Close()
+		if copyErr != nil || size != f.Size || hex.EncodeToString(h.Sum(nil)) != f.SHA256 {
+			return fmt.Errorf("backup integrity check failed for %s", f.Path)
+		}
+	}
+	return nil
 }
 
 func Restore(root string, backupDir string) error {
@@ -352,6 +438,9 @@ func restore(root string, backupDir string, rootInstall bool) error {
 	if backupDir == "" {
 		return errors.New("backup directory is required")
 	}
+	if err := verifyManifest(backupDir); err != nil {
+		return err
+	}
 	source := filepath.Join(backupDir, "arivu.sqlite3")
 	if _, err := os.Stat(source); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -360,26 +449,91 @@ func restore(root string, backupDir string, rootInstall bool) error {
 		return err
 	}
 	ctx := context.Background()
-	if rootInstall {
-		_ = runCommand(ctx, "systemctl", "stop", "arivu-backup.timer")
-		_ = runCommand(ctx, "systemctl", "stop", "arivu.service")
-	}
 	target := rootPath(root, "/var/lib/arivu/arivu.sqlite3")
 	tmp := target + ".restore-tmp"
 	if err := copyRequired(source, tmp); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, target); err != nil {
+	defer os.Remove(tmp)
+	assetBackup := filepath.Join(backupDir, "arivu.sqlite3.assets")
+	assetTmp := target + ".assets.restore-tmp"
+	hasAssets := false
+	if info, err := os.Stat(assetBackup); err == nil && info.IsDir() {
+		hasAssets = true
+		_ = os.RemoveAll(assetTmp)
+		if err := copyTree(assetBackup, assetTmp); err != nil {
+			return err
+		}
+		defer os.RemoveAll(assetTmp)
+	}
+	if err := verifyArtifactRows(tmp, assetTmp); err != nil {
 		return err
+	}
+	if rootInstall {
+		_ = runCommand(ctx, "systemctl", "stop", "arivu-backup.timer")
+		_ = runCommand(ctx, "systemctl", "stop", "arivu.service")
+	}
+	oldDB, oldAssets := target+".restore-previous", target+".assets.restore-previous"
+	_ = os.Remove(oldDB)
+	_ = os.RemoveAll(oldAssets)
+	if _, err := os.Stat(target); err == nil {
+		if err = os.Rename(target, oldDB); err != nil {
+			return err
+		}
+	}
+	rollback := func(cause error) error {
+		var rollbackErrors []string
+		if rootInstall {
+			if e := runCommand(ctx, "systemctl", "stop", "arivu.service"); e != nil {
+				rollbackErrors = append(rollbackErrors, e.Error())
+			}
+		}
+		_ = os.Remove(target)
+		if e := os.Rename(oldDB, target); e != nil {
+			rollbackErrors = append(rollbackErrors, e.Error())
+		}
+		if _, e := os.Stat(oldAssets); e == nil {
+			_ = os.RemoveAll(target + ".assets")
+			if e = os.Rename(oldAssets, target+".assets"); e != nil {
+				rollbackErrors = append(rollbackErrors, e.Error())
+			}
+		}
+		if rootInstall {
+			if e := runCommand(ctx, "systemctl", "start", "arivu.service"); e != nil {
+				rollbackErrors = append(rollbackErrors, e.Error())
+			}
+			if e := runCommand(ctx, "systemctl", "start", "arivu-backup.timer"); e != nil {
+				rollbackErrors = append(rollbackErrors, e.Error())
+			}
+		}
+		if len(rollbackErrors) > 0 {
+			return fmt.Errorf("%w; rollback errors: %s", cause, strings.Join(rollbackErrors, "; "))
+		}
+		return cause
+	}
+	if hasAssets {
+		if _, err := os.Stat(target + ".assets"); err == nil {
+			if err = os.Rename(target+".assets", oldAssets); err != nil {
+				return rollback(err)
+			}
+		}
+	}
+	if err := os.Rename(tmp, target); err != nil {
+		return rollback(err)
+	}
+	if hasAssets {
+		if err := os.Rename(assetTmp, target+".assets"); err != nil {
+			return rollback(err)
+		}
 	}
 	_ = os.Remove(target + "-wal")
 	_ = os.Remove(target + "-shm")
 	if rootInstall {
 		if err := repairOwnership(ctx); err != nil {
-			return err
+			return rollback(err)
 		}
 		if err := runCommand(ctx, "systemctl", "start", "arivu.service"); err != nil {
-			return err
+			return rollback(err)
 		}
 		opts, _ := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env"))
 		port := opts.BindPort
@@ -387,13 +541,69 @@ func restore(root string, backupDir string, rootInstall bool) error {
 			port = 8080
 		}
 		if err := healthCheckFunc(ctx, port); err != nil {
-			return fmt.Errorf("restore health check failed after restarting arivu.service: %w", err)
+			return rollback(fmt.Errorf("restore health check failed after restarting arivu.service: %w", err))
 		}
 		if opts.BackupEnabled {
 			_ = runCommand(ctx, "systemctl", "start", "arivu-backup.timer")
 		}
 	}
+	_ = os.Remove(oldDB)
+	_ = os.RemoveAll(oldAssets)
 	return nil
+}
+
+func verifyArtifactRows(dbPath, assetRoot string) error {
+	db, err := sql.Open("sqlite3", dbPath+"?mode=ro")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	rows, err := db.Query(`SELECT storage_key,byte_size,sha256 FROM artifacts WHERE deleted_at IS NULL`)
+	if err != nil { // Legacy databases predate artifacts.
+		if strings.Contains(err.Error(), "no such table") {
+			return nil
+		}
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var key, digest string
+		var expected int64
+		if err = rows.Scan(&key, &expected, &digest); err != nil {
+			return err
+		}
+		if strings.Contains(key, "..") || filepath.IsAbs(key) {
+			return errors.New("invalid artifact storage key")
+		}
+		f, e := os.Open(filepath.Join(assetRoot, "objects", filepath.FromSlash(key)))
+		if e != nil {
+			return fmt.Errorf("live artifact %s missing: %w", key, e)
+		}
+		h := sha256.New()
+		n, e := io.Copy(h, f)
+		f.Close()
+		if e != nil || n != expected || hex.EncodeToString(h.Sum(nil)) != digest {
+			return fmt.Errorf("live artifact %s integrity check failed", key)
+		}
+	}
+	return rows.Err()
+}
+
+func copyTree(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, e := filepath.Rel(src, path)
+		if e != nil {
+			return e
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, 0o700)
+		}
+		return copyRequired(path, target)
+	})
 }
 
 func Upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version string) error {
