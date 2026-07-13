@@ -34,6 +34,7 @@ type Service struct {
 	browser       config.BrowserCaptureConfig
 	artifactQuota int64
 	artifactMu    sync.Mutex
+	enqueueCreate func(context.Context, *sql.Tx, string, string, string) (string, error)
 }
 
 func (s *Service) SetAssetStore(store *assets.Store)                 { s.assets = store }
@@ -48,7 +49,9 @@ type CountsResult struct {
 }
 
 func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, client providers.GeminiClient) *Service {
-	return &Service{db: db, jobs: jobs, fetcher: fetcher, ai: func(context.Context) providers.GeminiClient { return client }}
+	s := &Service{db: db, jobs: jobs, fetcher: fetcher, ai: func(context.Context) providers.GeminiClient { return client }}
+	s.enqueueCreate = jobs.EnqueueWithIDTx
+	return s
 }
 
 func (s *Service) SetAIProvider(fn func(context.Context) providers.GeminiClient) {
@@ -90,46 +93,48 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 	now := time.Now().UTC().Format(time.RFC3339)
 	bookmarkID := ids.New()
 	title := fallback(strings.TrimSpace(body.Title), parsed.Hostname())
-	_, err := s.db.ExecContext(r.Context(), `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, body.URL, title, parsed.Hostname(), now, now)
+	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Bookmark could not be saved")
+		return
+	}
+	defer tx.Rollback()
+	_, err = tx.ExecContext(r.Context(), `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, body.URL, title, parsed.Hostname(), now, now)
 	if err != nil {
 		writeError(w, http.StatusConflict, "Bookmark already exists")
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
-	_ = s.upsertItemState(r.Context(), user.ID, "bookmark", bookmarkID, "inbox", 0, strings.TrimSpace(body.Note), now)
-	if body.CollectionID != "" {
-		_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, body.CollectionID, bookmarkID, user.ID, now)
-	}
-	for _, tag := range cleanStringList(body.Tags, 20) {
-		_ = s.attachTag(r.Context(), user.ID, bookmarkID, tag, "manual")
-	}
-	quote := fallback(body.Quote, body.Annotation)
-	if strings.TrimSpace(body.Note) != "" || strings.TrimSpace(quote) != "" {
-		selector, _ := jsonObject(nil)
-		tagJSON, _ := json.Marshal(cleanStringList(body.Tags, 20))
-		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
-	}
-	tx, txErr := s.db.BeginTx(r.Context(), nil)
-	jobID := ""
-	if txErr == nil {
-		attemptID := ids.New()
-		_, txErr = tx.ExecContext(r.Context(), `INSERT INTO capture_attempts(id,bookmark_id,user_id,status,requested_url,engine,engine_version,queued_at) VALUES(?,?,?,'queued',?,'direct_http',?,?)`, attemptID, bookmarkID, user.ID, body.URL, safefetch.ExtractorVersion, now)
-		if txErr == nil {
-			jobID, txErr = s.jobs.EnqueueWithIDTx(r.Context(), tx, user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, "", attemptID))
+	attemptID := ids.New()
+	if _, err = tx.ExecContext(r.Context(), `INSERT INTO capture_attempts(id,bookmark_id,user_id,status,requested_url,engine,engine_version,queued_at) VALUES(?,?,?,'queued',?,'direct_http',?,?)`, attemptID, bookmarkID, user.ID, body.URL, safefetch.ExtractorVersion, now); err == nil {
+		var jobID string
+		jobID, err = s.enqueueCreate(r.Context(), tx, user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, "", attemptID))
+		if err == nil {
+			err = tx.Commit()
 		}
-		if txErr == nil {
-			txErr = tx.Commit()
-		} else {
-			_ = tx.Rollback()
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Bookmark could not be saved")
+			return
 		}
-	}
-	if txErr != nil {
-		writeError(w, http.StatusInternalServerError, "Bookmark saved but capture could not be queued")
+		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
+		_ = s.upsertItemState(r.Context(), user.ID, "bookmark", bookmarkID, "inbox", 0, strings.TrimSpace(body.Note), now)
+		if body.CollectionID != "" {
+			_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, body.CollectionID, bookmarkID, user.ID, now)
+		}
+		for _, tag := range cleanStringList(body.Tags, 20) {
+			_ = s.attachTag(r.Context(), user.ID, bookmarkID, tag, "manual")
+		}
+		quote := fallback(body.Quote, body.Annotation)
+		if strings.TrimSpace(body.Note) != "" || strings.TrimSpace(quote) != "" {
+			selector, _ := jsonObject(nil)
+			tagJSON, _ := json.Marshal(cleanStringList(body.Tags, 20))
+			_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
+		}
+		bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
+		s.refreshSearchIndex(r.Context(), user.ID)
+		writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
 		return
 	}
-	bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
-	s.refreshSearchIndex(r.Context(), user.ID)
-	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
+	writeError(w, http.StatusInternalServerError, "Bookmark could not be saved")
 }
 
 func (s *Service) Reprocess(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -382,8 +387,29 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bm["action_items"] = s.itemActionItems(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	bm["capture_attempts"] = s.captureAttempts(r.Context(), user.ID, r.PathValue("id"))
 	bm["artifacts"] = s.bookmarkArtifacts(r.Context(), user.ID, r.PathValue("id"))
+	evidence, evidenceErr := s.Evidence(r.Context(), user.ID, r.PathValue("id"))
+	if evidenceErr != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load bookmark evidence")
+		return
+	}
+	bm["evidence"] = evidencePayload(evidence)
 	bm["capture_status"] = s.captureStatus(r.Context(), user.ID, r.PathValue("id"))
 	writeJSON(w, http.StatusOK, bm)
+}
+
+func evidencePayload(items []BookmarkEvidence) []map[string]any {
+	result := make([]map[string]any, 0, len(items))
+	for _, item := range items {
+		result = append(result, map[string]any{
+			"id": item.ID, "kind": item.Kind, "origin": item.Origin,
+			"authority": item.Authority, "canonical_url": item.CanonicalURL,
+			"publisher_key": item.PublisherKey, "published_at": item.PublishedAt,
+			"extraction_method": item.ExtractionMethod, "quality_status": item.QualityStatus,
+			"quality_reasons": item.QualityReasons, "extractor_version": item.ExtractorVersion,
+			"selected": item.Selected, "preview": truncateText(item.Text, 800),
+		})
+	}
+	return result
 }
 
 func (s *Service) ReadingProgress(w http.ResponseWriter, r *http.Request, user auth.User) {

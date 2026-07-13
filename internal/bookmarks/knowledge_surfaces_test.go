@@ -42,6 +42,20 @@ func TestLibraryItemsAreUserScopedStableAndCursorBounded(t *testing.T) {
 	}
 }
 
+func TestLibraryItemsAcceptLegacyNewestCursor(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "b-new", "New", "2026-07-10T00:00:00Z")
+	seedKnowledgeBookmark(t, db, "u1", "b-old", "Old", "2026-07-09T00:00:00Z")
+	legacyCursor := encodeLibraryCursor(libraryCursor{UpdatedAt: "2026-07-10T00:00:00Z", Type: "bookmark", ID: "b-new"})
+
+	payload := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?type=bookmark&limit=1&cursor="+legacyCursor, "")
+	items := payload["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["id"] != "b-old" {
+		t.Fatalf("legacy newest cursor did not continue pagination: %#v", payload)
+	}
+}
+
 func TestLibraryItemsHideOnlyUnresolvedTCOPlaceholders(t *testing.T) {
 	service, db := newKnowledgeTestService(t)
 	seedKnowledgeUser(t, db, "u1", "one@example.com")

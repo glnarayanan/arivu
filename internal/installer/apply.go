@@ -357,6 +357,9 @@ func Backup(root string) (string, error) {
 			if strings.HasPrefix(filepath.ToSlash(rel), ".staging/") {
 				return nil
 			}
+			if err := os.MkdirAll(filepath.Dir(dst), 0o750); err != nil {
+				return err
+			}
 			if err := copyRequired(path, dst); err != nil {
 				return err
 			}

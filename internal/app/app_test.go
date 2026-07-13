@@ -10,6 +10,7 @@ import (
 	"fmt"
 	stdhtml "html"
 	"io"
+	"log"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -26,6 +27,29 @@ import (
 	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/secrets"
 )
+
+func TestRequestLogRedactsPublicShareTokens(t *testing.T) {
+	var output bytes.Buffer
+	previous := log.Writer()
+	log.SetOutput(&output)
+	t.Cleanup(func() { log.SetOutput(previous) })
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /s/{token}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("GET /api/public/shares/{token}", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	handler := (&App{}).requestLog(mux)
+	for _, target := range []string{"/s/secret-browser-token", "/api/public/shares/secret-api-token"} {
+		handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, target, nil))
+	}
+
+	logs := output.String()
+	if strings.Contains(logs, "secret-browser-token") || strings.Contains(logs, "secret-api-token") {
+		t.Fatalf("public share token leaked into request log: %s", logs)
+	}
+	if !strings.Contains(logs, "/s/{token}") || !strings.Contains(logs, "/api/public/shares/{token}") {
+		t.Fatalf("request patterns missing from redacted log: %s", logs)
+	}
+}
 
 func TestWebAuthRequiresCSRFForBookmarkCreate(t *testing.T) {
 	a, err := New(config.Config{

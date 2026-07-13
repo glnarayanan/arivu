@@ -68,7 +68,7 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 	}
 	if raw := strings.TrimSpace(r.URL.Query().Get("cursor")); raw != "" {
 		cursor, ok := decodeLibraryCursor(raw)
-		if !ok || cursor.Sort != sort {
+		if !ok || (cursor.Sort != sort && !(cursor.Sort == "" && sort == "newest")) {
 			writeError(w, http.StatusBadRequest, "Invalid cursor")
 			return
 		}

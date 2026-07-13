@@ -69,6 +69,9 @@ var (
 	quotaAssistantApprove = mutationQuota{name: "assistant.approve", limit: 60, window: time.Hour}
 	quotaSearchRebuild    = mutationQuota{name: "search.rebuild", limit: 12, window: time.Hour}
 	quotaFeedback         = mutationQuota{name: "feedback.write", limit: 600, window: time.Hour}
+	quotaCollectionsWrite = mutationQuota{name: "collections.write", limit: 240, window: time.Hour}
+	quotaSubscriptions    = mutationQuota{name: "subscriptions.write", limit: 120, window: time.Hour}
+	quotaSharesWrite      = mutationQuota{name: "shares.write", limit: 120, window: time.Hour}
 )
 
 func New(cfg config.Config) (*App, error) {
@@ -240,6 +243,19 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/agent/action-items", a.withAudienceQuota("cli", quotaActionItemCreate, a.bookmarks.CreateActionItem))
 	mux.HandleFunc("POST /api/agent/reminders", a.withAudienceQuota("cli", quotaRemindersCreate, a.bookmarks.CreateReminder))
 	mux.HandleFunc("POST /api/agent/decisions", a.withAudienceQuota("cli", quotaNotesWrite, a.bookmarks.AgentRecordDecision))
+	mux.HandleFunc("GET /api/agent/collections", a.withAudience("cli", a.bookmarks.Collections))
+	mux.HandleFunc("POST /api/agent/collections", a.withAudienceQuota("cli", quotaCollectionsWrite, a.bookmarks.CreateCollection))
+	mux.HandleFunc("PATCH /api/agent/collections/{id}", a.withAudienceQuota("cli", quotaCollectionsWrite, a.bookmarks.UpdateCollection))
+	mux.HandleFunc("DELETE /api/agent/collections/{id}", a.withAudienceQuota("cli", quotaCollectionsWrite, a.bookmarks.DeleteCollection))
+	mux.HandleFunc("GET /api/agent/subscriptions", a.withAudience("cli", a.bookmarks.Subscriptions))
+	mux.HandleFunc("POST /api/agent/subscriptions", a.withAudienceQuota("cli", quotaSubscriptions, a.bookmarks.CreateSubscription))
+	mux.HandleFunc("PATCH /api/agent/subscriptions/{id}", a.withAudienceQuota("cli", quotaSubscriptions, a.bookmarks.UpdateSubscription))
+	mux.HandleFunc("DELETE /api/agent/subscriptions/{id}", a.withAudienceQuota("cli", quotaSubscriptions, a.bookmarks.DeleteSubscription))
+	mux.HandleFunc("GET /api/agent/shares", a.withAudience("cli", a.bookmarks.Shares))
+	mux.HandleFunc("POST /api/agent/shares", a.withAudienceQuota("cli", quotaSharesWrite, a.bookmarks.CreateShare))
+	mux.HandleFunc("PUT /api/agent/shares/{id}", a.withAudienceQuota("cli", quotaSharesWrite, a.bookmarks.UpdateShare))
+	mux.HandleFunc("POST /api/agent/shares/{id}/revoke", a.withAudienceQuota("cli", quotaSharesWrite, a.bookmarks.RevokeShare))
+	mux.HandleFunc("DELETE /api/agent/shares/{id}", a.withAudienceQuota("cli", quotaSharesWrite, a.bookmarks.DeleteShare))
 	mux.HandleFunc("GET /api/extension/collections", a.withAudience("extension", a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/extension/bookmarks", a.withAudienceQuota("extension", quotaBookmarkCreate, a.bookmarks.Create))
 	mux.HandleFunc("POST /api/extension/annotations", a.withAudienceQuota("extension", quotaBookmarkCreate, a.bookmarks.CreateExtensionAnnotation))
@@ -459,7 +475,14 @@ func (a *App) requestLog(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		next.ServeHTTP(w, r)
-		log.Printf("%s %s %s", r.Method, r.URL.Path, time.Since(start).Round(time.Millisecond))
+		path := r.URL.Path
+		if strings.HasPrefix(path, "/s/") || strings.HasPrefix(path, "/api/public/shares/") {
+			path = r.Pattern
+			if path == "" {
+				path = "/public/share/{token}"
+			}
+		}
+		log.Printf("%s %s %s", r.Method, path, time.Since(start).Round(time.Millisecond))
 	})
 }
 

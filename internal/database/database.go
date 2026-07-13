@@ -87,6 +87,9 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureColumn(ctx, db, "bookmarks", "reading_progress", "REAL NOT NULL DEFAULT 0"); err != nil {
 		return err
 	}
+	if err := ensureReadingProgressConstraint(ctx, db); err != nil {
+		return err
+	}
 	if err := ensureColumn(ctx, db, "collections", "parent_id", "TEXT REFERENCES collections(id) ON DELETE RESTRICT"); err != nil {
 		return err
 	}
@@ -102,6 +105,12 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		if err := ensureColumn(ctx, db, "public_share_items", name, definition); err != nil {
 			return err
 		}
+	}
+	if err := ensurePublicShareSnapshotLifetime(ctx, db); err != nil {
+		return err
+	}
+	if err := ensurePublicShareArtifactLifetime(ctx, db); err != nil {
+		return err
 	}
 	// Existing memberships become immutable at migration time. Prefer the selected
 	// evidence, while retaining the bookmark fallback used by the former projection.
@@ -130,6 +139,122 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 		return err
 	}
 	return nil
+}
+
+func ensureReadingProgressConstraint(ctx context.Context, db *sql.DB) error {
+	statements := []string{
+		`CREATE TRIGGER IF NOT EXISTS bookmarks_reading_progress_insert BEFORE INSERT ON bookmarks WHEN NEW.reading_progress < 0 OR NEW.reading_progress > 1 BEGIN SELECT RAISE(ABORT, 'reading_progress must be between 0 and 1'); END`,
+		`CREATE TRIGGER IF NOT EXISTS bookmarks_reading_progress_update BEFORE UPDATE OF reading_progress ON bookmarks WHEN NEW.reading_progress < 0 OR NEW.reading_progress > 1 BEGIN SELECT RAISE(ABORT, 'reading_progress must be between 0 and 1'); END`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("reading progress constraint: %w", err)
+		}
+	}
+	return nil
+}
+
+// Published item content is an immutable snapshot, not a projection whose
+// lifetime is tied to the owner's private bookmark.
+func ensurePublicShareSnapshotLifetime(ctx context.Context, db *sql.DB) error {
+	rows, err := db.QueryContext(ctx, `PRAGMA foreign_key_list(public_share_items)`)
+	if err != nil {
+		return err
+	}
+	removeBookmarkFK := false
+	for rows.Next() {
+		var id, seq int
+		var table, from, to, onUpdate, onDelete, match string
+		if err := rows.Scan(&id, &seq, &table, &from, &to, &onUpdate, &onDelete, &match); err != nil {
+			rows.Close()
+			return err
+		}
+		removeBookmarkFK = removeBookmarkFK || (table == "bookmarks" && from == "bookmark_id")
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if !removeBookmarkFK {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`CREATE TABLE public_share_items_new (
+			share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
+			bookmark_id TEXT NOT NULL,
+			evidence_id TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL,
+			public_title TEXT NOT NULL DEFAULT '', public_description TEXT NOT NULL DEFAULT '',
+			public_url TEXT NOT NULL DEFAULT '', public_domain TEXT NOT NULL DEFAULT '',
+			public_reader_html TEXT NOT NULL DEFAULT '', public_text TEXT NOT NULL DEFAULT '',
+			public_published_at TEXT NOT NULL DEFAULT '', added_at TEXT NOT NULL,
+			PRIMARY KEY(share_id,bookmark_id))`,
+		`INSERT INTO public_share_items_new SELECT share_id,bookmark_id,evidence_id,public_title,public_description,public_url,public_domain,public_reader_html,public_text,public_published_at,added_at FROM public_share_items`,
+		`DROP TABLE public_share_items`,
+		`ALTER TABLE public_share_items_new RENAME TO public_share_items`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("public share snapshot migration: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+func ensurePublicShareArtifactLifetime(ctx context.Context, db *sql.DB) error {
+	columns, err := tableColumnSet(ctx, db, "public_share_artifacts")
+	if err != nil {
+		return err
+	}
+	if columns["storage_key"] && columns["bookmark_id"] && columns["mime_type"] && columns["byte_size"] {
+		return nil
+	}
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	statements := []string{
+		`CREATE TABLE public_share_artifacts_new (
+			share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
+			artifact_id TEXT NOT NULL, bookmark_id TEXT NOT NULL,
+			artifact_type TEXT NOT NULL CHECK(artifact_type IN ('screenshot','pdf')),
+			storage_key TEXT NOT NULL, mime_type TEXT NOT NULL,
+			byte_size INTEGER NOT NULL CHECK(byte_size >= 0), added_at TEXT NOT NULL,
+			PRIMARY KEY(share_id,artifact_id))`,
+		`INSERT INTO public_share_artifacts_new(share_id,artifact_id,bookmark_id,artifact_type,storage_key,mime_type,byte_size,added_at)
+		 SELECT sa.share_id,sa.artifact_id,a.bookmark_id,sa.artifact_type,a.storage_key,a.mime_type,a.byte_size,sa.added_at FROM public_share_artifacts sa JOIN artifacts a ON a.id=sa.artifact_id`,
+		`DROP TABLE public_share_artifacts`,
+		`ALTER TABLE public_share_artifacts_new RENAME TO public_share_artifacts`,
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("public share artifact snapshot migration: %w", err)
+		}
+	}
+	return tx.Commit()
+}
+
+func tableColumnSet(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
+	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	columns := make(map[string]bool)
+	for rows.Next() {
+		var cid, notNull, pk int
+		var name, columnType string
+		var defaultValue sql.NullString
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return nil, err
+		}
+		columns[name] = true
+	}
+	return columns, rows.Err()
 }
 
 // ensureArtifactStorageReferences removes legacy table-level/column UNIQUE

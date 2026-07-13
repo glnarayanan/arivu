@@ -14,11 +14,14 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/ids"
 )
+
+var publicRateCleanupUnix atomic.Int64
 
 type shareInput struct {
 	Title       string   `json:"title"`
@@ -135,7 +138,10 @@ func replaceShareMembers(c context.Context, tx *sql.Tx, shareID, userID string, 
 		if err != nil {
 			return errors.New("artifact not allowed")
 		}
-		res, err := tx.ExecContext(c, `INSERT INTO public_share_artifacts(share_id,artifact_id,artifact_type,added_at) SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM public_share_items WHERE share_id=? AND bookmark_id=(SELECT bookmark_id FROM artifacts WHERE id=?))`, shareID, id, kind, now, shareID, id)
+		res, err := tx.ExecContext(c, `INSERT INTO public_share_artifacts(share_id,artifact_id,bookmark_id,artifact_type,storage_key,mime_type,byte_size,added_at)
+			SELECT ?,a.id,a.bookmark_id,a.artifact_type,a.storage_key,a.mime_type,a.byte_size,? FROM artifacts a
+			WHERE a.id=? AND a.user_id=? AND a.deleted_at IS NULL AND a.artifact_type=?
+			AND EXISTS(SELECT 1 FROM public_share_items WHERE share_id=? AND bookmark_id=a.bookmark_id)`, shareID, now, id, userID, kind, shareID)
 		if err != nil {
 			return err
 		}
@@ -257,18 +263,39 @@ func (s *Service) PublicShareJSON(w http.ResponseWriter, r *http.Request) {
 	// Close the item cursor before artifact lookups. SQLite deployments commonly
 	// use a single connection, where querying while rows are open deadlocks.
 	_ = rows.Close()
+	artifactsByBookmark := make(map[string][]map[string]any)
+	artifactRows, err := s.db.QueryContext(r.Context(), `SELECT bookmark_id,artifact_id,artifact_type,mime_type,byte_size
+		FROM public_share_artifacts
+		WHERE share_id=?
+		ORDER BY added_at`, sh.ID)
+	if err != nil {
+		writeError(w, 500, "Could not load share")
+		return
+	}
+	for artifactRows.Next() {
+		var bookmarkID, aid, kind, mime string
+		var size int64
+		if err := artifactRows.Scan(&bookmarkID, &aid, &kind, &mime, &size); err != nil {
+			_ = artifactRows.Close()
+			writeError(w, 500, "Could not load share")
+			return
+		}
+		artifactsByBookmark[bookmarkID] = append(artifactsByBookmark[bookmarkID], map[string]any{
+			"id": aid, "type": kind, "mime_type": mime, "byte_size": size,
+			"url": "/s/" + r.PathValue("token") + "/artifacts/" + aid,
+		})
+	}
+	if err := artifactRows.Err(); err != nil {
+		_ = artifactRows.Close()
+		writeError(w, 500, "Could not load share")
+		return
+	}
+	_ = artifactRows.Close()
 	items := []map[string]any{}
 	for _, item := range materialized {
-		arts := []map[string]any{}
-		ar, _ := s.db.QueryContext(r.Context(), `SELECT a.id,a.artifact_type,a.mime_type,a.byte_size FROM public_share_artifacts sa JOIN artifacts a ON a.id=sa.artifact_id WHERE sa.share_id=? AND a.bookmark_id=? AND a.deleted_at IS NULL`, sh.ID, item.id)
-		if ar != nil {
-			for ar.Next() {
-				var aid, kind, mime string
-				var size int64
-				_ = ar.Scan(&aid, &kind, &mime, &size)
-				arts = append(arts, map[string]any{"id": aid, "type": kind, "mime_type": mime, "byte_size": size, "url": "/s/" + r.PathValue("token") + "/artifacts/" + aid})
-			}
-			ar.Close()
+		arts := artifactsByBookmark[item.id]
+		if arts == nil {
+			arts = []map[string]any{}
 		}
 		items = append(items, map[string]any{"id": item.id, "title": item.title, "url": item.url, "description": item.desc, "domain": item.domain, "reader_html": item.reader, "text": item.text, "created_at": item.created, "artifacts": arts})
 	}
@@ -282,6 +309,10 @@ func (s *Service) publicRate(r *http.Request) bool {
 	}
 	key := "rl:share:" + tokenDigest(host)
 	now := time.Now().UTC()
+	lastCleanup := publicRateCleanupUnix.Load()
+	if now.Unix()-lastCleanup >= 60 && publicRateCleanupUnix.CompareAndSwap(lastCleanup, now.Unix()) {
+		_, _ = s.db.ExecContext(r.Context(), `DELETE FROM rate_limits WHERE key IN (SELECT key FROM rate_limits WHERE expires_at<=? LIMIT 500)`, now.Format(time.RFC3339))
+	}
 	var count int
 	err := s.db.QueryRowContext(r.Context(), `INSERT INTO rate_limits(key,window_start,count,expires_at) VALUES(?,?,1,?)
 		ON CONFLICT(key) DO UPDATE SET count=CASE WHEN expires_at<=? THEN 1 ELSE count+1 END,
@@ -302,7 +333,7 @@ func (s *Service) PublicArtifact(w http.ResponseWriter, r *http.Request) {
 	}
 	var key, mime, kind string
 	var size int64
-	err = s.db.QueryRowContext(r.Context(), `SELECT a.storage_key,a.mime_type,a.artifact_type,a.byte_size FROM public_share_artifacts sa JOIN artifacts a ON a.id=sa.artifact_id JOIN public_share_items si ON si.share_id=sa.share_id AND si.bookmark_id=a.bookmark_id WHERE sa.share_id=? AND a.id=? AND a.deleted_at IS NULL AND a.artifact_type IN ('screenshot','pdf')`, sh.ID, r.PathValue("artifact")).Scan(&key, &mime, &kind, &size)
+	err = s.db.QueryRowContext(r.Context(), `SELECT storage_key,mime_type,artifact_type,byte_size FROM public_share_artifacts WHERE share_id=? AND artifact_id=? AND artifact_type IN ('screenshot','pdf')`, sh.ID, r.PathValue("artifact")).Scan(&key, &mime, &kind, &size)
 	if err != nil || s.assets == nil {
 		writeError(w, 404, "Artifact not found")
 		return
@@ -331,7 +362,7 @@ func (s *Service) PublicRSS(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 404, "Share not found")
 		return
 	}
-	rows, err := s.db.QueryContext(r.Context(), `SELECT public_title,public_url,public_description,public_published_at FROM public_share_items WHERE share_id=? ORDER BY added_at DESC`, sh.ID)
+	rows, err := s.db.QueryContext(r.Context(), `SELECT public_title,public_url,public_description,public_published_at FROM public_share_items WHERE share_id=? ORDER BY added_at DESC LIMIT 100`, sh.ID)
 	if err != nil {
 		writeError(w, 500, "Could not load share")
 		return
@@ -342,12 +373,24 @@ func (s *Service) PublicRSS(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var title, url, desc, created string
 		_ = rows.Scan(&title, &url, &desc, &created)
-		b.WriteString(`<item><title>` + html.EscapeString(title) + `</title><link>` + html.EscapeString(url) + `</link><guid isPermaLink="false">` + html.EscapeString(url) + `</guid><description>` + html.EscapeString(desc) + `</description><pubDate>` + html.EscapeString(created) + `</pubDate></item>`)
+		b.WriteString(`<item><title>` + html.EscapeString(title) + `</title><link>` + html.EscapeString(url) + `</link><guid isPermaLink="false">` + html.EscapeString(url) + `</guid><description>` + html.EscapeString(desc) + `</description>`)
+		if publishedAt, ok := rssDate(created); ok {
+			b.WriteString(`<pubDate>` + publishedAt + `</pubDate>`)
+		}
+		b.WriteString(`</item>`)
 	}
 	b.WriteString(`</channel></rss>`)
 	w.Header().Set("Content-Type", "application/rss+xml; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	_, _ = w.Write([]byte(b.String()))
+}
+
+func rssDate(value string) (string, bool) {
+	publishedAt, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return "", false
+	}
+	return html.EscapeString(publishedAt.UTC().Format(time.RFC1123Z)), true
 }
 
 func (s *Service) PublicSharePage(w http.ResponseWriter, r *http.Request) {
@@ -357,5 +400,5 @@ func (s *Service) PublicSharePage(w http.ResponseWriter, r *http.Request) {
 	if err != nil || !share.Indexable {
 		w.Header().Set("X-Robots-Tag", "noindex, nofollow")
 	}
-	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width"><title>Shared knowledge</title><link rel="stylesheet" href="/public-share.css"></head><body><header><h1 id=t>Shared knowledge</h1><p id=d></p><input id=q placeholder="Search"><select id=sort><option value=new>Newest</option><option value=old>Oldest</option><option value=title>Title</option></select></header><main id=list></main><script src="/public-share.js" defer></script></body></html>`)
+	_, _ = io.WriteString(w, `<!doctype html><html><head><meta charset=utf-8><meta name=viewport content="width=device-width"><title>Shared knowledge</title><link rel="stylesheet" href="/public-share.css"></head><body><header><h1 id=t>Shared knowledge</h1><p id=d></p><div class=controls><label for=q>Search shared knowledge</label><input id=q type=search><label for=sort>Sort items</label><select id=sort><option value=new>Newest</option><option value=old>Oldest</option><option value=title>Title</option></select></div><p id=result-count class=result-count aria-live=polite></p></header><main id=list></main><script src="/public-share.js" defer></script></body></html>`)
 }

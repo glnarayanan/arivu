@@ -57,6 +57,13 @@ func TestBackupCreatesConsistentSQLiteSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	db.Close()
+	assetPath := filepath.Join(dataDir, "arivu.sqlite3.assets", "objects", "ab", "artifact")
+	if err := os.MkdirAll(filepath.Dir(assetPath), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(assetPath, []byte("preserved"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 
 	backupDir, err := Backup(root)
 	if err != nil {
@@ -73,6 +80,13 @@ func TestBackupCreatesConsistentSQLiteSnapshot(t *testing.T) {
 	}
 	if value != "ok" {
 		t.Fatalf("backup value = %q", value)
+	}
+	artifact, err := os.ReadFile(filepath.Join(backupDir, "arivu.sqlite3.assets", "objects", "ab", "artifact"))
+	if err != nil {
+		t.Fatalf("read backed-up artifact: %v", err)
+	}
+	if string(artifact) != "preserved" {
+		t.Fatalf("backed-up artifact = %q", artifact)
 	}
 }
 

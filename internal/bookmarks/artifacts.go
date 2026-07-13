@@ -16,7 +16,10 @@ import (
 var ErrArtifactQuota = errors.New("artifact quota exceeded")
 
 func (s *Service) ReconcileAssets(ctx context.Context, store *assets.Store, grace time.Duration, limit int) (assets.ReconcileReport, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT storage_key FROM artifacts WHERE deleted_at IS NULL`)
+	s.artifactMu.Lock()
+	defer s.artifactMu.Unlock()
+	rows, err := s.db.QueryContext(ctx, `SELECT storage_key FROM artifacts WHERE deleted_at IS NULL
+		UNION SELECT storage_key FROM public_share_artifacts`)
 	if err != nil {
 		return assets.ReconcileReport{}, err
 	}

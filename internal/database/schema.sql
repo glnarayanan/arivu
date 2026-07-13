@@ -634,7 +634,7 @@ CREATE INDEX IF NOT EXISTS idx_public_shares_owner ON public_shares(user_id,crea
 
 CREATE TABLE IF NOT EXISTS public_share_items (
   share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
-  bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+  bookmark_id TEXT NOT NULL,
   evidence_id TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL,
   public_title TEXT NOT NULL DEFAULT '',
   public_description TEXT NOT NULL DEFAULT '',
@@ -649,8 +649,12 @@ CREATE TABLE IF NOT EXISTS public_share_items (
 
 CREATE TABLE IF NOT EXISTS public_share_artifacts (
   share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
-  artifact_id TEXT NOT NULL REFERENCES artifacts(id) ON DELETE CASCADE,
+  artifact_id TEXT NOT NULL,
+  bookmark_id TEXT NOT NULL,
   artifact_type TEXT NOT NULL CHECK(artifact_type IN ('screenshot','pdf')),
+  storage_key TEXT NOT NULL,
+  mime_type TEXT NOT NULL,
+  byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
   added_at TEXT NOT NULL,
   PRIMARY KEY(share_id,artifact_id)
 );
