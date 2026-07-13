@@ -537,7 +537,7 @@ function primaryNavActive(href) {
   return location.pathname === href || location.pathname.startsWith(`${href}/`) || (href === "/library" && location.pathname.startsWith("/bookmark/"));
 }
 
-function shell(title, content) {
+function shell(title, content, { wide = false } = {}) {
   const nav = [
     ["/today", "Home"],
     ["/library", "Library"],
@@ -547,7 +547,7 @@ function shell(title, content) {
   ];
   return `
     <a class="skip-link" href="#main-content">Skip to content</a>
-    <div class="shell">
+    <div class="shell${wide ? " shell-wide" : ""}">
       <aside class="sidebar">
         <a class="brand" href="/today" aria-label="Arivu home">Arivu</a>
         <nav class="nav" aria-label="Primary">
@@ -756,16 +756,20 @@ async function todayPage() {
   const note = daily.daily_note || { body: "" };
   setRoot(shell("Home", `<div class="home-view home-pulse">
     ${homeViewTabs("pulse")}
-    <section class="home-overview">
-      <form class="panel form" id="daily-note-form">
-        <span class="meta">${escapeHTML(date)}</span>
-        <h2>Daily note</h2>
-        <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea>${voiceButton("daily-note-body", "daily note")}</div>
-        <p class="form-message" id="daily-note-message" data-form-message hidden></p>
-        <button type="submit">Save daily note</button>
-      </form>
-      <div class="home-overview-rail stack">
-        <section class="panel">
+    <section class="home-pulse-columns">
+      <div class="home-pulse-primary stack">
+        <form class="panel form pulse-daily" id="daily-note-form">
+          <span class="meta">${escapeHTML(date)}</span>
+          <h2>Daily note</h2>
+          <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea>${voiceButton("daily-note-body", "daily note")}</div>
+          <p class="form-message" id="daily-note-message" data-form-message hidden></p>
+          <button type="submit">Save daily note</button>
+        </form>
+        ${todayList("New captures", inbox.items || [], "/library?stage=inbox", todayInboxItem, "pulse-captures")}
+        ${todayList("Worth revisiting", review.items || [], "/today?view=review", todayReviewItem, "pulse-revisit")}
+      </div>
+      <div class="home-pulse-rail stack">
+        <section class="panel pulse-summary">
           <span class="meta">Knowledge pulse</span>
           <h2>${Number((inbox.counts || {}).inbox || 0)} new · ${openActions.length + dueReminders.length} active · ${(review.items || []).length} worth revisiting</h2>
           <p>Continue a thread, revisit a useful memory, and notice what your recent material is beginning to connect.</p>
@@ -776,8 +780,9 @@ async function todayPage() {
             <a href="/today?view=review">Review</a>
           </div>
         </section>
-        ${memoryCard(memory)}
-        <section class="panel">
+        <div class="pulse-memory">${memoryCard(memory)}</div>
+        ${todayList("Continue thinking", [...openActions, ...dueReminders].slice(0, 8), "/today?view=focus", todayWorkItem, "pulse-continue")}
+        <section class="panel pulse-fast-capture">
           <h2>Fast capture</h2>
           <p>Save a link, note, quote, or file without deciding where it belongs first.</p>
           <div class="chips">
@@ -786,16 +791,7 @@ async function todayPage() {
             <a href="/search?mode=ask">Ask Arivu</a>
           </div>
         </section>
-      </div>
-    </section>
-    <section class="home-pulse-grid">
-      <div class="home-primary stack">
-        ${todayList("New captures", inbox.items || [], "/library?stage=inbox", todayInboxItem)}
-        ${todayList("Worth revisiting", review.items || [], "/today?view=review", todayReviewItem)}
-      </div>
-      <div class="home-sidebar stack">
-        ${todayList("Continue thinking", [...openActions, ...dueReminders].slice(0, 8), "/today?view=focus", todayWorkItem)}
-        <section class="panel">
+        <section class="panel pulse-recent-notes">
           <h2>Recent notes</h2>
           ${todayListBody((notes.notes || []).slice(0, 5), todayNoteItem)}
           <p><a class="text-link" href="/notes">Open notes</a></p>
@@ -837,8 +833,8 @@ function localDateKey(value = new Date()) {
   return new Date(value.getTime() - tzOffset).toISOString().slice(0, 10);
 }
 
-function todayList(title, items, href, renderItem) {
-  return `<section class="panel">
+function todayList(title, items, href, renderItem, className = "") {
+  return `<section class="panel${className ? ` ${className}` : ""}">
     <h2>${escapeHTML(title)}</h2>
     ${todayListBody(items, renderItem)}
     <p><a class="text-link" href="${href}">Open ${escapeHTML(title.toLowerCase())}</a></p>
@@ -2559,7 +2555,7 @@ async function boardPage() {
         ${(board.columns || []).map(boardColumn).join("")}
       </section>
     </div>
-  </div>`));
+  </div>`, { wide: true }));
 }
 
 function boardColumn(column) {
@@ -4300,6 +4296,11 @@ async function reviewPage() {
     api("/review?limit=12"),
     api("/memory-jogger").catch(() => ({ has_memory: false })),
   ]);
+  const memoryID = memory.has_memory && memory.bookmark ? memory.bookmark.id : "";
+  const reviewItems = (queue.items || []).filter((item) => item.item_type === "note" || item.id !== memoryID);
+  const reviewEmpty = memoryID
+    ? { eyebrow: "Caught up", title: "No additional review items due", body: "Finish the daily memory above and your review queue is clear." }
+    : { eyebrow: "Clear", title: "No review items due", body: "Arivu will bring older or high-signal saves back when they are ready." };
   setRoot(shell("Review", `<div class="home-view review-view">
     ${homeViewTabs("review")}
     <section class="review-overview">
@@ -4311,7 +4312,7 @@ async function reviewPage() {
       </section>
     </section>
     <section class="review-grid" aria-label="Review queue">
-      ${(queue.items || []).map(reviewCard).join("") || emptyState({ eyebrow: "Clear", title: "No review items due", body: "Arivu will bring older or high-signal saves back when they are ready." })}
+      ${reviewItems.map(reviewCard).join("") || emptyState(reviewEmpty)}
     </section>
   </div>`));
   document.querySelectorAll("[data-review-complete]").forEach((button) => {
@@ -4359,7 +4360,7 @@ function reviewCard(item) {
   return `<article class="panel bookmark">
     <span class="meta">Why this came back: ${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")} · priority ${Number(item.review_priority || 0)}</span>
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
-    <p>${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
+    <p class="review-summary">${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
     ${reasons.length ? `<div class="chips">${reasons.slice(0, 4).map((reason) => `<span>${escapeHTML(reason)}</span>`).join("")}</div>` : ""}
     ${feedbackControls(item.item_type || "bookmark", item.id || "", "review", item.feedback_state)}
     ${nextAction || importance ? `<p class="meta">${nextAction ? `Next: ${escapeHTML(nextAction)}` : ""}${nextAction && importance ? " · " : ""}${importance ? `Priority ${importance}` : ""}</p>` : ""}
@@ -4369,15 +4370,20 @@ function reviewCard(item) {
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
       ${isNote ? "" : `<button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>`}
     </p>
-    <section>
-      <h3>Task</h3>
-      ${actionItemsPanel(item.item_type || "bookmark", item.id, item.action_items || [])}
-    </section>
-    <section>
-      <h3>Reminder</h3>
-      ${reminderForm(item.item_type || "bookmark", item.id)}
-      ${reminderList(item.reminders || [])}
-    </section>
+    <details class="review-followup">
+      <summary>Add task or reminder</summary>
+      <div class="review-followup-body">
+        <section>
+          <h3>Task</h3>
+          ${actionItemsPanel(item.item_type || "bookmark", item.id, item.action_items || [])}
+        </section>
+        <section>
+          <h3>Reminder</h3>
+          ${reminderForm(item.item_type || "bookmark", item.id)}
+          ${reminderList(item.reminders || [])}
+        </section>
+      </div>
+    </details>
   </article>`;
 }
 

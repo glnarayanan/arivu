@@ -55,9 +55,18 @@ test("keeps Home navigation and purpose-built layouts across every view", () => 
   assert.ok(app.includes('href="/today?view=focus&amp;focus=${name}"'));
   assert.ok(app.includes('class="review-grid" aria-label="Review queue"'));
   assert.ok(app.includes('class="board-scroller" role="region" aria-label="Knowledge workflow board" tabindex="0"'));
+  assert.ok(app.includes('class="home-pulse-columns"'));
+  assert.ok(app.includes('"pulse-captures"'));
+  assert.ok(app.includes('class="panel pulse-summary"'));
+  assert.ok(app.includes('class="review-followup"'));
+  assert.ok(app.includes('item.id !== memoryID'));
+  assert.ok(app.includes('shell("Board", `<div class="home-view board-view">'));
+  assert.ok(app.includes('`, { wide: true }))'));
   assert.match(styles, /\.review-grid \{\s+display: grid;\s+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
   assert.match(styles, /\.board-grid \{[\s\S]*?grid-auto-flow: column;[\s\S]*?grid-auto-columns: minmax\(280px, 320px\);/);
-  assert.match(styles, /\.home-pulse-grid \{\s+display: grid;\s+grid-template-columns: minmax\(0, 1\.35fr\) minmax\(280px, 0\.65fr\);/);
+  assert.match(styles, /\.home-pulse-columns \{\s+display: grid;\s+grid-template-columns: minmax\(0, 1\.35fr\) minmax\(280px, 0\.65fr\);/);
+  assert.match(styles, /@media \(min-width: 1760px\) \{[\s\S]*?\.board-scroller \{[\s\S]*?overflow-x: visible;[\s\S]*?\.board-grid \{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);/);
+  assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.home-view > \.view-tabs a \{[\s\S]*?min-height: 44px;[\s\S]*?\.home-pulse-primary,[\s\S]*?display: contents;[\s\S]*?\.pulse-summary \{[\s\S]*?order: 2;/);
 });
 
 test("uses additive knowledge APIs and approachable object fields", () => {
