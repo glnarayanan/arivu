@@ -47,9 +47,9 @@ browser client remains first-party and dependency-free.
 
 The authenticated shell exposes exactly Home, Library, Notes, Graph, and
 Insights as primary navigation. Capture and Search / Ask are persistent global
-actions. Imports/exports, settings, and administration live under the profile
-or contextual controls. The existing More / `Cmd/Ctrl+K` command palette
-remains.
+actions. Settings and administration live under the profile controls;
+imports/exports remain a Settings section rather than a duplicate menu item.
+The existing More / `Cmd/Ctrl+K` command palette remains.
 
 ## Compatibility Routes
 

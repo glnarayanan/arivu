@@ -15,12 +15,17 @@ All notable changes to this project will be documented in this file.
   the one-binary SSRF-safe direct-fetch baseline.
 - Added Settings controls for per-user AI tagging and RSS/Atom subscription
   lifecycle/status, bookmark scroll-progress and capture-history presentation,
-  and one-time-copy public bookmark links with owner list/revoke controls.
+  retained-evidence inspection, collection management, and one-time-copy public
+  bookmark links with owner list/revoke controls. Removed the duplicate profile
+  import/export action and normalized legible hover states across clickable UI.
 - Added snapshot public shares with digest-only tokens, expiry/revocation,
   dedicated non-leaking projections, bounded public RSS, explicitly selected
   screenshot/PDF artifacts, rate limiting, and noindex/no-store defaults.
   Membership now freezes selected evidence and all public fields, migrations
-  safely backfill existing rows, and the reader uses self-hosted CSP-safe assets.
+  safely backfill existing rows, public snapshots survive private bookmark
+  deletion, and the reader uses self-hosted CSP-safe assets and product styling.
+- Added CLI-audience agent parity for collections, feed subscriptions, and
+  public-share lifecycle operations with bounded mutation quotas.
 - Backups now cover adjacent assets with a verified size/hash manifest while
   retaining restore compatibility with legacy manifest-free backups.
 - Artifact storage now supports multiple logical references per content object,
