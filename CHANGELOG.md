@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-07-13
+
 - Fixed Home so Pulse, Focus, Review, and Board keep their shared navigation;
   separated Focus status filters from Home routing; removed Pulse's cross-column
   whitespace; condensed Review with deduplicated memories and optional follow-up
