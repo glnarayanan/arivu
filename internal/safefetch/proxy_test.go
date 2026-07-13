@@ -3,6 +3,7 @@ package safefetch
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net"
@@ -60,6 +61,21 @@ func TestCaptureProxyRequiresAuthenticationBeforeForwarding(t *testing.T) {
 	proxy.ServeHTTP(response, proxyRequest(http.MethodGet, "https://example.com/article", "wrong"))
 	if response.Code != http.StatusProxyAuthRequired || calls.Load() != 0 {
 		t.Fatalf("status=%d upstream calls=%d", response.Code, calls.Load())
+	}
+}
+
+func TestCaptureProxyAcceptsPerAttemptBasicCredentials(t *testing.T) {
+	var calls atomic.Int32
+	proxy := newCaptureProxy("secret", ProxyLimits{}, roundTripFunc(func(*http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader("ok"))}, nil
+	}), nil)
+	request := proxyRequest(http.MethodGet, "https://example.com/article", "")
+	request.Header.Set("Proxy-Authorization", "Basic "+base64.StdEncoding.EncodeToString([]byte("arivu:secret")))
+	response := httptest.NewRecorder()
+	proxy.ServeHTTP(response, request)
+	if response.Code != http.StatusOK || calls.Load() != 1 {
+		t.Fatalf("status=%d calls=%d", response.Code, calls.Load())
 	}
 }
 
@@ -257,7 +273,7 @@ func TestStartCaptureProxyUsesPrivateUnixSocketAndCleansUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0o600 || info.Mode()&os.ModeSocket == 0 {
+	if err != nil || info.Mode().Perm() != 0o660 || info.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("socket info=%v err=%v", info, err)
 	}
 	if err := proxy.Close(); err != nil {

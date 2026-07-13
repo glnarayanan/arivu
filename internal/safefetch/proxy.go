@@ -3,6 +3,7 @@ package safefetch
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"io"
 	"net"
@@ -49,7 +50,7 @@ func StartCaptureProxy(ctx context.Context, socketPath, token string, limits Pro
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(socketPath, 0o600); err != nil {
+	if err := os.Chmod(socketPath, 0o660); err != nil {
 		_ = listener.Close()
 		return nil, err
 	}
@@ -172,8 +173,10 @@ func (p *CaptureProxy) connect(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *CaptureProxy) authorized(value string) bool {
-	want := "Bearer " + p.token
-	return subtle.ConstantTimeCompare([]byte(value), []byte(want)) == 1
+	bearer := subtle.ConstantTimeCompare([]byte(value), []byte("Bearer "+p.token))
+	basicValue := base64.StdEncoding.EncodeToString([]byte("arivu:" + p.token))
+	basic := subtle.ConstantTimeCompare([]byte(value), []byte("Basic "+basicValue))
+	return bearer|basic == 1
 }
 
 func (p *CaptureProxy) take(size int64) int64 {

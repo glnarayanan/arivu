@@ -4,7 +4,6 @@ package browsercapture
 import (
 	"context"
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -63,19 +62,8 @@ func Run(ctx context.Context, cfg config.BrowserCaptureConfig, rawURL string, in
 	}
 	defer os.RemoveAll(dir)
 	_ = os.Chmod(dir, 0700)
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	token := hex.EncodeToString(b)
-	formats := []string{}
-	if cfg.SelfContainedHTML {
-		formats = append(formats, "self_contained_html")
-	}
-	if cfg.Screenshot {
-		formats = append(formats, "screenshot")
-	}
-	if cfg.PDF {
-		formats = append(formats, "pdf")
-	}
+	token := rand.Text()
+	formats := requestedFormats(cfg)
 	req := request{1, rawURL, dir, token, formats, cfg.MaxFileBytes, cfg.MaxTotalBytes}
 	in, _ := json.Marshal(req)
 	cctx, cancel := context.WithTimeout(ctx, cfg.Timeout)
@@ -169,3 +157,17 @@ func (b *limitedBuffer) Write(p []byte) (int, error) {
 }
 
 func (b *limitedBuffer) String() string { return b.b.String() }
+
+func requestedFormats(cfg config.BrowserCaptureConfig) []string {
+	formats := make([]string, 0, 3)
+	if cfg.SelfContainedHTML {
+		formats = append(formats, "self_contained_html")
+	}
+	if cfg.Screenshot {
+		formats = append(formats, "screenshot")
+	}
+	if cfg.PDF {
+		formats = append(formats, "pdf")
+	}
+	return formats
+}
