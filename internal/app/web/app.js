@@ -881,6 +881,8 @@ async function libraryPage() {
   const request = new URLSearchParams(params);
   request.delete("view");
   request.delete("management");
+  if (request.has("collection") && !request.has("collection_id")) request.set("collection_id", request.get("collection"));
+  request.delete("collection");
   if (request.has("search") && !request.has("q")) request.set("q", request.get("search"));
   request.delete("search");
   if (!request.has("limit")) request.set("limit", "48");
@@ -899,7 +901,7 @@ async function libraryPage() {
         <button type="button" class="secondary" id="library-new-object">New object</button>
       </div>
     </section>
-    ${collectionBrowser(collections, params.get("collection"))}
+    ${collectionBrowser(collections, params.get("collection_id") || params.get("collection"))}
     <form class="library-filters" role="search" id="library-filter-form">
       <div class="field library-query"><label for="library-query">Search library</label><input id="library-query" name="q" type="search" value="${escapeHTML(params.get("q") || "")}" placeholder="Title, text, or topic"></div>
       <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(["bookmark", "note", "daily_note", "annotation", "knowledge_object", "entity", "concept"], params.get("type"), "All types")}</select></div>
@@ -932,7 +934,7 @@ async function libraryPage() {
 function collectionBrowser(collections, selected) {
   const byParent = new Map();
   for (const item of collections || []) { const key = item.parent_id || ""; byParent.set(key, [...(byParent.get(key) || []), item]); }
-  const branch = (parent = "", depth = 0) => depth >= 100 ? "" : (byParent.get(parent) || []).map((item) => `<li><a href="/library?collection=${encodeURIComponent(item.id)}"${selected === item.id ? ' aria-current="page"' : ""}>${escapeHTML(item.name)}</a>${byParent.has(item.id) ? `<ul>${branch(item.id, depth + 1)}</ul>` : ""}</li>`).join("");
+  const branch = (parent = "", depth = 0) => depth >= 100 ? "" : (byParent.get(parent) || []).map((item) => `<li><a href="/library?collection_id=${encodeURIComponent(item.id)}"${selected === item.id ? ' aria-current="page"' : ""}>${escapeHTML(item.name)}</a>${byParent.has(item.id) ? `<ul>${branch(item.id, depth + 1)}</ul>` : ""}</li>`).join("");
   const trail = []; let current = (collections || []).find((item) => item.id === selected); for (let depth = 0; current && depth < 100; depth++) { trail.unshift(current); current = (collections || []).find((item) => item.id === current.parent_id); }
   return `<aside class="panel collection-browser" aria-labelledby="collections-heading"><h2 id="collections-heading">Collections</h2>${trail.length ? `<nav aria-label="Collection breadcrumbs"><a href="/library">Library</a> ${trail.map((item) => ` / ${escapeHTML(item.name)}`).join("")}</nav>` : ""}<ul class="collection-tree">${branch() || "<li>No collections yet.</li>"}</ul><p class="meta">Manage collection names and nesting in Settings.</p></aside>`;
 }
@@ -956,6 +958,10 @@ function libraryItem(item) {
 
 function knowledgeTypeLabel(value = "item") {
   return String(value).replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function evidencePanel(evidence = []) {
+  return `<details class="evidence-inspector"><summary>Source evidence (${evidence.length})</summary>${evidence.length ? `<ol>${evidence.map((item) => `<li><div class="evidence-heading"><strong>${escapeHTML(knowledgeTypeLabel(item.kind))}</strong>${item.selected ? `<span class="status success">Selected</span>` : ""}</div><p class="meta">${[item.origin, item.extraction_method, item.quality_status, `Authority ${Number(item.authority || 0)}`, item.extractor_version].filter(Boolean).map((value) => escapeHTML(knowledgeTypeLabel(value))).join(" · ")}</p>${(item.quality_reasons || []).length ? `<p class="meta">Quality notes: ${(item.quality_reasons || []).map((reason) => escapeHTML(knowledgeTypeLabel(reason))).join(", ")}</p>` : ""}${item.canonical_url ? `<p><a href="${escapeHTML(item.canonical_url)}" target="_blank" rel="noreferrer noopener">Open evidence source</a></p>` : ""}${item.preview ? `<details><summary>Preview preserved text</summary><p>${escapeHTML(item.preview)}</p></details>` : ""}</li>`).join("")}</ol>` : `<p class="meta">No preserved source evidence is available yet.</p>`}</details>`;
 }
 
 function knowledgeItemHref(type, id, title = "") {
@@ -2579,6 +2585,7 @@ async function bookmarkPage() {
       ${summaryPanel(summary)}
       <div class="reader-content" tabindex="-1">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
       <section aria-labelledby="artifacts-heading"><h2 id="artifacts-heading">Artifacts</h2>${artifacts.length ? `<ul>${artifacts.map((artifact) => `<li>${artifact.type === "screenshot" ? `<img src="${escapeHTML(artifact.download_url)}" alt="Preserved page screenshot" loading="lazy">` : ""}<a href="${escapeHTML(artifact.download_url)}" ${artifact.type === "pdf" ? `target="_blank" rel="noopener"` : "download"}>${escapeHTML(artifact.type === "source_response" ? "Source response" : knowledgeTypeLabel(artifact.type))}</a> <span class="meta">${escapeHTML(artifact.mime_type)} · ${Math.ceil(Number(artifact.byte_size || 0) / 1024)} KB</span></li>`).join("")}</ul>` : `<p class="meta">No source artifacts are available yet.</p>`}</section>
+      ${evidencePanel(bookmark.evidence || [])}
       <details><summary>Capture attempt history (${(bookmark.capture_attempts || []).length})</summary><ul>${(bookmark.capture_attempts || []).map((attempt) => `<li><strong>${escapeHTML(attempt.status)}</strong> · ${escapeHTML(attempt.engine)} ${attempt.error_code ? `· ${escapeHTML(attempt.error_code)}` : ""}</li>`).join("")}</ul></details>
       <details class="panel"><summary>Share this bookmark</summary><form id="share-bookmark-form" class="form"><div class="field"><label for="share-title">Public title</label><input id="share-title" required maxlength="200" value="${escapeHTML(bookmark.title || "Shared bookmark")}"></div><div class="field"><label for="share-expiry">Expires (optional)</label><input id="share-expiry" type="datetime-local"></div><button type="submit">Create share link</button><p class="form-message" data-form-message hidden></p><div id="share-created" hidden></div></form></details>
     </article>
@@ -3403,6 +3410,7 @@ async function settingsPage() {
   const tabs = [
     ["profile", "Profile", "Manage your profile and account access."],
     ["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."],
+    ["collections", "Collections", "Create, rename, move, and delete Library collections."],
     ["tags", "Tags", "Keep tag names consistent and merge aliases into one tag."],
     ["connections", "Connections", "Connect provider accounts and sync saved items."],
     ["automation", "Automation", "Control AI tagging and RSS capture."],
@@ -3420,6 +3428,7 @@ async function settingsPage() {
   ui.tabs(document.querySelector("#settings-tabs"));
   bindProfilePanel();
   bindImportPanel();
+  bindCollectionSettingsPanel();
   bindTagSettingsPanel();
   bindConnectionsPanel();
   bindAutomationPanel();
@@ -3430,23 +3439,24 @@ async function settingsPage() {
 function settingsPanel(id) {
   if (id === "profile") return profilePanel();
   if (id === "import") return importPanel();
+  if (id === "collections") return collectionSettingsPanel();
   if (id === "tags") return tagSettingsPanel();
   if (id === "connections") return connectionsPanel();
-  if (id === "automation") return `<section class="split"><form class="panel form" id="ai-tagging-form"><h3>AI tagging</h3><div class="field"><label for="ai-tagging-mode">Mode</label><select id="ai-tagging-mode"><option value="off">Off</option><option value="existing-vocabulary">Existing vocabulary only</option><option value="allow-new">Allow new tags</option></select></div><button type="submit">Save mode</button></form><form class="panel form" id="feed-form"><h3>Add RSS or Atom feed</h3><div class="field"><label for="feed-url">Feed URL</label><input id="feed-url" type="url" required></div><div class="field"><label for="feed-name">Name</label><input id="feed-name"></div><div class="field"><label for="feed-tags">Tags</label><input id="feed-tags" placeholder="news, research"></div><button type="submit">Add subscription</button></form></section><section class="panel"><h3>Subscriptions</h3><div id="feed-list"></div></section>`;
-  if (id === "sharing") return `<section class="panel"><h3>Public links</h3><p>Tokens are shown only when a link is created.</p><div id="share-list"></div></section>`;
+  if (id === "automation") return `<section class="split"><form class="panel form" id="ai-tagging-form"><h3>AI tagging</h3><div class="field"><label for="ai-tagging-mode">Mode</label><select id="ai-tagging-mode"><option value="off">Off</option><option value="existing-vocabulary">Existing vocabulary only</option><option value="allow-new">Allow new tags</option></select></div><p class="form-message" id="ai-tagging-message" data-form-message hidden></p><button type="submit">Save mode</button></form><form class="panel form" id="feed-form"><h3>Add RSS or Atom feed</h3><div class="field"><label for="feed-url">Feed URL</label><input id="feed-url" type="url" required></div><div class="field"><label for="feed-name">Name</label><input id="feed-name"></div><div class="field"><label for="feed-tags">Tags</label><input id="feed-tags" placeholder="news, research"></div><p class="form-message" id="feed-message" data-form-message hidden></p><button type="submit">Add subscription</button></form></section><section class="panel"><h3 id="feed-list-heading" tabindex="-1">Subscriptions</h3><p class="form-message" id="feed-list-message" role="alert" hidden></p><div id="feed-list"></div></section>`;
+  if (id === "sharing") return `<section class="panel"><h3 id="share-list-heading" tabindex="-1">Public links</h3><p>Tokens are shown only when a link is created.</p><p class="form-message" id="share-list-message" role="alert" hidden></p><div id="share-list"></div></section>`;
   if (id === "api-keys") return apiKeysPanel();
   return "";
 }
 
 async function bindAutomationPanel() {
   const mode = document.querySelector("#ai-tagging-mode"), form = document.querySelector("#ai-tagging-form"), feedForm = document.querySelector("#feed-form"); if (!form) return;
-  mode.value = (await api("/ai-tagging")).mode;
-  form.addEventListener("submit", async (e) => { e.preventDefault(); await api("/ai-tagging", { method: "PUT", body: JSON.stringify({ mode: mode.value }) }); ui.toast("AI tagging mode saved", "success"); });
-  const refresh = async () => { const feeds = await api("/subscriptions"); document.querySelector("#feed-list").innerHTML = feeds.map(f => `<article class="annotation"><p><strong>${escapeHTML(f.name || f.url)}</strong> <span class="meta">${escapeHTML(f.status)}${f.last_poll_at ? ` · checked ${escapeHTML(f.last_poll_at)}` : ""}</span></p>${f.error ? `<p>${escapeHTML(f.error)}</p>` : ""}<p class="button-row"><button class="secondary" data-feed-toggle="${escapeHTML(f.id)}" data-enabled="${f.enabled}">${f.enabled ? "Pause" : "Resume"}</button><button class="danger" data-feed-delete="${escapeHTML(f.id)}">Delete</button></p></article>`).join("") || `<p class="meta">No subscriptions yet.</p>`; document.querySelectorAll("[data-feed-toggle]").forEach(b => b.onclick = async () => { await api(`/subscriptions/${b.dataset.feedToggle}`, { method: "PATCH", body: JSON.stringify({ enabled: b.dataset.enabled !== "true" }) }); refresh(); }); document.querySelectorAll("[data-feed-delete]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Delete subscription", body: "Captured bookmarks remain in your library.", confirm: "Delete", cancel: "Keep" })) { await api(`/subscriptions/${b.dataset.feedDelete}`, { method: "DELETE" }); refresh(); } }); };
-  feedForm.addEventListener("submit", async e => { e.preventDefault(); await api("/subscriptions", { method: "POST", body: JSON.stringify({ url: document.querySelector("#feed-url").value, name: document.querySelector("#feed-name").value, tags: splitTags(document.querySelector("#feed-tags").value) }) }); feedForm.reset(); await refresh(); ui.toast("Subscription added", "success"); }); await refresh();
+  try { mode.value = (await api("/ai-tagging")).mode; } catch (err) { setFormMessage(form, err.message); }
+  form.addEventListener("submit", async (event) => { event.preventDefault(); const done = setButtonBusy(event.submitter, "Saving"); setFormMessage(form); try { await api("/ai-tagging", { method: "PUT", body: JSON.stringify({ mode: mode.value }) }); setFormMessage(form, "AI tagging mode saved.", "success"); } catch (err) { setFormMessage(form, err.message); } finally { done(); } });
+  const refresh = async (focusID = "", focusHeading = false) => { const message = document.querySelector("#feed-list-message"); try { const feeds = await api("/subscriptions"); message.hidden = true; document.querySelector("#feed-list").innerHTML = feeds.map(f => `<article class="annotation"><p><strong>${escapeHTML(f.name || f.url)}</strong> <span class="meta">${escapeHTML(f.status)}${f.last_poll_at ? ` · checked ${escapeHTML(f.last_poll_at)}` : ""}</span></p>${f.error ? `<p>${escapeHTML(f.error)}</p>` : ""}<p class="button-row"><button class="secondary" data-feed-toggle="${escapeHTML(f.id)}" data-enabled="${f.enabled}">${f.enabled ? "Pause" : "Resume"}</button><button class="danger" data-feed-delete="${escapeHTML(f.id)}">Delete</button></p></article>`).join("") || `<p class="meta">No subscriptions yet.</p>`; document.querySelectorAll("[data-feed-toggle]").forEach(b => b.onclick = async () => { const id = b.dataset.feedToggle; const done = setButtonBusy(b, b.dataset.enabled === "true" ? "Pausing" : "Resuming"); try { await api(`/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: b.dataset.enabled !== "true" }) }); await refresh(id); } catch (err) { message.textContent = err.message; message.hidden = false; } finally { done(); } }); document.querySelectorAll("[data-feed-delete]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Delete subscription", body: "Captured bookmarks remain in your library.", confirm: "Delete", cancel: "Keep" })) { const done = setButtonBusy(b, "Deleting"); try { await api(`/subscriptions/${b.dataset.feedDelete}`, { method: "DELETE" }); await refresh("", true); } catch (err) { message.textContent = err.message; message.hidden = false; } finally { done(); } } }); if (focusID) [...document.querySelectorAll("[data-feed-toggle]")].find((button) => button.dataset.feedToggle === focusID)?.focus(); else if (focusHeading) document.querySelector("#feed-list-heading")?.focus(); } catch (err) { message.textContent = err.message; message.hidden = false; } };
+  feedForm.addEventListener("submit", async event => { event.preventDefault(); const done = setButtonBusy(event.submitter, "Adding"); setFormMessage(feedForm); try { await api("/subscriptions", { method: "POST", body: JSON.stringify({ url: document.querySelector("#feed-url").value, name: document.querySelector("#feed-name").value, tags: splitTags(document.querySelector("#feed-tags").value) }) }); feedForm.reset(); await refresh(); setFormMessage(feedForm, "Subscription added.", "success"); } catch (err) { setFormMessage(feedForm, err.message); } finally { done(); } }); await refresh();
 }
 
-async function bindSharingPanel() { const list = document.querySelector("#share-list"); if (!list) return; const refresh = async () => { const shares = await api("/shares"); list.innerHTML = shares.map(s => `<article class="annotation"><p><strong>${escapeHTML(s.title)}</strong> <span class="meta">${s.revoked_at ? "Revoked" : s.expires_at ? `Expires ${escapeHTML(s.expires_at)}` : "Active"}</span></p>${!s.revoked_at ? `<button class="danger" data-revoke-share="${escapeHTML(s.id)}">Revoke</button>` : ""}</article>`).join("") || `<p class="meta">No public links.</p>`; document.querySelectorAll("[data-revoke-share]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Revoke public link", body: "Anyone using this link will immediately lose access.", confirm: "Revoke", cancel: "Keep active" })) { await api(`/shares/${b.dataset.revokeShare}/revoke`, { method: "POST", body: "{}" }); refresh(); } }); }; await refresh(); }
+async function bindSharingPanel() { const list = document.querySelector("#share-list"), message = document.querySelector("#share-list-message"); if (!list) return; const refresh = async (focusHeading = false) => { try { const shares = await api("/shares"); message.hidden = true; list.innerHTML = shares.map(s => `<article class="annotation"><p><strong>${escapeHTML(s.title)}</strong> <span class="meta">${s.revoked_at ? "Revoked" : s.expires_at ? `Expires ${escapeHTML(s.expires_at)}` : "Active"}</span></p>${!s.revoked_at ? `<button class="danger" data-revoke-share="${escapeHTML(s.id)}">Revoke</button>` : ""}</article>`).join("") || `<p class="meta">No public links.</p>`; document.querySelectorAll("[data-revoke-share]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Revoke public link", body: "Anyone using this link will immediately lose access.", confirm: "Revoke", cancel: "Keep active" })) { const done = setButtonBusy(b, "Revoking"); try { await api(`/shares/${b.dataset.revokeShare}/revoke`, { method: "POST", body: "{}" }); await refresh(true); } catch (err) { message.textContent = err.message; message.hidden = false; } finally { done(); } } }); if (focusHeading) document.querySelector("#share-list-heading")?.focus(); } catch (err) { message.textContent = err.message; message.hidden = false; } }; await refresh(); }
 
 function profilePanel() {
   return `<section class="split">
@@ -3513,6 +3523,94 @@ async function bindProfilePanel() {
       done();
     }
   });
+}
+
+function collectionSettingsPanel() {
+  return `<section class="split collection-settings">
+    <form class="panel form" id="collection-form">
+      <h3>New collection</h3>
+      <div class="field"><label for="collection-name">Name</label><input id="collection-name" required maxlength="120" placeholder="Research"></div>
+      <div class="field"><label for="collection-parent">Parent</label><select id="collection-parent"><option value="">No parent</option></select></div>
+      <p class="form-message" id="collection-message" data-form-message hidden></p>
+      <button type="submit">Create collection</button>
+    </form>
+    <section class="panel" aria-labelledby="collection-list-heading">
+      <h3 id="collection-list-heading" tabindex="-1">Current collections</h3>
+      <p class="form-message" id="collection-list-message" role="alert" hidden></p>
+      <div id="collection-list" class="stack"><p class="meta">Loading collections.</p></div>
+    </section>
+  </section>`;
+}
+
+async function bindCollectionSettingsPanel() {
+  const form = document.querySelector("#collection-form");
+  const list = document.querySelector("#collection-list");
+  const parent = document.querySelector("#collection-parent");
+  const listMessage = document.querySelector("#collection-list-message");
+  if (!form || !list || !parent) return;
+  const refresh = async (focusID = "", focusHeading = false) => {
+    try {
+      const collections = await api("/collections");
+      listMessage.hidden = true;
+      parent.innerHTML = `<option value="">No parent</option>${collections.map((item) => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name)}</option>`).join("")}`;
+      list.innerHTML = collections.map((item) => { const descendants = collectionDescendantIDs(collections, item.id); return `<form class="collection-editor annotation" data-collection-id="${escapeHTML(item.id)}">
+        <div class="field"><label for="collection-name-${escapeHTML(item.id)}">Name</label><input id="collection-name-${escapeHTML(item.id)}" data-collection-name value="${escapeHTML(item.name)}" required maxlength="120"></div>
+        <div class="field"><label for="collection-parent-${escapeHTML(item.id)}">Parent</label><select id="collection-parent-${escapeHTML(item.id)}" data-collection-parent><option value="">No parent</option>${collections.filter((candidate) => candidate.id !== item.id && !descendants.has(candidate.id)).map((candidate) => `<option value="${escapeHTML(candidate.id)}"${candidate.id === item.parent_id ? " selected" : ""}>${escapeHTML(candidate.name)}</option>`).join("")}</select></div>
+        <p class="form-message" data-form-message hidden></p>
+        <div class="button-row"><button type="submit" class="secondary">Save</button><button type="button" class="danger" data-collection-delete>Delete</button></div>
+      </form>`; }).join("") || `<p class="meta">No collections yet. Create one to organize related saves.</p>`;
+      list.querySelectorAll(".collection-editor").forEach((editor) => {
+        editor.addEventListener("submit", async (event) => {
+          event.preventDefault();
+          const done = setButtonBusy(event.submitter, "Saving");
+          setFormMessage(editor);
+          try {
+            await api(`/collections/${encodeURIComponent(editor.dataset.collectionId)}`, { method: "PATCH", body: JSON.stringify({ name: editor.querySelector("[data-collection-name]").value, parent_id: editor.querySelector("[data-collection-parent]").value }) });
+            await refresh(editor.dataset.collectionId);
+          } catch (err) { setFormMessage(editor, err.message); } finally { done(); }
+        });
+        editor.querySelector("[data-collection-delete]").addEventListener("click", async (event) => {
+          const confirmed = await ui.confirmDestructive({ title: "Delete collection", body: "Bookmarks stay in your Library. Child collections must be moved or deleted first.", confirm: "Delete collection", cancel: "Keep collection" });
+          if (!confirmed) return;
+          const done = setButtonBusy(event.currentTarget, "Deleting");
+          setFormMessage(editor);
+          try { await api(`/collections/${encodeURIComponent(editor.dataset.collectionId)}`, { method: "DELETE" }); await refresh("", true); } catch (err) { setFormMessage(editor, err.message); } finally { done(); }
+        });
+      });
+      if (focusID) [...list.querySelectorAll(".collection-editor")].find((editor) => editor.dataset.collectionId === focusID)?.querySelector("[data-collection-name]")?.focus();
+      else if (focusHeading) document.querySelector("#collection-list-heading")?.focus();
+    } catch (err) {
+      listMessage.textContent = err.message;
+      listMessage.hidden = false;
+    }
+  };
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Creating");
+    setFormMessage(form);
+    try {
+      await api("/collections", { method: "POST", body: JSON.stringify({ name: document.querySelector("#collection-name").value, parent_id: parent.value }) });
+      form.reset();
+      await refresh();
+      setFormMessage(form, "Collection created.", "success");
+    } catch (err) { setFormMessage(form, err.message); } finally { done(); }
+  });
+  await refresh();
+}
+
+function collectionDescendantIDs(collections, rootID) {
+  const descendants = new Set();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const item of collections) {
+      if (!descendants.has(item.id) && (item.parent_id === rootID || descendants.has(item.parent_id))) {
+        descendants.add(item.id);
+        changed = true;
+      }
+    }
+  }
+  return descendants;
 }
 
 function tagSettingsPanel() {
@@ -4917,7 +5015,6 @@ function bindGlobalShellActions() {
   const profile = document.querySelector("#profile-menu");
   if (!profile) return;
   const items = [
-    { label: "Imports and exports", action: () => navigate("/settings?section=import") },
     { label: "Settings", action: () => navigate("/settings") },
   ];
   if (state.user?.is_admin) items.push({ label: "Administration", action: () => navigate("/admin") });

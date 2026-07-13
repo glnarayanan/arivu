@@ -4,6 +4,9 @@ import test from "node:test";
 
 const app = await readFile(new URL("../web/app.js", import.meta.url), "utf8");
 const styles = await readFile(new URL("../web/styles.css", import.meta.url), "utf8");
+const publicShare = await readFile(new URL("../web/public-share.js", import.meta.url), "utf8");
+const publicShareStyles = await readFile(new URL("../web/public-share.css", import.meta.url), "utf8");
+const shareHandlers = await readFile(new URL("../../bookmarks/shares.go", import.meta.url), "utf8");
 
 test("declares the five canonical knowledge destinations", () => {
   assert.ok(app.includes(`const nav = [
@@ -79,4 +82,26 @@ test("opens visual graph nodes at their saved knowledge item", () => {
   assert.ok(app.includes('<li><a class="graph-list-node" href="${escapeHTML(knowledgeItemHref(node.type, node.source_id, node.title))}"'));
   assert.ok(!app.includes('<li><button type="button" class="graph-list-node"'));
   assert.ok(styles.includes(".graph-list-node:hover"));
+});
+
+test("uses the backend collection filter contract and exposes collection management", () => {
+  assert.ok(app.includes('request.set("collection_id", request.get("collection"))'));
+  assert.ok(app.includes('href="/library?collection_id=${encodeURIComponent(item.id)}"'));
+  assert.ok(app.includes('["collections", "Collections"'));
+  assert.ok(app.includes('method: "PATCH", body: JSON.stringify({ name:'));
+  assert.ok(app.includes('method: "DELETE" }'));
+});
+
+test("keeps imports inside Settings and uses legible interactive states", () => {
+  assert.ok(!app.includes('{ label: "Imports and exports", action:'));
+  assert.ok(styles.includes('background: var(--accent-hover);\n    color: var(--accent-ink);'));
+  assert.ok(styles.includes('.tab-list [role="tab"]:hover:not([aria-selected="true"])'));
+});
+
+test("public shares use the product typography and labeled controls", () => {
+  assert.ok(shareHandlers.includes('<label for=q>Search shared knowledge</label>'));
+  assert.ok(shareHandlers.includes('<label for=sort>Sort items</label>'));
+  assert.ok(publicShare.includes("resultCount.textContent"));
+  assert.ok(publicShareStyles.includes('/fonts/geist-variable.woff2'));
+  assert.ok(publicShareStyles.includes('--accent-soft:'));
 });

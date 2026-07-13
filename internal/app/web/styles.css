@@ -982,9 +982,47 @@ progress::-moz-progress-bar {
   color: var(--ink);
 }
 
+.tab-list [role="tab"]:hover:not([aria-selected="true"]) {
+  background: var(--accent-50);
+  color: var(--accent-700);
+}
+
 .tab-list [role="tab"][aria-selected="true"] {
   background: var(--accent);
   color: white;
+}
+
+.collection-settings {
+  align-items: start;
+}
+
+.collection-editor {
+  display: grid;
+  grid-template-columns: minmax(10rem, 1fr) minmax(10rem, 1fr) auto;
+  gap: var(--space-3);
+  align-items: end;
+}
+
+.collection-editor .form-message {
+  grid-column: 1 / -1;
+}
+
+.evidence-inspector > ol {
+  display: grid;
+  gap: var(--space-3);
+  padding-left: var(--space-5);
+}
+
+.evidence-inspector > ol > li {
+  padding-block: var(--space-2);
+  border-bottom: 1px dashed var(--line);
+}
+
+.evidence-heading {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
 }
 
 #toast-region {
@@ -1572,6 +1610,7 @@ progress::-moz-progress-bar {
   button:hover:not(:disabled),
   .button:hover:not([aria-disabled="true"]) {
     background: var(--accent-hover);
+    color: var(--accent-ink);
   }
 
   button.secondary:hover:not(:disabled),
@@ -1590,6 +1629,15 @@ progress::-moz-progress-bar {
 
   .bookmark:hover {
     background: var(--accent-50);
+  }
+
+  .chips a:hover,
+  .stage-tabs a:hover,
+  .collection-tree a:hover,
+  .text-link:hover,
+  .row-open:hover {
+    color: var(--accent-800);
+    text-decoration-thickness: 2px;
   }
 }
 
@@ -1630,6 +1678,14 @@ progress::-moz-progress-bar {
 }
 
 @media (max-width: 760px) {
+  .collection-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .collection-editor .form-message {
+    grid-column: auto;
+  }
+
   .shell {
     width: 100%;
     display: block;
