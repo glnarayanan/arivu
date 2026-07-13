@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/glnarayanan/arivu/internal/assets"
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/bookmarks"
 	"github.com/glnarayanan/arivu/internal/config"
@@ -42,6 +43,7 @@ type App struct {
 	resendHTTP *http.Client
 	startedAt  time.Time
 	usage      *providerUsage
+	assets     *assets.Store
 	cancel     context.CancelFunc
 	wg         sync.WaitGroup
 }
@@ -70,6 +72,9 @@ var (
 )
 
 func New(cfg config.Config) (*App, error) {
+	if err := cfg.Validate(); err != nil {
+		return nil, err
+	}
 	db, err := database.Open(context.Background(), cfg.DBPath)
 	if err != nil {
 		return nil, err
@@ -82,6 +87,15 @@ func New(cfg config.Config) (*App, error) {
 	a.fetcher = safefetch.NewWithUserAgent(cfg.FetchUserAgent)
 	initialAI := runtimeconfig.FromConfig(cfg)
 	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{Provider: initialAI.AIProvider, APIKey: initialAI.AIAPIKey, Model: initialAI.AIModel, BaseURL: initialAI.AIBaseURL})
+	assetStore, err := assets.New(cfg.DBPath, safefetch.MaxBodyBytes)
+	if err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	a.bookmarks.SetAssetStore(assetStore)
+	a.assets = assetStore
+	a.bookmarks.SetArtifactQuota(cfg.ArtifactQuotaBytes)
+	a.bookmarks.SetBrowserCapture(cfg.BrowserCapture)
 	a.bookmarks.SetAIProvider(a.aiClient)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
@@ -128,8 +142,11 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/bookmarks/{id}", a.withUser(a.bookmarks.Get))
 	mux.HandleFunc("DELETE /api/bookmarks/{id}", a.withUser(a.bookmarks.Delete))
 	mux.HandleFunc("POST /api/bookmarks/{id}/reprocess", a.withUserQuota(quotaBookmarkCreate, a.bookmarks.Reprocess))
+	mux.HandleFunc("GET /api/artifacts/{id}", a.withUser(a.bookmarks.ArtifactMetadata))
+	mux.HandleFunc("GET /api/artifacts/{id}/content", a.withUser(a.bookmarks.ArtifactContent))
 	mux.HandleFunc("PATCH /api/bookmarks/{id}/read-status", a.withUser(a.bookmarks.ReadStatus))
 	mux.HandleFunc("POST /api/bookmarks/{id}/accessed", a.withUser(a.bookmarks.Accessed))
+	mux.HandleFunc("PUT /api/bookmarks/{id}/reading-progress", a.withUser(a.bookmarks.ReadingProgress))
 	mux.HandleFunc("POST /api/bookmarks/{id}/annotations", a.withUser(a.bookmarks.CreateAnnotation))
 	mux.HandleFunc("GET /api/bookmarks/{id}/related", a.withUser(a.bookmarks.Related))
 	mux.HandleFunc("POST /api/bookmarks/import", a.withUserQuota(quotaBookmarkImport, a.bookmarks.Import))
@@ -149,7 +166,20 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/insights", a.withUser(a.bookmarks.Insights))
 	mux.HandleFunc("GET /api/collections", a.withUser(a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/collections", a.withUser(a.bookmarks.CreateCollection))
+	mux.HandleFunc("PATCH /api/collections/{id}", a.withUser(a.bookmarks.UpdateCollection))
+	mux.HandleFunc("DELETE /api/collections/{id}", a.withUser(a.bookmarks.DeleteCollection))
 	mux.HandleFunc("POST /api/collections/{id}/add", a.withUser(a.bookmarks.AddToCollection))
+	mux.HandleFunc("GET /api/ai-tagging", a.withUser(a.bookmarks.GetAITaggingSetting))
+	mux.HandleFunc("PUT /api/ai-tagging", a.withUser(a.bookmarks.SetAITaggingSetting))
+	mux.HandleFunc("GET /api/subscriptions", a.withUser(a.bookmarks.Subscriptions))
+	mux.HandleFunc("GET /api/shares", a.withUser(a.bookmarks.Shares))
+	mux.HandleFunc("POST /api/shares", a.withUser(a.bookmarks.CreateShare))
+	mux.HandleFunc("PUT /api/shares/{id}", a.withUser(a.bookmarks.UpdateShare))
+	mux.HandleFunc("POST /api/shares/{id}/revoke", a.withUser(a.bookmarks.RevokeShare))
+	mux.HandleFunc("DELETE /api/shares/{id}", a.withUser(a.bookmarks.DeleteShare))
+	mux.HandleFunc("POST /api/subscriptions", a.withUser(a.bookmarks.CreateSubscription))
+	mux.HandleFunc("PATCH /api/subscriptions/{id}", a.withUser(a.bookmarks.UpdateSubscription))
+	mux.HandleFunc("DELETE /api/subscriptions/{id}", a.withUser(a.bookmarks.DeleteSubscription))
 	mux.HandleFunc("GET /api/daily-notes/{date}", a.withUser(a.bookmarks.GetDailyNote))
 	mux.HandleFunc("PUT /api/daily-notes/{date}", a.withUserQuota(quotaNotesWrite, a.bookmarks.SaveDailyNote))
 	mux.HandleFunc("GET /api/notes", a.withUser(a.bookmarks.Notes))
@@ -253,6 +283,10 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/x/callback", a.withUser(a.xCallback))
 	mux.HandleFunc("POST /api/auth/x/sync", a.withUser(a.xSync))
 	mux.HandleFunc("POST /api/auth/x/disconnect", a.withUser(a.xDisconnect))
+	mux.HandleFunc("GET /api/public/shares/{token}", a.bookmarks.PublicShareJSON)
+	mux.HandleFunc("GET /s/{token}", a.bookmarks.PublicSharePage)
+	mux.HandleFunc("GET /s/{token}/rss.xml", a.bookmarks.PublicRSS)
+	mux.HandleFunc("GET /s/{token}/artifacts/{artifact}", a.bookmarks.PublicArtifact)
 
 	mux.HandleFunc("/", a.frontend)
 

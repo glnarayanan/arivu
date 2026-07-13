@@ -20,16 +20,35 @@ func (a *App) startWorkers(ctx context.Context) {
 	go func() {
 		defer a.wg.Done()
 		ticker := time.NewTicker(2 * time.Second)
+		maintenance := time.NewTicker(time.Hour)
 		defer ticker.Stop()
+		defer maintenance.Stop()
+		a.reconcileAssets(ctx)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				a.bookmarks.ScheduleDueFeeds(ctx)
 				a.runOneJob(ctx)
+			case <-maintenance.C:
+				a.reconcileAssets(ctx)
 			}
 		}
 	}()
+}
+
+func (a *App) reconcileAssets(parent context.Context) {
+	ctx, cancel := context.WithTimeout(parent, 30*time.Second)
+	defer cancel()
+	report, err := a.bookmarks.ReconcileAssets(ctx, a.assets, a.cfg.AssetGCGrace, 1000)
+	if err != nil {
+		log.Printf("asset reconciliation: %v", err)
+		return
+	}
+	for _, key := range report.Missing {
+		log.Printf("asset reconciliation: referenced object missing: %s", key)
+	}
 }
 
 func (a *App) runOneJob(ctx context.Context) {

@@ -1177,6 +1177,14 @@ progress::-moz-progress-bar {
   background: var(--sand-50);
 }
 
+.library-list.density-compact .library-row {
+  padding-block: var(--space-2);
+}
+
+.library-list.density-compact .library-copy > p:not(.meta) {
+  display: none;
+}
+
 .library-kind {
   color: var(--base-600);
   font-size: 0.8125rem;

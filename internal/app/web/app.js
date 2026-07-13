@@ -884,8 +884,10 @@ async function libraryPage() {
   if (request.has("search") && !request.has("q")) request.set("q", request.get("search"));
   request.delete("search");
   if (!request.has("limit")) request.set("limit", "48");
-  const result = await api(`/library/items?${request}`);
-  const items = result.items || [];
+  const [result, collections] = await Promise.all([api(`/library/items?${request}`), api("/collections")]);
+  const sort = params.get("sort") || (params.get("q") ? "relevance" : "newest");
+  const density = params.get("density") || localStorage.getItem("arivu-library-density") || "comfortable";
+  const items = [...(result.items || [])].sort((a, b) => sort === "oldest" ? String(a.updated_at).localeCompare(String(b.updated_at)) : sort === "title" ? String(a.title).localeCompare(String(b.title)) : sort === "domain" ? String(a.source).localeCompare(String(b.source)) : sort === "newest" ? String(b.updated_at).localeCompare(String(a.updated_at)) : 0);
   setRoot(shell("Library", `
     <section class="library-heading">
       <div>
@@ -897,6 +899,7 @@ async function libraryPage() {
         <button type="button" class="secondary" id="library-new-object">New object</button>
       </div>
     </section>
+    ${collectionBrowser(collections, params.get("collection"))}
     <form class="library-filters" role="search" id="library-filter-form">
       <div class="field library-query"><label for="library-query">Search library</label><input id="library-query" name="q" type="search" value="${escapeHTML(params.get("q") || "")}" placeholder="Title, text, or topic"></div>
       <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(["bookmark", "note", "daily_note", "annotation", "knowledge_object", "entity", "concept"], params.get("type"), "All types")}</select></div>
@@ -906,21 +909,32 @@ async function libraryPage() {
       <div class="field"><label for="library-source">Source</label><input id="library-source" name="source" value="${escapeHTML(params.get("source") || "")}" placeholder="Source"></div>
       <div class="field"><label for="library-date-from">From</label><input id="library-date-from" name="date_from" type="date" value="${escapeHTML(params.get("date_from") || "")}"></div>
       <div class="field"><label for="library-date-to">To</label><input id="library-date-to" name="date_to" type="date" value="${escapeHTML(params.get("date_to") || "")}"></div>
+      <div class="field"><label for="library-sort">Sort</label><select id="library-sort" name="sort">${libraryFilterOptions(["relevance", "newest", "oldest", "title", "domain"], sort, "Sort")}</select></div>
+      <div class="field"><label for="library-density">Density</label><select id="library-density" name="density">${libraryFilterOptions(["comfortable", "compact"], density, "Density")}</select></div>
       <button type="submit" class="secondary">Apply</button>
     </form>
-    <section class="library-list" aria-label="Library items">
+    <section class="library-list density-${escapeHTML(density)}" aria-label="Library items">
       ${items.map(libraryItem).join("") || emptyState({ eyebrow: "A clear desk", title: "Your library is ready", body: "Capture a link, note, quote, or file. Arivu will keep it even before enrichment or organization.", tag: "section" })}
     </section>
     ${result.next_cursor ? `<p class="pagination"><a class="button secondary" href="/library?${escapeHTML(libraryNextParams(params, result.next_cursor))}">Load more</a></p>` : ""}
   `));
   document.querySelector("#library-capture")?.addEventListener("click", openCaptureComposer);
   document.querySelector("#library-new-object")?.addEventListener("click", openObjectComposer);
+  localStorage.setItem("arivu-library-density", density);
   document.querySelector("#library-filter-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
     const next = new URLSearchParams(new FormData(event.currentTarget));
     for (const [key, value] of [...next]) if (!String(value).trim()) next.delete(key);
     navigate(`/library${next.size ? `?${next}` : ""}`);
   });
+}
+
+function collectionBrowser(collections, selected) {
+  const byParent = new Map();
+  for (const item of collections || []) { const key = item.parent_id || ""; byParent.set(key, [...(byParent.get(key) || []), item]); }
+  const branch = (parent = "", depth = 0) => depth >= 100 ? "" : (byParent.get(parent) || []).map((item) => `<li><a href="/library?collection=${encodeURIComponent(item.id)}"${selected === item.id ? ' aria-current="page"' : ""}>${escapeHTML(item.name)}</a>${byParent.has(item.id) ? `<ul>${branch(item.id, depth + 1)}</ul>` : ""}</li>`).join("");
+  const trail = []; let current = (collections || []).find((item) => item.id === selected); for (let depth = 0; current && depth < 100; depth++) { trail.unshift(current); current = (collections || []).find((item) => item.id === current.parent_id); }
+  return `<aside class="panel collection-browser" aria-labelledby="collections-heading"><h2 id="collections-heading">Collections</h2>${trail.length ? `<nav aria-label="Collection breadcrumbs"><a href="/library">Library</a> ${trail.map((item) => ` / ${escapeHTML(item.name)}`).join("")}</nav>` : ""}<ul class="collection-tree">${branch() || "<li>No collections yet.</li>"}</ul><p class="meta">Manage collection names and nesting in Settings.</p></aside>`;
 }
 
 function libraryFilterOptions(values, selected, emptyLabel) {
@@ -934,7 +948,7 @@ function libraryItem(item) {
     <div class="library-copy">
       <h2><a href="${href}">${escapeHTML(item.title || "Untitled")}</a></h2>
       <p>${escapeHTML(String(item.body || "").slice(0, 220))}</p>
-      <p class="meta">${[item.source, stageLabel(item.stage || ""), item.connection, formatDate(item.updated_at)].filter(Boolean).map(escapeHTML).join(" · ")}</p>
+      <p class="meta">${[item.source, item.capture_status && `Capture: ${item.capture_status.replaceAll("_", " ")}`, stageLabel(item.stage || ""), item.connection, formatDate(item.updated_at)].filter(Boolean).map(escapeHTML).join(" · ")}</p>
     </div>
     <a class="row-open" href="${href}" aria-label="Open ${escapeHTML(item.title || knowledgeTypeLabel(item.type))}">Open</a>
   </article>`;
@@ -2548,9 +2562,11 @@ async function bookmarkPage() {
   ]);
   const summary = bookmark.ai_summary || {};
   const itemState = bookmark.item_state || { stage: "inbox", importance: 0, next_action: "" };
+  const artifacts = bookmark.artifacts || [];
   setRoot(shell(bookmark.title || "Bookmark", `
     <article class="panel reader primary-reader">
       <p class="meta">${bookmark.domain || ""} · ${bookmark.reading_time || 0} min</p>
+      <p class="meta" role="status">Capture: ${escapeHTML((bookmark.capture_status || "saved").replaceAll("_", " "))}</p>
       <p class="button-row">
         <a class="button" href="${escapeHTML(bookmark.url)}" target="_blank" rel="noreferrer noopener">Open original</a>
         <button type="button" class="secondary" id="toggle-read">${bookmark.read_status ? "Mark unread" : "Mark read"}</button>
@@ -2558,9 +2574,13 @@ async function bookmarkPage() {
         <button type="button" class="danger" id="delete-bookmark">Delete bookmark</button>
       </p>
       <p id="job-status" hidden></p>
+      <div class="reading-progress"><label for="reading-progress">Reading progress</label><progress id="reading-progress" max="100" value="${Math.round(Number(bookmark.reading_progress || 0) * 100)}"></progress><span id="reading-progress-value">${Math.round(Number(bookmark.reading_progress || 0) * 100)}%</span></div>
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
       <div class="reader-content" tabindex="-1">${bookmark.html_content || `<p>${escapeHTML(bookmark.text_content || bookmark.description || "No archived text yet.")}</p>`}</div>
+      <section aria-labelledby="artifacts-heading"><h2 id="artifacts-heading">Artifacts</h2>${artifacts.length ? `<ul>${artifacts.map((artifact) => `<li>${artifact.type === "screenshot" ? `<img src="${escapeHTML(artifact.download_url)}" alt="Preserved page screenshot" loading="lazy">` : ""}<a href="${escapeHTML(artifact.download_url)}" ${artifact.type === "pdf" ? `target="_blank" rel="noopener"` : "download"}>${escapeHTML(artifact.type === "source_response" ? "Source response" : knowledgeTypeLabel(artifact.type))}</a> <span class="meta">${escapeHTML(artifact.mime_type)} · ${Math.ceil(Number(artifact.byte_size || 0) / 1024)} KB</span></li>`).join("")}</ul>` : `<p class="meta">No source artifacts are available yet.</p>`}</section>
+      <details><summary>Capture attempt history (${(bookmark.capture_attempts || []).length})</summary><ul>${(bookmark.capture_attempts || []).map((attempt) => `<li><strong>${escapeHTML(attempt.status)}</strong> · ${escapeHTML(attempt.engine)} ${attempt.error_code ? `· ${escapeHTML(attempt.error_code)}` : ""}</li>`).join("")}</ul></details>
+      <details class="panel"><summary>Share this bookmark</summary><form id="share-bookmark-form" class="form"><div class="field"><label for="share-title">Public title</label><input id="share-title" required maxlength="200" value="${escapeHTML(bookmark.title || "Shared bookmark")}"></div><div class="field"><label for="share-expiry">Expires (optional)</label><input id="share-expiry" type="datetime-local"></div><button type="submit">Create share link</button><p class="form-message" data-form-message hidden></p><div id="share-created" hidden></div></form></details>
     </article>
     <section class="panel primary-work">
       <div>
@@ -2650,6 +2670,27 @@ async function bookmarkPage() {
       </section>
     </details>
   `));
+  const reader = document.querySelector(".reader-content");
+  let progressTimer;
+  const saveProgress = () => {
+    const max = Math.max(1, reader.scrollHeight - reader.clientHeight);
+    const progress = Math.max(0, Math.min(1, reader.scrollTop / max));
+    document.querySelector("#reading-progress").value = Math.round(progress * 100);
+    document.querySelector("#reading-progress-value").textContent = `${Math.round(progress * 100)}%`;
+    clearTimeout(progressTimer);
+    progressTimer = setTimeout(() => api(`/bookmarks/${id}/reading-progress`, { method: "PUT", body: JSON.stringify({ progress }) }).catch(() => {}), 500);
+  };
+  reader?.addEventListener("scroll", saveProgress, { passive: true });
+  const shareForm = document.querySelector("#share-bookmark-form");
+  shareForm?.addEventListener("submit", async (event) => {
+    event.preventDefault(); const done = setButtonBusy(event.submitter, "Creating"); setFormMessage(shareForm);
+    try {
+      const expiry = document.querySelector("#share-expiry").value;
+      const result = await api("/shares", { method: "POST", body: JSON.stringify({ title: document.querySelector("#share-title").value, item_ids: [id], expires_at: expiry ? new Date(expiry).toISOString() : null }) });
+      const box = document.querySelector("#share-created"); box.hidden = false; box.innerHTML = `<p><strong>Copy this link now.</strong> The token is shown only once.</p><p class="button-row"><input readonly value="${escapeHTML(new URL(result.url, location.origin).href)}"><button type="button" class="secondary" id="copy-share">Copy</button></p>`;
+      box.querySelector("#copy-share").addEventListener("click", () => navigator.clipboard.writeText(box.querySelector("input").value).then(() => ui.toast("Share link copied", "success")));
+    } catch (err) { setFormMessage(shareForm, err.message); } finally { done(); }
+  });
   document.querySelector("#toggle-read").addEventListener("click", async (event) => {
     const done = setButtonBusy(event.currentTarget, bookmark.read_status ? "Marking unread" : "Marking read");
     try {
@@ -3364,6 +3405,8 @@ async function settingsPage() {
     ["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."],
     ["tags", "Tags", "Keep tag names consistent and merge aliases into one tag."],
     ["connections", "Connections", "Connect provider accounts and sync saved items."],
+    ["automation", "Automation", "Control AI tagging and RSS capture."],
+    ["sharing", "Sharing", "Review and revoke public links."],
   ];
   if (user.is_admin) tabs.push(["api-keys", "Provider settings", "Configure optional AI, email, and X connections."]);
   if (requestedSection === "api-keys" && !user.is_admin) history.replaceState({}, "", "/settings?section=profile");
@@ -3379,6 +3422,8 @@ async function settingsPage() {
   bindImportPanel();
   bindTagSettingsPanel();
   bindConnectionsPanel();
+  bindAutomationPanel();
+  bindSharingPanel();
   if (user.is_admin) bindAPIKeysPanel();
 }
 
@@ -3387,9 +3432,21 @@ function settingsPanel(id) {
   if (id === "import") return importPanel();
   if (id === "tags") return tagSettingsPanel();
   if (id === "connections") return connectionsPanel();
+  if (id === "automation") return `<section class="split"><form class="panel form" id="ai-tagging-form"><h3>AI tagging</h3><div class="field"><label for="ai-tagging-mode">Mode</label><select id="ai-tagging-mode"><option value="off">Off</option><option value="existing-vocabulary">Existing vocabulary only</option><option value="allow-new">Allow new tags</option></select></div><button type="submit">Save mode</button></form><form class="panel form" id="feed-form"><h3>Add RSS or Atom feed</h3><div class="field"><label for="feed-url">Feed URL</label><input id="feed-url" type="url" required></div><div class="field"><label for="feed-name">Name</label><input id="feed-name"></div><div class="field"><label for="feed-tags">Tags</label><input id="feed-tags" placeholder="news, research"></div><button type="submit">Add subscription</button></form></section><section class="panel"><h3>Subscriptions</h3><div id="feed-list"></div></section>`;
+  if (id === "sharing") return `<section class="panel"><h3>Public links</h3><p>Tokens are shown only when a link is created.</p><div id="share-list"></div></section>`;
   if (id === "api-keys") return apiKeysPanel();
   return "";
 }
+
+async function bindAutomationPanel() {
+  const mode = document.querySelector("#ai-tagging-mode"), form = document.querySelector("#ai-tagging-form"), feedForm = document.querySelector("#feed-form"); if (!form) return;
+  mode.value = (await api("/ai-tagging")).mode;
+  form.addEventListener("submit", async (e) => { e.preventDefault(); await api("/ai-tagging", { method: "PUT", body: JSON.stringify({ mode: mode.value }) }); ui.toast("AI tagging mode saved", "success"); });
+  const refresh = async () => { const feeds = await api("/subscriptions"); document.querySelector("#feed-list").innerHTML = feeds.map(f => `<article class="annotation"><p><strong>${escapeHTML(f.name || f.url)}</strong> <span class="meta">${escapeHTML(f.status)}${f.last_poll_at ? ` · checked ${escapeHTML(f.last_poll_at)}` : ""}</span></p>${f.error ? `<p>${escapeHTML(f.error)}</p>` : ""}<p class="button-row"><button class="secondary" data-feed-toggle="${escapeHTML(f.id)}" data-enabled="${f.enabled}">${f.enabled ? "Pause" : "Resume"}</button><button class="danger" data-feed-delete="${escapeHTML(f.id)}">Delete</button></p></article>`).join("") || `<p class="meta">No subscriptions yet.</p>`; document.querySelectorAll("[data-feed-toggle]").forEach(b => b.onclick = async () => { await api(`/subscriptions/${b.dataset.feedToggle}`, { method: "PATCH", body: JSON.stringify({ enabled: b.dataset.enabled !== "true" }) }); refresh(); }); document.querySelectorAll("[data-feed-delete]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Delete subscription", body: "Captured bookmarks remain in your library.", confirm: "Delete", cancel: "Keep" })) { await api(`/subscriptions/${b.dataset.feedDelete}`, { method: "DELETE" }); refresh(); } }); };
+  feedForm.addEventListener("submit", async e => { e.preventDefault(); await api("/subscriptions", { method: "POST", body: JSON.stringify({ url: document.querySelector("#feed-url").value, name: document.querySelector("#feed-name").value, tags: splitTags(document.querySelector("#feed-tags").value) }) }); feedForm.reset(); await refresh(); ui.toast("Subscription added", "success"); }); await refresh();
+}
+
+async function bindSharingPanel() { const list = document.querySelector("#share-list"); if (!list) return; const refresh = async () => { const shares = await api("/shares"); list.innerHTML = shares.map(s => `<article class="annotation"><p><strong>${escapeHTML(s.title)}</strong> <span class="meta">${s.revoked_at ? "Revoked" : s.expires_at ? `Expires ${escapeHTML(s.expires_at)}` : "Active"}</span></p>${!s.revoked_at ? `<button class="danger" data-revoke-share="${escapeHTML(s.id)}">Revoke</button>` : ""}</article>`).join("") || `<p class="meta">No public links.</p>`; document.querySelectorAll("[data-revoke-share]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Revoke public link", body: "Anyone using this link will immediately lose access.", confirm: "Revoke", cancel: "Keep active" })) { await api(`/shares/${b.dataset.revokeShare}/revoke`, { method: "POST", body: "{}" }); refresh(); } }); }; await refresh(); }
 
 function profilePanel() {
   return `<section class="split">
