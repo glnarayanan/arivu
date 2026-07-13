@@ -15,9 +15,9 @@ jobs:
       matrix:
         include:
           - arch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-22.04
           - arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-22.04-arm
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -28,8 +28,16 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.1
       - run: go mod verify
       - run: go test ./...
+      - name: Verify capture dependencies
+        run: |
+          npm ci --prefix capture
+          npm test --prefix capture
+          npm audit --omit=dev --prefix capture
       - name: Build native Linux artifacts
         env:
           RELEASE_LDFLAGS: -s -w -X github.com/glnarayanan/arivu/internal/buildinfo.releaseVersion=${{ github.ref_name }}
@@ -39,6 +47,27 @@ jobs:
           go build -trimpath -ldflags="$RELEASE_LDFLAGS" -o "dist/arivu-installer-linux-${{ matrix.arch }}" ./cmd/arivu-installer
           go version -m "dist/arivu-linux-${{ matrix.arch }}" > "dist/buildinfo-arivu-linux-${{ matrix.arch }}.txt"
           go version -m "dist/arivu-installer-linux-${{ matrix.arch }}" > "dist/buildinfo-installer-linux-${{ matrix.arch }}.txt"
+      - name: Build native capture runtime
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: /tmp/arivu-capture-runtime/browsers
+        run: |
+          rm -rf /tmp/arivu-capture-runtime
+          mkdir -p /tmp/arivu-capture-runtime
+          (cd capture && npx playwright install --with-deps chromium)
+          rustup toolchain install 1.88.0 --profile minimal
+          cargo +1.88.0 install --locked --version 2.10.1 --root /tmp/arivu-capture-monolith monolith
+          install -m 0755 "$(command -v node)" /tmp/arivu-capture-runtime/node
+          install -m 0755 /tmp/arivu-capture-monolith/bin/monolith /tmp/arivu-capture-runtime/monolith
+          cp -a capture/node_modules /tmp/arivu-capture-runtime/node_modules
+          rm -rf /tmp/arivu-capture-runtime/node_modules/.bin
+          cp -a capture/src /tmp/arivu-capture-runtime/src
+          cp -a capture/package.json capture/package-lock.json capture/README.md /tmp/arivu-capture-runtime/
+          ARIVU_MONOLITH_PATH=/tmp/arivu-capture-runtime/monolith \
+            /tmp/arivu-capture-runtime/node /tmp/arivu-capture-runtime/src/preflight.mjs
+          tar -C /tmp/arivu-capture-runtime -czf "dist/arivu-capture-linux-${{ matrix.arch }}.tar.gz" .
+          tar -tzf "dist/arivu-capture-linux-${{ matrix.arch }}.tar.gz" | grep -Eq '^\./node$'
+          ARIVU_CAPTURE_RELEASE_ARCHIVE="$GITHUB_WORKSPACE/dist/arivu-capture-linux-${{ matrix.arch }}.tar.gz" \
+            go test ./internal/installer -run '^TestCaptureReleaseArchive$' -count=1
       - uses: actions/attest-build-provenance@v3
         with:
           subject-path: dist/*
@@ -62,23 +91,11 @@ jobs:
         with:
           path: dist
           merge-multiple: true
-      - name: Verify isolated capture release
-        run: |
-          npm ci --prefix capture
-          npm test --prefix capture
-          npm audit --omit=dev --prefix capture
-          docker build -t arivu-capture:release capture
-          docker compose -f deploy/compose.yaml config >/dev/null
-          systemd-analyze verify deploy/arivu-capture.service
       - name: Prepare release bundle
         run: |
           cp deploy/install.sh dist/install.sh
-          tar -czf dist/arivu-capture-bundle.tgz \
-            -C capture package.json package-lock.json src README.md Dockerfile \
-            -C ../deploy arivu-capture.service
-          tar -tzf dist/arivu-capture-bundle.tgz | grep -qx arivu-capture.service
           go list -m -json all > dist/go-modules.inventory.jsonl
-          (cd dist && sha256sum arivu-linux-* arivu-installer-linux-* arivu-capture-bundle.tgz install.sh buildinfo-*.txt go-modules.inventory.jsonl > SHA256SUMS)
+          (cd dist && sha256sum arivu-linux-* arivu-installer-linux-* arivu-capture-linux-*.tar.gz install.sh buildinfo-*.txt go-modules.inventory.jsonl > SHA256SUMS)
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

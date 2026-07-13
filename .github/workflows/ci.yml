@@ -17,6 +17,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.1
       - run: go mod verify
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
       - run: node --check internal/app/web/app.js
@@ -32,13 +35,6 @@ jobs:
           npm ci --prefix capture
           npm test --prefix capture
           npm audit --omit=dev --prefix capture
-          docker build -t arivu-capture:test capture
-          docker compose -f deploy/compose.yaml config >/dev/null
-          systemd-analyze verify deploy/arivu-capture.service
-          tar -czf /tmp/arivu-capture-bundle.tgz \
-            -C capture package.json package-lock.json src README.md Dockerfile \
-            -C ../deploy arivu-capture.service
-          tar -tzf /tmp/arivu-capture-bundle.tgz | grep -qx arivu-capture.service
       - run: go test ./...
       - name: Build release artifact
         run: |

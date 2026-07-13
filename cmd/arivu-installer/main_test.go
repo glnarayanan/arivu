@@ -85,6 +85,23 @@ func TestParseOptionsAcceptsExistingProxyAliasAndVersion(t *testing.T) {
 	}
 }
 
+func TestParseOptionsEnablesNativeCaptureByDefaultAndAllowsOptOut(t *testing.T) {
+	opts, _, _, _, _, err := parseOptions(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !opts.CaptureEnabled {
+		t.Fatal("fresh installer should enable complete capture by default")
+	}
+	opts, _, _, _, flagsSet, err := parseOptions([]string{"--browser-capture=false"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opts.CaptureEnabled || !flagsSet["browser-capture"] {
+		t.Fatalf("capture opt-out was not retained: opts=%#v flags=%#v", opts, flagsSet)
+	}
+}
+
 func TestValidateAllowsNonInteractiveReconfigureWithoutPassword(t *testing.T) {
 	opts, apply, nonInteractive, _, _, err := parseOptions([]string{
 		"--non-interactive",
@@ -108,6 +125,7 @@ func TestInteractiveWizardWritesPromptsToProvidedOutput(t *testing.T) {
 		"app-only",
 		"n",
 		"y",
+		"y",
 		"",
 	}, "\n")
 	var out bytes.Buffer
@@ -119,7 +137,7 @@ func TestInteractiveWizardWritesPromptsToProvidedOutput(t *testing.T) {
 		t.Fatalf("unexpected wizard options: %#v", got)
 	}
 	prompts := out.String()
-	for _, want := range []string{"Domain/subdomain: ", "Admin email: ", "TLS notification email", "Proxy mode", "Allow public signups", "Install daily SQLite backups"} {
+	for _, want := range []string{"Domain/subdomain: ", "Admin email: ", "TLS notification email", "Proxy mode", "Allow public signups", "Install daily SQLite backups", "Install complete browser capture"} {
 		if !strings.Contains(prompts, want) {
 			t.Fatalf("wizard output missing %q:\n%s", want, prompts)
 		}
@@ -142,6 +160,7 @@ func TestInteractiveReconfigureKeepsDisabledBackupsOnDefault(t *testing.T) {
 		"", // proxy mode
 		"", // signups
 		"", // backups
+		"", // capture
 		"",
 	}, "\n")
 	got, _, err := interactiveWizardWithReader(bufio.NewReader(strings.NewReader(input)), opts, installer.ApplyOptions{DryRun: true})

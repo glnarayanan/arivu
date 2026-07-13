@@ -32,6 +32,7 @@ type Options struct {
 	ProxyMode      ProxyMode
 	SignupsEnabled bool
 	BackupEnabled  bool
+	CaptureEnabled bool
 	SkipDNSCheck   bool
 	BindPort       int
 	Version        string
@@ -155,6 +156,9 @@ func validateHostFacts(opts Options, facts HostFacts) error {
 			return fmt.Errorf("unsupported Linux distribution %s", facts.OSID)
 		}
 	}
+	if opts.CaptureEnabled && !captureHostSupported(facts.OSID, facts.OSVersionID) {
+		return fmt.Errorf("complete capture requires Ubuntu 22.04+ or Debian 12+; rerun with --browser-capture=false to install the core app only")
+	}
 	if facts.Arch != "" && facts.Arch != "amd64" && facts.Arch != "arm64" {
 		return fmt.Errorf("unsupported architecture %s", facts.Arch)
 	}
@@ -170,6 +174,22 @@ func validateHostFacts(opts Options, facts HostFacts) error {
 		}
 	}
 	return nil
+}
+
+func captureHostSupported(osID, version string) bool {
+	majorText, _, _ := strings.Cut(version, ".")
+	major, err := strconv.Atoi(majorText)
+	if err != nil {
+		return false
+	}
+	switch osID {
+	case "ubuntu":
+		return major >= 22
+	case "debian":
+		return major >= 12
+	default:
+		return false
+	}
 }
 
 func chooseProxyMode(opts Options, facts HostFacts) (ProxyMode, []string, error) {
@@ -217,6 +237,9 @@ func plannedActions(opts Options, facts HostFacts, mode ProxyMode, port int) []A
 		{"Bootstrap first admin", "Run arivu admin bootstrap with the password provided through stdin."},
 		{"Install systemd service", fmt.Sprintf("Run Arivu on 127.0.0.1:%d with a hardened arivu.service.", port)},
 	}
+	if opts.CaptureEnabled {
+		actions = append(actions, Action{"Install complete capture", "Download the verified native capture runtime and run it as an isolated systemd service; no Docker or host npm setup."})
+	}
 	switch mode {
 	case ProxyManagedCaddy:
 		actions = append(actions, Action{"Configure Caddy", "Install an Arivu-owned Caddy site block; do not replace global Caddy config."})
@@ -248,6 +271,9 @@ func plannedFiles(opts Options, facts HostFacts, mode ProxyMode, port int) []Man
 	files := []ManagedFile{
 		{Path: "/etc/arivu/arivu.env", Mode: "0640", Content: EnvFile(envOpts, port, "GENERATED-BY-INSTALLER")},
 		{Path: "/etc/systemd/system/arivu.service", Mode: "0644", Content: ServiceFile()},
+	}
+	if opts.CaptureEnabled {
+		files = append(files, ManagedFile{Path: "/etc/systemd/system/arivu-capture.service", Mode: "0644", Content: CaptureServiceFile()})
 	}
 	if opts.BackupEnabled {
 		files = append(files,
@@ -282,27 +308,33 @@ func existingProxyFiles(opts Options, facts HostFacts, port int) []ManagedFile {
 }
 
 func EnvFile(opts Options, port int, secret string) string {
-	signups := "false"
-	if opts.SignupsEnabled {
-		signups = "true"
-	}
-	backups := "false"
-	if opts.BackupEnabled {
-		backups = "true"
-	}
 	lines := []string{
 		fmt.Sprintf("ARIVU_ADDR=127.0.0.1:%d", port),
 		"ARIVU_DB=/var/lib/arivu/arivu.sqlite3",
 		"APP_URL=https://" + opts.Domain,
 		"COOKIE_SECURE=true",
-		"SIGNUPS_ENABLED=" + signups,
+		"SIGNUPS_ENABLED=" + strconv.FormatBool(opts.SignupsEnabled),
 		"ADMIN_EMAILS=" + opts.AdminEmail,
 		"SECRET_KEY=" + secret,
 		"ARIVU_FETCH_USER_AGENT=Arivu/2.0",
 		"ARIVU_INSTALLER_VERSION=" + opts.Version,
 		"ARIVU_INSTALLER_PROXY_MODE=" + string(opts.ProxyMode),
 		"ARIVU_TLS_EMAIL=" + opts.TLSEmail,
-		"ARIVU_BACKUPS_ENABLED=" + backups,
+		"ARIVU_BACKUPS_ENABLED=" + strconv.FormatBool(opts.BackupEnabled),
+		"ARIVU_BROWSER_CAPTURE_ENABLED=" + strconv.FormatBool(opts.CaptureEnabled),
+		"ARIVU_BROWSER_CAPTURE_PROTOCOL=2",
+		"ARIVU_BROWSER_CAPTURE_SOCKET=/run/arivu-capture/helper.sock",
+		"ARIVU_BROWSER_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts",
+		"ARIVU_BROWSER_CAPTURE_SCREENSHOT=true",
+		"ARIVU_BROWSER_CAPTURE_PDF=false",
+		"ARIVU_BROWSER_CAPTURE_SELF_CONTAINED_HTML=true",
+		"ARIVU_BROWSER_CAPTURE_TIMEOUT=90s",
+		"ARIVU_BROWSER_CAPTURE_NAVIGATION_TIMEOUT=30s",
+		"ARIVU_BROWSER_CAPTURE_MAX_FILE_BYTES=52428800",
+		"ARIVU_BROWSER_CAPTURE_MAX_TOTAL_BYTES=104857600",
+		"ARIVU_BROWSER_CAPTURE_MAX_MEDIA_FILES=40",
+		"ARIVU_BROWSER_CAPTURE_MAX_MEDIA_FILE_BYTES=5242880",
+		"ARIVU_BROWSER_CAPTURE_MAX_MEDIA_TOTAL_BYTES=41943040",
 		"",
 	}
 	return strings.Join(lines, "\n")
@@ -334,6 +366,48 @@ MemoryDenyWriteExecute=true
 RestrictRealtime=true
 RestrictSUIDSGID=true
 SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
+`
+}
+
+func CaptureServiceFile() string {
+	return `[Unit]
+Description=Arivu isolated browser capture service
+Before=arivu.service
+
+[Service]
+User=arivu-capture
+Group=arivu
+WorkingDirectory=/usr/local/lib/arivu-capture
+Environment=NODE_ENV=production
+Environment=ARIVU_CAPTURE_SOCKET=/run/arivu-capture/helper.sock
+Environment=ARIVU_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts
+Environment=ARIVU_MONOLITH_PATH=/usr/local/lib/arivu-capture/monolith
+Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers
+ExecStart=/usr/local/lib/arivu-capture/node src/index.mjs
+Restart=on-failure
+RestartSec=5s
+UMask=0007
+RuntimeDirectory=arivu-capture
+RuntimeDirectoryMode=0770
+NoNewPrivileges=true
+PrivateNetwork=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+ReadWritePaths=/run/arivu-capture
+TasksMax=512
+LimitNOFILE=65536
 
 [Install]
 WantedBy=multi-user.target
@@ -418,11 +492,20 @@ func GenerateSecret() (string, error) {
 }
 
 func ReleaseArtifactURLs(repo string, version string, arch string) (string, string, string) {
+	base := releaseBaseURL(repo, version)
+	return base + "/arivu-linux-" + arch, base + "/arivu-installer-linux-" + arch, base + "/SHA256SUMS"
+}
+
+func CaptureArtifactURL(repo string, version string, arch string) string {
+	return releaseBaseURL(repo, version) + "/arivu-capture-linux-" + arch + ".tar.gz"
+}
+
+func releaseBaseURL(repo string, version string) string {
 	base := strings.TrimRight(repo, "/") + "/releases/latest/download"
 	if version != "" && version != "latest" {
 		base = strings.TrimRight(repo, "/") + "/releases/download/" + version
 	}
-	return base + "/arivu-linux-" + arch, base + "/arivu-installer-linux-" + arch, base + "/SHA256SUMS"
+	return base
 }
 
 func FormatPlan(plan Plan) string {
@@ -539,6 +622,7 @@ func optionsFromEnv(values map[string]string) Options {
 	opts.ProxyMode = NormalizeProxyMode(values["ARIVU_INSTALLER_PROXY_MODE"])
 	opts.TLSEmail = strings.TrimSpace(values["ARIVU_TLS_EMAIL"])
 	opts.SignupsEnabled = truthy(values["SIGNUPS_ENABLED"])
+	opts.CaptureEnabled = truthy(values["ARIVU_BROWSER_CAPTURE_ENABLED"])
 	if _, ok := values["ARIVU_BACKUPS_ENABLED"]; ok {
 		opts.BackupEnabled = truthy(values["ARIVU_BACKUPS_ENABLED"])
 	} else {

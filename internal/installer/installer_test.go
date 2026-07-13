@@ -41,6 +41,31 @@ func TestBuildPlanAllowsFutureUbuntuVersions(t *testing.T) {
 	}
 }
 
+func TestBuildPlanRequiresSupportedCaptureHost(t *testing.T) {
+	for _, test := range []struct {
+		osID    string
+		version string
+	}{
+		{osID: "ubuntu", version: "20.04"},
+		{osID: "debian", version: "11"},
+	} {
+		t.Run(test.osID+"_"+test.version, func(t *testing.T) {
+			opts := baseOptions()
+			opts.CaptureEnabled = true
+			facts := cleanFacts()
+			facts.OSID = test.osID
+			facts.OSVersionID = test.version
+			if _, err := BuildPlan(opts, facts); err == nil || !strings.Contains(err.Error(), "--browser-capture=false") {
+				t.Fatalf("capture host validation error = %v", err)
+			}
+			opts.CaptureEnabled = false
+			if _, err := BuildPlan(opts, facts); err != nil {
+				t.Fatalf("core-only install rejected: %v", err)
+			}
+		})
+	}
+}
+
 func TestBuildPlanWarnsOnDNSMismatch(t *testing.T) {
 	opts := baseOptions()
 	opts.SkipDNSCheck = false
@@ -151,6 +176,56 @@ func TestBuildPlanBackupsDisabledSkipsBackupUnits(t *testing.T) {
 	}
 }
 
+func TestBuildPlanCaptureEnabledManagesNativeServiceAndEnvironment(t *testing.T) {
+	opts := baseOptions()
+	opts.CaptureEnabled = true
+	plan, err := BuildPlan(opts, cleanFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasFile(plan, "/etc/systemd/system/arivu-capture.service") {
+		t.Fatalf("capture-enabled plan missing native service: %#v", plan.Files)
+	}
+	service := fileContent(plan, "/etc/systemd/system/arivu-capture.service")
+	for _, expected := range []string{
+		"ExecStart=/usr/local/lib/arivu-capture/node src/index.mjs",
+		"User=arivu-capture",
+		"PrivateNetwork=true",
+		"NoNewPrivileges=true",
+	} {
+		if !strings.Contains(service, expected) {
+			t.Fatalf("capture service missing %q: %s", expected, service)
+		}
+	}
+	env := fileContent(plan, "/etc/arivu/arivu.env")
+	for _, expected := range []string{
+		"ARIVU_BROWSER_CAPTURE_ENABLED=true",
+		"ARIVU_BROWSER_CAPTURE_PROTOCOL=2",
+		"ARIVU_BROWSER_CAPTURE_SOCKET=/run/arivu-capture/helper.sock",
+		"ARIVU_BROWSER_CAPTURE_SELF_CONTAINED_HTML=true",
+	} {
+		if !strings.Contains(env, expected) {
+			t.Fatalf("capture env missing %q: %s", expected, env)
+		}
+	}
+	if !strings.Contains(FormatPlan(plan), "Install complete capture") {
+		t.Fatalf("capture action missing from plan:\n%s", FormatPlan(plan))
+	}
+}
+
+func TestBuildPlanCaptureDisabledKeepsCoreSingleBinary(t *testing.T) {
+	plan, err := BuildPlan(baseOptions(), cleanFacts())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hasFile(plan, "/etc/systemd/system/arivu-capture.service") {
+		t.Fatalf("capture-disabled plan managed capture service: %#v", plan.Files)
+	}
+	if !strings.Contains(fileContent(plan, "/etc/arivu/arivu.env"), "ARIVU_BROWSER_CAPTURE_ENABLED=false") {
+		t.Fatalf("capture-disabled env is ambiguous: %s", fileContent(plan, "/etc/arivu/arivu.env"))
+	}
+}
+
 func TestBuildPlanRejectsExistingDomainVHost(t *testing.T) {
 	facts := cleanFacts()
 	facts.ExistingVHosts = []string{"arivu.example.com"}
@@ -227,6 +302,9 @@ func TestReleaseArtifactURLsSupportPinnedVersions(t *testing.T) {
 	if latestInstallerURL != "https://github.com/glnarayanan/arivu/releases/latest/download/arivu-installer-linux-amd64" {
 		t.Fatalf("latest installer URL = %s", latestInstallerURL)
 	}
+	if captureURL := CaptureArtifactURL("https://github.com/glnarayanan/arivu", "v1.2.3", "arm64"); captureURL != "https://github.com/glnarayanan/arivu/releases/download/v1.2.3/arivu-capture-linux-arm64.tar.gz" {
+		t.Fatalf("versioned capture URL = %s", captureURL)
+	}
 }
 
 func TestOptionsFromEnvFileLoadsReconfigureDefaults(t *testing.T) {
@@ -240,6 +318,7 @@ func TestOptionsFromEnvFileLoadsReconfigureDefaults(t *testing.T) {
 		"ARIVU_INSTALLER_PROXY_MODE=existing-proxy",
 		"ARIVU_TLS_EMAIL=ops@example.net",
 		"ARIVU_BACKUPS_ENABLED=false",
+		"ARIVU_BROWSER_CAPTURE_ENABLED=true",
 		"",
 	}, "\n")), 0o600); err != nil {
 		t.Fatal(err)
@@ -251,7 +330,7 @@ func TestOptionsFromEnvFileLoadsReconfigureDefaults(t *testing.T) {
 	if opts.Domain != "arivu.example.net" || opts.AdminEmail != "admin@example.net" || opts.BindPort != 8123 || !opts.SignupsEnabled {
 		t.Fatalf("unexpected env options: %#v", opts)
 	}
-	if opts.Version != "v1.2.3" || opts.ProxyMode != ProxyExistingProxy || opts.TLSEmail != "ops@example.net" || opts.BackupEnabled {
+	if opts.Version != "v1.2.3" || opts.ProxyMode != ProxyExistingProxy || opts.TLSEmail != "ops@example.net" || opts.BackupEnabled || !opts.CaptureEnabled {
 		t.Fatalf("unexpected installer env options: %#v", opts)
 	}
 }
