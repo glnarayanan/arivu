@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -201,6 +202,11 @@ func TestRunV2UsesUnixProtocolAndCleansPrivateFiles(t *testing.T) {
 		var request v2Request
 		if err := json.NewDecoder(conn).Decode(&request); err != nil {
 			helperError <- err
+			return
+		}
+		info, err := os.Stat(filepath.Dir(request.ProxySocket))
+		if err != nil || info.Mode().Perm() != 0o750 {
+			helperError <- fmt.Errorf("attempt directory mode=%v err=%v", info, err)
 			return
 		}
 		response := v2Response{
