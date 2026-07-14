@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-07-14
+
 - Added the optional isolated browser-capture service using pinned Playwright /
   Chromium, Mozilla Readability, JSDOM, and Monolith dependencies. Rendered
   capture runs headlessly in the background through an attempt-scoped,
