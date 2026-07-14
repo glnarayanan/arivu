@@ -127,7 +127,9 @@ func RunV2(ctx context.Context, cfg config.BrowserCaptureConfig, rawURL string, 
 		return code("browser_runtime_failed")
 	}
 	defer os.RemoveAll(attemptDir)
-	if err := os.Chmod(attemptDir, 0o770); err != nil {
+	// The capture helper only needs to traverse this directory and connect to
+	// the proxy socket. Keeping group write disabled prevents path replacement.
+	if err := os.Chmod(attemptDir, 0o750); err != nil {
 		return code("browser_runtime_failed")
 	}
 

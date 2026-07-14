@@ -49,7 +49,8 @@ its own unprivileged user with a private temporary directory. Do not place
 unrelated users or services in the capture group.
 
 For every request, Go creates a random authenticated egress proxy inside a
-random attempt directory. Chromium and Monolith reach the network only through
+random mode-`0750` attempt directory: the helper group can traverse it but
+cannot replace entries. Chromium and Monolith reach the network only through
 that proxy. Go performs DNS resolution, blocks non-public and rebinding targets,
 limits HTTP/CONNECT destinations, and enforces per-response and aggregate byte
 budgets. The helper validates that the proxy socket resolves beneath the

@@ -40,6 +40,7 @@ type CaptureProxy struct {
 	conns      map[net.Conn]struct{}
 	closed     atomic.Bool
 	closeOnce  sync.Once
+	closeErr   error
 }
 
 // StartCaptureProxy listens on a caller-owned, previously absent Unix socket.
@@ -48,18 +49,19 @@ func StartCaptureProxy(ctx context.Context, socketPath, token string, limits Pro
 	if strings.TrimSpace(socketPath) == "" || strings.TrimSpace(token) == "" {
 		return nil, errors.New("capture proxy socket and token are required")
 	}
-	listener, err := net.Listen("unix", socketPath)
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: socketPath, Net: "unix"})
 	if err != nil {
 		return nil, err
 	}
-	if err := os.Chmod(socketPath, 0o660); err != nil {
-		_ = listener.Close()
-		return nil, err
-	}
+	// UnixListener otherwise unlinks its path during Close, before the proxy can
+	// verify that the path still names the socket it created.
+	listener.SetUnlinkOnClose(false)
 	socketInfo, err := os.Lstat(socketPath)
 	if err != nil {
-		_ = listener.Close()
-		return nil, err
+		return nil, errors.Join(err, listener.Close())
+	}
+	if err := os.Chmod(socketPath, 0o660); err != nil {
+		return nil, errors.Join(err, listener.Close(), removeSocketIfSame(socketPath, socketInfo))
 	}
 	proxy := newCaptureProxy(token, limits, nil, nil)
 	proxy.server = &http.Server{Handler: proxy, ReadHeaderTimeout: RequestTimeout}
@@ -214,17 +216,12 @@ func (p *CaptureProxy) remaining() int64 {
 
 // Close terminates the proxy and removes only the socket it created.
 func (p *CaptureProxy) Close() error {
-	var closeErr error
 	p.closeOnce.Do(func() {
 		p.closed.Store(true)
 		if p.server != nil {
-			closeErr = p.server.Close()
+			p.closeErr = p.server.Close()
 		}
-		if current, err := os.Lstat(p.socketPath); err == nil && os.SameFile(current, p.socketInfo) {
-			closeErr = errors.Join(closeErr, os.Remove(p.socketPath))
-		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
-			closeErr = errors.Join(closeErr, err)
-		}
+		p.closeErr = errors.Join(p.closeErr, removeSocketIfSame(p.socketPath, p.socketInfo))
 		if transport, ok := p.transport.(interface{ CloseIdleConnections() }); ok {
 			transport.CloseIdleConnections()
 		}
@@ -235,7 +232,24 @@ func (p *CaptureProxy) Close() error {
 		clear(p.conns)
 		p.connMu.Unlock()
 	})
-	return closeErr
+	return p.closeErr
+}
+
+func removeSocketIfSame(path string, expected os.FileInfo) error {
+	current, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(current, expected) {
+		return nil
+	}
+	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
 }
 
 type proxyBudgetWriter struct {

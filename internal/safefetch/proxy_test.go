@@ -207,6 +207,17 @@ func TestCaptureProxyCloseClosesIdleUpstreamConnections(t *testing.T) {
 	}
 }
 
+func TestCaptureProxyCloseReturnsStableResult(t *testing.T) {
+	want := errors.New("cleanup failed")
+	proxy := newCaptureProxy("secret", ProxyLimits{}, nil, nil)
+	proxy.closeErr = want
+	for range 2 {
+		if err := proxy.Close(); !errors.Is(err, want) {
+			t.Fatalf("close error=%v", err)
+		}
+	}
+}
+
 func TestCaptureProxyValidatesConnectBeforeDial(t *testing.T) {
 	var dials atomic.Int32
 	proxy := newCaptureProxy("secret", ProxyLimits{}, nil, func(context.Context, string, string) (net.Conn, error) {
