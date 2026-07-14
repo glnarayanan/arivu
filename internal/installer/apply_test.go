@@ -319,7 +319,7 @@ func TestCaptureArchiveDownloadTimesOutBeforeResponseHeaders(t *testing.T) {
 
 	_, cleanup, err := downloadCaptureArchive(context.Background(), "https://release.example/archive.tar.gz", sums, t.TempDir())
 	cleanup()
-	if err == nil || !strings.Contains(err.Error(), "Client.Timeout exceeded") {
+	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("download error = %v", err)
 	}
 }

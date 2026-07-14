@@ -34,6 +34,8 @@ type CaptureProxy struct {
 	dial       func(context.Context, string, string) (net.Conn, error)
 	totalBytes atomic.Int64
 	server     *http.Server
+	socketPath string
+	socketInfo os.FileInfo
 	connMu     sync.Mutex
 	conns      map[net.Conn]struct{}
 	closed     atomic.Bool
@@ -54,8 +56,15 @@ func StartCaptureProxy(ctx context.Context, socketPath, token string, limits Pro
 		_ = listener.Close()
 		return nil, err
 	}
+	socketInfo, err := os.Lstat(socketPath)
+	if err != nil {
+		_ = listener.Close()
+		return nil, err
+	}
 	proxy := newCaptureProxy(token, limits, nil, nil)
 	proxy.server = &http.Server{Handler: proxy, ReadHeaderTimeout: RequestTimeout}
+	proxy.socketPath = socketPath
+	proxy.socketInfo = socketInfo
 	go func() { _ = proxy.server.Serve(listener) }()
 	go func() {
 		<-ctx.Done()
@@ -210,6 +219,11 @@ func (p *CaptureProxy) Close() error {
 		p.closed.Store(true)
 		if p.server != nil {
 			closeErr = p.server.Close()
+		}
+		if current, err := os.Lstat(p.socketPath); err == nil && os.SameFile(current, p.socketInfo) {
+			closeErr = errors.Join(closeErr, os.Remove(p.socketPath))
+		} else if err != nil && !errors.Is(err, os.ErrNotExist) {
+			closeErr = errors.Join(closeErr, err)
 		}
 		if transport, ok := p.transport.(interface{ CloseIdleConnections() }); ok {
 			transport.CloseIdleConnections()

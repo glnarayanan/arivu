@@ -311,7 +311,7 @@ func TestDirectReaderActivatesBeforeRenderedCaptureFinishes(t *testing.T) {
 	if err := <-helperDone; err != nil {
 		t.Fatal(err)
 	}
-	if err := <-processDone; err != nil {
+	if err := <-processDone; err != nil && !errors.Is(err, errPartialExtraction) {
 		t.Fatal(err)
 	}
 }

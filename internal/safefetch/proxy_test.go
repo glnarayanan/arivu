@@ -286,3 +286,32 @@ func TestStartCaptureProxyUsesPrivateUnixSocketAndCleansUp(t *testing.T) {
 		t.Fatalf("socket remains after close: %v", err)
 	}
 }
+
+func TestCaptureProxyCloseDoesNotRemoveReplacementPath(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "arivu-proxy-replace-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	path := filepath.Join(dir, "capture.sock")
+	proxy, err := StartCaptureProxy(t.Context(), path, "secret", ProxyLimits{})
+	if errors.Is(err, syscall.EPERM) {
+		t.Skip("sandbox does not permit Unix listeners")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := proxy.Close(); err != nil {
+		t.Fatal(err)
+	}
+	content, err := os.ReadFile(path)
+	if err != nil || string(content) != "replacement" {
+		t.Fatalf("replacement path changed: content=%q err=%v", content, err)
+	}
+}
