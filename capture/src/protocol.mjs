@@ -1,6 +1,8 @@
 import { once } from 'node:events';
 
 export const MAX_REQUEST_BYTES = 64 * 1024;
+export const MAX_ATTEMPT_TIMEOUT_MS = 10 * 60 * 1000;
+export const MAX_NAVIGATION_TIMEOUT_MS = 2 * 60 * 1000;
 
 const requestKeys = new Set([
   'version', 'url', 'token', 'proxy_socket', 'proxy_token', 'formats',
@@ -19,6 +21,7 @@ export function validateRequest(value) {
   for (const key of ['attempt_timeout_ms', 'navigation_timeout_ms', 'max_file_bytes', 'max_total_bytes', 'max_media_files', 'max_media_file_bytes', 'max_media_total_bytes']) {
     if (!Number.isSafeInteger(value[key]) || value[key] <= 0) throw new Error('invalid_request');
   }
+  if (value.attempt_timeout_ms > MAX_ATTEMPT_TIMEOUT_MS || value.navigation_timeout_ms > MAX_NAVIGATION_TIMEOUT_MS) throw new Error('invalid_request');
   if (value.navigation_timeout_ms > value.attempt_timeout_ms) throw new Error('invalid_request');
   if (value.max_media_file_bytes > value.max_media_total_bytes || value.max_media_total_bytes > value.max_total_bytes || value.max_file_bytes > value.max_total_bytes) throw new Error('invalid_request');
   return value;

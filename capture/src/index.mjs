@@ -3,7 +3,7 @@ import { chmod, lstat, mkdir, rm } from 'node:fs/promises';
 import net from 'node:net';
 import { dirname } from 'node:path';
 import { capturePage, failedResponse } from './capture.mjs';
-import { readRequest, writeResponse } from './protocol.mjs';
+import { MAX_ATTEMPT_TIMEOUT_MS, readRequest, writeResponse } from './protocol.mjs';
 import { verifyRuntime } from './preflight.mjs';
 
 const socketPath = process.env.ARIVU_CAPTURE_SOCKET || process.argv[2];
@@ -31,6 +31,7 @@ const server = net.createServer(async (socket) => {
   let request;
   try {
     request = await readRequest(socket);
+    if (!Number.isSafeInteger(request.attempt_timeout_ms) || request.attempt_timeout_ms <= 0 || request.attempt_timeout_ms > MAX_ATTEMPT_TIMEOUT_MS) throw new Error('invalid_request');
     const controller = new AbortController();
     attempts.add(controller);
     const abort = () => controller.abort();

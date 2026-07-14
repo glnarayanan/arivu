@@ -31,6 +31,8 @@ test('validates the strict bounded request contract', () => {
     (value) => { value.formats.push('screenshot'); },
     (value) => { value.max_media_total_bytes = value.max_total_bytes + 1; },
     (value) => { value.proxy_socket = ''; },
+    (value) => { value.attempt_timeout_ms = 10 * 60 * 1000 + 1; },
+    (value) => { value.navigation_timeout_ms = 2 * 60 * 1000 + 1; value.attempt_timeout_ms = value.navigation_timeout_ms; },
   ]) {
     const value = request();
     mutate(value);

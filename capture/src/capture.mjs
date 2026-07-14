@@ -251,7 +251,12 @@ async function runMonolith({ renderedHTML, finalURL, request, relayPort, temp, s
   child.stdin.on('error', () => {});
   const chunks = [];
   let size = 0;
-  const timer = setTimeout(() => child.kill('SIGKILL'), Math.min(request.navigation_timeout_ms, 30_000));
+  let timer;
+  if (Number.isSafeInteger(request.navigation_timeout_ms) && request.navigation_timeout_ms > 0 && request.navigation_timeout_ms <= 30_000) {
+    timer = setTimeout(() => child.kill('SIGKILL'), request.navigation_timeout_ms);
+  } else {
+    timer = setTimeout(() => child.kill('SIGKILL'), 30_000);
+  }
   child.stdout.on('data', (chunk) => {
     size += chunk.length;
     if (size > request.max_file_bytes) child.kill('SIGKILL');
