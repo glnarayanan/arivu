@@ -68,7 +68,7 @@ jobs:
           tar -tzf "dist/arivu-capture-linux-${{ matrix.arch }}.tar.gz" | grep -Eq '^\./node$'
           ARIVU_CAPTURE_RELEASE_ARCHIVE="$GITHUB_WORKSPACE/dist/arivu-capture-linux-${{ matrix.arch }}.tar.gz" \
             go test ./internal/installer -run '^TestCaptureReleaseArchive$' -count=1
-      - uses: actions/attest-build-provenance@v3
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*
       - uses: actions/upload-artifact@v7
