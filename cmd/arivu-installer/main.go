@@ -129,7 +129,7 @@ func runPlan(ctx context.Context, args []string) {
 
 func parseOptions(args []string) (installer.Options, installer.ApplyOptions, bool, bool, map[string]bool, error) {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
-	var opts installer.Options
+	opts := installer.Options{CaptureEnabled: true}
 	var apply installer.ApplyOptions
 	var proxyMode string
 	var nonInteractive, yes bool
@@ -140,10 +140,12 @@ func parseOptions(args []string) (installer.Options, installer.ApplyOptions, boo
 	fs.StringVar(&opts.Version, "version", "", "Release version to install; empty/latest uses the latest release")
 	fs.BoolVar(&opts.SignupsEnabled, "signups-enabled", false, "Allow public signups after install")
 	fs.BoolVar(&opts.BackupEnabled, "backups", true, "Install daily SQLite backup timer")
+	fs.BoolVar(&opts.CaptureEnabled, "browser-capture", true, "Install native complete browser capture")
 	fs.BoolVar(&opts.SkipDNSCheck, "skip-dns-check", false, "Skip domain-to-server DNS verification")
 	fs.IntVar(&opts.BindPort, "bind-port", 0, "Loopback port for Arivu")
 	fs.StringVar(&apply.AdminPasswordFile, "admin-password-file", "", "Path containing first admin password")
 	fs.StringVar(&apply.ArtifactURL, "artifact-url", "", "Arivu binary artifact URL")
+	fs.StringVar(&apply.CaptureArtifactURL, "capture-artifact-url", "", "Native capture runtime artifact URL")
 	fs.StringVar(&apply.ChecksumsURL, "checksums-url", "", "SHA256SUMS URL")
 	fs.BoolVar(&apply.DryRun, "dry-run", false, "Validate and render without changing the host")
 	fs.BoolVar(&nonInteractive, "non-interactive", false, "Do not prompt; require flags")
@@ -228,6 +230,9 @@ func mergeExistingOptions(opts installer.Options, flagsSet map[string]bool) inst
 	if !flagsSet["backups"] {
 		opts.BackupEnabled = existing.BackupEnabled
 	}
+	if !flagsSet["browser-capture"] {
+		opts.CaptureEnabled = existing.CaptureEnabled
+	}
 	return opts
 }
 
@@ -252,6 +257,7 @@ func interactiveWizardWithIO(reader *bufio.Reader, out io.Writer, opts installer
 	opts.ProxyMode = installer.NormalizeProxyMode(mode)
 	opts.SignupsEnabled = promptBoolWithWriter(reader, out, "Allow public signups", opts.SignupsEnabled)
 	opts.BackupEnabled = promptBoolWithWriter(reader, out, "Install daily SQLite backups", opts.BackupEnabled)
+	opts.CaptureEnabled = promptBoolWithWriter(reader, out, "Install complete browser capture", opts.CaptureEnabled)
 	if !apply.DryRun && !opts.Reconfigure && apply.AdminPasswordFile == "" && apply.AdminPassword == "" {
 		password, err := readSecret("First admin password")
 		if err != nil {
@@ -330,7 +336,8 @@ func runStatus(ctx context.Context, args []string) {
 	domain := fs.String("domain", "", "Domain to include in DNS checks")
 	_ = fs.Parse(args)
 	facts := installer.DetectHost(ctx, *domain)
-	fmt.Printf("OS: %s %s\nArch: %s\nSystemd: %v\nFirewall: %s\nArivu user: %v\n/etc/arivu: %v\n/var/lib/arivu: %v\nService: %v\n", facts.OSID, facts.OSVersionID, facts.Arch, facts.HasSystemd, facts.Firewall, facts.UserExists, facts.EtcExists, facts.DataExists, facts.ServiceExists)
+	captureConfigured, captureInstalled := installer.CaptureInstallStatus("/")
+	fmt.Printf("OS: %s %s\nArch: %s\nSystemd: %v\nFirewall: %s\nArivu user: %v\n/etc/arivu: %v\n/var/lib/arivu: %v\nService: %v\nComplete capture configured: %v\nComplete capture installed: %v\n", facts.OSID, facts.OSVersionID, facts.Arch, facts.HasSystemd, facts.Firewall, facts.UserExists, facts.EtcExists, facts.DataExists, facts.ServiceExists, captureConfigured, captureInstalled)
 	if len(facts.Listeners) > 0 {
 		fmt.Println("Listeners:")
 		for port, detail := range facts.Listeners {
@@ -367,11 +374,12 @@ func runUpgrade(ctx context.Context, args []string) {
 	fs := flag.NewFlagSet("upgrade", flag.ExitOnError)
 	artifactURL := fs.String("artifact-url", "", "Arivu binary artifact URL")
 	installerArtifactURL := fs.String("installer-artifact-url", "", "Arivu installer binary artifact URL")
+	captureArtifactURL := fs.String("capture-artifact-url", "", "Native capture runtime artifact URL")
 	checksumsURL := fs.String("checksums-url", "", "SHA256SUMS URL")
 	version := fs.String("version", "", "Release version to install; empty/latest uses the latest release")
 	_ = fs.Parse(args)
 	facts := installer.DetectHost(ctx, "")
-	if err := installer.Upgrade(ctx, facts, installer.ApplyOptions{ArtifactURL: *artifactURL, InstallerArtifactURL: *installerArtifactURL, ChecksumsURL: *checksumsURL}, *version); err != nil {
+	if err := installer.Upgrade(ctx, facts, installer.ApplyOptions{ArtifactURL: *artifactURL, InstallerArtifactURL: *installerArtifactURL, CaptureArtifactURL: *captureArtifactURL, ChecksumsURL: *checksumsURL}, *version); err != nil {
 		log.Fatal(err)
 	}
 }

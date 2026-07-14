@@ -29,6 +29,7 @@ type Service struct {
 	db            *sql.DB
 	jobs          *jobs.Queue
 	fetcher       *safefetch.Client
+	fetchPage     func(context.Context, string) (safefetch.Result, error)
 	ai            func(context.Context) providers.GeminiClient
 	assets        *assets.Store
 	browser       config.BrowserCaptureConfig
@@ -50,6 +51,9 @@ type CountsResult struct {
 
 func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, client providers.GeminiClient) *Service {
 	s := &Service{db: db, jobs: jobs, fetcher: fetcher, ai: func(context.Context) providers.GeminiClient { return client }}
+	if fetcher != nil {
+		s.fetchPage = fetcher.Fetch
+	}
 	s.enqueueCreate = jobs.EnqueueWithIDTx
 	return s
 }
@@ -405,6 +409,7 @@ func evidencePayload(items []BookmarkEvidence) []map[string]any {
 			"authority": item.Authority, "canonical_url": item.CanonicalURL,
 			"publisher_key": item.PublisherKey, "published_at": item.PublishedAt,
 			"extraction_method": item.ExtractionMethod, "quality_status": item.QualityStatus,
+			"quality_score":   item.QualityScore,
 			"quality_reasons": item.QualityReasons, "extractor_version": item.ExtractorVersion,
 			"selected": item.Selected, "preview": truncateText(item.Text, 800),
 		})
@@ -1797,8 +1802,8 @@ func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID 
 	mergedTitle := preferString(keepTitle, dupTitle)
 	mergedDescription := preferString(keepDescription, dupDescription)
 	mergedFavicon := preferString(keepFavicon, dupFavicon)
-	mergedThumbnail := preferString(keepThumbnail, dupThumbnail)
-	mergedHTML := preferString(keepHTML, dupHTML)
+	mergedThumbnail := preferPortableMediaString(keepThumbnail, dupThumbnail)
+	mergedHTML := preferPortableMediaString(keepHTML, dupHTML)
 	mergedText := preferString(keepText, dupText)
 	mergedLast := maxTimeString(keepLast, dupLast)
 	mergedRead := keepRead.Bool || dupRead.Bool
@@ -1826,6 +1831,16 @@ func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID 
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM bookmarks WHERE id=? AND user_id=?`, deleteID, userID)
 	return err
+}
+
+func preferPortableMediaString(primary, secondary sql.NullString) string {
+	if primary.Valid && strings.TrimSpace(primary.String) != "" {
+		return primary.String
+	}
+	if secondary.Valid && !strings.Contains(secondary.String, "/api/media/") {
+		return secondary.String
+	}
+	return ""
 }
 
 func mergeSummary(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID string) error {

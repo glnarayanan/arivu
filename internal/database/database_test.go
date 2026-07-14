@@ -191,6 +191,9 @@ func TestMigrateAddsEvidenceProvenanceToLegacyDatabase(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name='bookmark_evidence'`).Scan(&table); err != nil {
 		t.Fatalf("bookmark_evidence table missing: %v", err)
 	}
+	if !slices.Contains(tableColumns(t, db, "bookmark_evidence"), "quality_score") {
+		t.Fatal("bookmark_evidence.quality_score was not added")
+	}
 	if err := db.QueryRowContext(ctx, `SELECT name FROM sqlite_master WHERE type='table' AND name='insight_impressions'`).Scan(&table); err != nil {
 		t.Fatalf("insight_impressions table missing: %v", err)
 	}

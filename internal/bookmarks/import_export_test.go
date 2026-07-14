@@ -318,6 +318,23 @@ func xProcessingTestService(t *testing.T, bookmarkID, rawURL, contentKind, sourc
 	return service, db
 }
 
+func TestUpsertEvidencePreservesQualityScoreOnOmittedRetry(t *testing.T) {
+	service, _ := xProcessingTestService(t, "quality-retry", "https://x.com/author/status/1", "x_post", "Authoritative source text.", "complete")
+	evidence := BookmarkEvidence{Kind: "source_post", Origin: "x_api", Authority: 100, Text: "Authoritative source text.", CanonicalURL: "https://x.com/author/status/1", ExtractionMethod: "x_api", QualityStatus: "complete", ExtractorVersion: "x-api-v1"}
+	evidence.QualityScore = 91
+	if _, err := service.UpsertEvidence(t.Context(), "user-1", "quality-retry", evidence); err != nil {
+		t.Fatal(err)
+	}
+	evidence.QualityScore = 0
+	if _, err := service.UpsertEvidence(t.Context(), "user-1", "quality-retry", evidence); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := service.Evidence(t.Context(), "user-1", "quality-retry")
+	if err != nil || len(stored) != 1 || stored[0].QualityScore != 91 {
+		t.Fatalf("retry evidence = %#v, err=%v", stored, err)
+	}
+}
+
 func TestReprocessQueuesExistingBookmarkWithoutDeletingManualData(t *testing.T) {
 	ctx := context.Background()
 	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
@@ -391,7 +408,7 @@ func TestFullExportRestoreRoundTripsEvidenceAndProvenance(t *testing.T) {
 		t.Fatal(err)
 	}
 	article, err := service.UpsertEvidence(ctx, "user-1", "bookmark-1", BookmarkEvidence{
-		Kind: "linked_article", Origin: "fetched", Authority: 80, Text: "Complete linked article text.", SanitizedHTML: "<p>Complete linked article text.</p>", CanonicalURL: "https://example.com/article", PublisherKey: "example.com", PublishedAt: "2026-07-09T03:00:00Z", ExtractionMethod: "readability", ContentHash: "article-hash", QualityStatus: "complete", ExtractorVersion: "readability-v1", Selected: true,
+		Kind: "linked_article", Origin: "fetched", Authority: 80, Text: "Complete linked article text.", SanitizedHTML: "<p>Complete linked article text.</p>", CanonicalURL: "https://example.com/article", PublisherKey: "example.com", PublishedAt: "2026-07-09T03:00:00Z", ExtractionMethod: "readability", ContentHash: "article-hash", QualityStatus: "complete", QualityScore: 91, ExtractorVersion: "readability-v1", Selected: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -426,6 +443,9 @@ func TestFullExportRestoreRoundTripsEvidenceAndProvenance(t *testing.T) {
 	if len(evidence) != 2 || evidence[0]["user_id"] != nil || evidence[1]["user_id"] != nil {
 		t.Fatalf("evidence export malformed or leaked owner IDs: %#v", evidence)
 	}
+	if evidence[0]["quality_score"] != 91 {
+		t.Fatalf("selected evidence quality score = %#v, want 91", evidence[0]["quality_score"])
+	}
 
 	raw, err := json.Marshal(exported)
 	if err != nil {
@@ -445,7 +465,7 @@ func TestFullExportRestoreRoundTripsEvidenceAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(restoredEvidence) != 2 || restoredEvidence[0].BookmarkID != restoredID || restoredEvidence[1].BookmarkID != restoredID {
+	if len(restoredEvidence) != 2 || restoredEvidence[0].BookmarkID != restoredID || restoredEvidence[1].BookmarkID != restoredID || restoredEvidence[0].QualityScore != 91 {
 		t.Fatalf("restored evidence = %#v", restoredEvidence)
 	}
 	var restoredSummary, restoredProvider, restoredEvidenceHash, restoredValidation, restoredSpans string

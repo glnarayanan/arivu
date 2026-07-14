@@ -14,3 +14,12 @@ func TestHTMLStripsScriptsAndUnsafeAttributes(t *testing.T) {
 		t.Fatalf("safe link was not preserved: %s", got)
 	}
 }
+
+func TestHTMLAllowsOnlyRehostedReaderImages(t *testing.T) {
+	input := `<figure><img src="/api/media/01J-safe_ID" alt="A &amp; B" width="1200" height="800" srcset="https://evil.test/a 2x" onerror="alert(1)"><figcaption>Caption</figcaption></figure>` +
+		`<img src="https://example.com/hotlink.jpg"><img src="data:image/png;base64,AAAA"><img src="/api/media/../other">`
+	want := `<figure><img src="/api/media/01J-safe_ID" alt="A &amp; B" width="1200" height="800" loading="lazy" decoding="async"><figcaption>Caption</figcaption></figure>`
+	if got := HTML(input); got != want {
+		t.Fatalf("HTML() = %q, want %q", got, want)
+	}
+}

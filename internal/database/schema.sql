@@ -102,6 +102,7 @@ CREATE TABLE IF NOT EXISTS bookmark_evidence (
   extraction_method TEXT NOT NULL DEFAULT '',
   content_hash TEXT NOT NULL DEFAULT '',
   quality_status TEXT NOT NULL DEFAULT 'failed',
+  quality_score INTEGER NOT NULL DEFAULT 0 CHECK(quality_score BETWEEN 0 AND 100),
   quality_reasons_json TEXT NOT NULL DEFAULT '[]',
   extractor_version TEXT NOT NULL DEFAULT '',
   is_selected INTEGER NOT NULL DEFAULT 0 CHECK(is_selected IN (0,1)),
@@ -141,6 +142,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   bookmark_id TEXT NOT NULL,
   capture_attempt_id TEXT NOT NULL REFERENCES capture_attempts(id) ON DELETE CASCADE,
+  capture_batch_id TEXT NOT NULL DEFAULT '',
   evidence_id TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL,
   artifact_type TEXT NOT NULL CHECK(artifact_type IN ('source_response','screenshot','pdf','self_contained_html','uploaded_file')),
   mime_type TEXT NOT NULL,
@@ -148,6 +150,7 @@ CREATE TABLE IF NOT EXISTS artifacts (
   sha256 TEXT NOT NULL,
   storage_key TEXT NOT NULL,
   original_filename TEXT NOT NULL DEFAULT '',
+  is_staged INTEGER NOT NULL DEFAULT 0 CHECK(is_staged IN (0,1)),
   created_at TEXT NOT NULL,
   deleted_at TEXT,
   FOREIGN KEY(bookmark_id,user_id) REFERENCES bookmarks(id,user_id) ON DELETE CASCADE
@@ -156,6 +159,32 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_owner ON artifacts(user_id,bookmark_id,
 CREATE INDEX IF NOT EXISTS idx_artifacts_attempt ON artifacts(capture_attempt_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_artifacts_attempt_type ON artifacts(capture_attempt_id,artifact_type);
 CREATE INDEX IF NOT EXISTS idx_artifacts_storage_key ON artifacts(storage_key);
+
+CREATE TABLE IF NOT EXISTS bookmark_media (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  bookmark_id TEXT NOT NULL,
+  capture_attempt_id TEXT NOT NULL REFERENCES capture_attempts(id) ON DELETE CASCADE,
+  capture_batch_id TEXT NOT NULL DEFAULT '',
+  evidence_id TEXT REFERENCES bookmark_evidence(id) ON DELETE SET NULL,
+  source_url TEXT NOT NULL,
+  media_role TEXT NOT NULL CHECK(media_role IN ('reader_image','thumbnail','favicon')),
+  mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg','image/png','image/gif','image/webp')),
+  byte_size INTEGER NOT NULL CHECK(byte_size > 0),
+  sha256 TEXT NOT NULL,
+  storage_key TEXT NOT NULL,
+  width INTEGER NOT NULL DEFAULT 0 CHECK(width >= 0),
+  height INTEGER NOT NULL DEFAULT 0 CHECK(height >= 0),
+  ordinal INTEGER NOT NULL DEFAULT 0 CHECK(ordinal >= 0),
+  is_staged INTEGER NOT NULL DEFAULT 0 CHECK(is_staged IN (0,1)),
+  created_at TEXT NOT NULL,
+  deleted_at TEXT,
+  FOREIGN KEY(bookmark_id,user_id) REFERENCES bookmarks(id,user_id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_bookmark_media_owner ON bookmark_media(user_id,bookmark_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bookmark_media_attempt ON bookmark_media(capture_attempt_id);
+CREATE INDEX IF NOT EXISTS idx_bookmark_media_batch ON bookmark_media(capture_batch_id);
+CREATE INDEX IF NOT EXISTS idx_bookmark_media_evidence ON bookmark_media(evidence_id) WHERE deleted_at IS NULL;
 
 CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(
   title,
@@ -657,6 +686,21 @@ CREATE TABLE IF NOT EXISTS public_share_artifacts (
   byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
   added_at TEXT NOT NULL,
   PRIMARY KEY(share_id,artifact_id)
+);
+
+CREATE TABLE IF NOT EXISTS public_share_media (
+  share_id TEXT NOT NULL REFERENCES public_shares(id) ON DELETE CASCADE,
+  media_id TEXT NOT NULL,
+  bookmark_id TEXT NOT NULL,
+  storage_key TEXT NOT NULL,
+  mime_type TEXT NOT NULL CHECK(mime_type IN ('image/jpeg','image/png','image/gif','image/webp')),
+  byte_size INTEGER NOT NULL CHECK(byte_size > 0),
+  sha256 TEXT NOT NULL,
+  width INTEGER NOT NULL DEFAULT 0 CHECK(width >= 0),
+  height INTEGER NOT NULL DEFAULT 0 CHECK(height >= 0),
+  ordinal INTEGER NOT NULL DEFAULT 0 CHECK(ordinal >= 0),
+  added_at TEXT NOT NULL,
+  PRIMARY KEY(share_id,media_id)
 );
 
 CREATE TABLE IF NOT EXISTS rate_limits (

@@ -17,6 +17,9 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22.23.1
       - run: go mod verify
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
       - run: node --check internal/app/web/app.js
@@ -27,6 +30,11 @@ jobs:
       - run: node --check extension/url-utils.js
       - run: node extension/url-utils.test.mjs
       - run: node extension/content.test.mjs
+      - name: Verify isolated capture bundle
+        run: |
+          npm ci --prefix capture
+          npm test --prefix capture
+          npm audit --omit=dev --prefix capture
       - run: go test ./...
       - name: Build release artifact
         run: |

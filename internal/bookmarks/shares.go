@@ -114,6 +114,9 @@ func validExpiry(v *string) bool {
 }
 
 func replaceShareMembers(c context.Context, tx *sql.Tx, shareID, userID string, items, artifacts []string, now string) error {
+	if _, err := tx.ExecContext(c, `DELETE FROM public_share_media WHERE share_id=?`, shareID); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(c, `DELETE FROM public_share_artifacts WHERE share_id=?`, shareID); err != nil {
 		return err
 	}
@@ -132,15 +135,21 @@ func replaceShareMembers(c context.Context, tx *sql.Tx, shareID, userID string, 
 			return errors.New("item not owned")
 		}
 	}
+	if _, err := tx.ExecContext(c, `INSERT INTO public_share_media(share_id,media_id,bookmark_id,storage_key,mime_type,byte_size,sha256,width,height,ordinal,added_at)
+		SELECT ?,m.id,m.bookmark_id,m.storage_key,m.mime_type,m.byte_size,m.sha256,m.width,m.height,m.ordinal,?
+		FROM bookmark_media m JOIN public_share_items i ON i.share_id=? AND i.bookmark_id=m.bookmark_id AND i.evidence_id=m.evidence_id
+		WHERE m.user_id=? AND m.is_staged=0 AND m.deleted_at IS NULL`, shareID, now, shareID, userID); err != nil {
+		return err
+	}
 	for _, id := range artifacts {
 		var kind string
-		err := tx.QueryRowContext(c, `SELECT artifact_type FROM artifacts WHERE id=? AND user_id=? AND deleted_at IS NULL AND artifact_type IN ('screenshot','pdf')`, id, userID).Scan(&kind)
+		err := tx.QueryRowContext(c, `SELECT artifact_type FROM artifacts WHERE id=? AND user_id=? AND is_staged=0 AND deleted_at IS NULL AND artifact_type IN ('screenshot','pdf')`, id, userID).Scan(&kind)
 		if err != nil {
 			return errors.New("artifact not allowed")
 		}
 		res, err := tx.ExecContext(c, `INSERT INTO public_share_artifacts(share_id,artifact_id,bookmark_id,artifact_type,storage_key,mime_type,byte_size,added_at)
 			SELECT ?,a.id,a.bookmark_id,a.artifact_type,a.storage_key,a.mime_type,a.byte_size,? FROM artifacts a
-			WHERE a.id=? AND a.user_id=? AND a.deleted_at IS NULL AND a.artifact_type=?
+			WHERE a.id=? AND a.user_id=? AND a.is_staged=0 AND a.deleted_at IS NULL AND a.artifact_type=?
 			AND EXISTS(SELECT 1 FROM public_share_items WHERE share_id=? AND bookmark_id=a.bookmark_id)`, shareID, now, id, userID, kind, shareID)
 		if err != nil {
 			return err
@@ -297,7 +306,8 @@ func (s *Service) PublicShareJSON(w http.ResponseWriter, r *http.Request) {
 		if arts == nil {
 			arts = []map[string]any{}
 		}
-		items = append(items, map[string]any{"id": item.id, "title": item.title, "url": item.url, "description": item.desc, "domain": item.domain, "reader_html": item.reader, "text": item.text, "created_at": item.created, "artifacts": arts})
+		reader := strings.ReplaceAll(item.reader, "/api/media/", "/s/"+r.PathValue("token")+"/media/")
+		items = append(items, map[string]any{"id": item.id, "title": item.title, "url": item.url, "description": item.desc, "domain": item.domain, "reader_html": reader, "text": item.text, "created_at": item.created, "artifacts": arts})
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, 200, map[string]any{"title": sh.Title, "description": sh.Description, "indexable": sh.Indexable, "items": items})
@@ -351,6 +361,26 @@ func (s *Service) PublicArtifact(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", `inline; filename="`+kind+`"`)
 	w.Header().Set("Content-Length", fmt.Sprint(size))
 	_, _ = io.Copy(w, f)
+}
+
+func (s *Service) PublicMedia(w http.ResponseWriter, r *http.Request) {
+	if !s.publicRate(r) {
+		writeError(w, http.StatusTooManyRequests, "Too many requests")
+		return
+	}
+	share, err := s.validShare(r)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "Share not found")
+		return
+	}
+	var key, mime string
+	var size int64
+	err = s.db.QueryRowContext(r.Context(), `SELECT storage_key,mime_type,byte_size FROM public_share_media WHERE share_id=? AND media_id=?`, share.ID, r.PathValue("media")).Scan(&key, &mime, &size)
+	if err != nil || s.assets == nil {
+		writeError(w, http.StatusNotFound, "Media not found")
+		return
+	}
+	s.writeMediaContent(w, key, mime, size, "no-store")
 }
 func (s *Service) PublicRSS(w http.ResponseWriter, r *http.Request) {
 	if !s.publicRate(r) {

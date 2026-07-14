@@ -1,15 +1,19 @@
 package installer
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/glnarayanan/arivu/internal/database"
 )
@@ -245,6 +249,123 @@ func TestRootFreshInstallWithBackupsDisabledDoesNotManageBackupTimer(t *testing.
 	}
 }
 
+func TestCaptureServiceStartsBeforeArivu(t *testing.T) {
+	var commands []string
+	oldRun := runCommand
+	oldHealth := healthCheckFunc
+	t.Cleanup(func() {
+		runCommand = oldRun
+		healthCheckFunc = oldHealth
+	})
+	runCommand = func(_ context.Context, name string, args ...string) error {
+		commands = append(commands, name+" "+strings.Join(args, " "))
+		return nil
+	}
+	healthCheckFunc = func(context.Context, int) error { return nil }
+
+	err := activateRootServices(context.Background(), Plan{Options: Options{CaptureEnabled: true}, BindPort: 8080})
+	if err != nil {
+		t.Fatal(err)
+	}
+	captureIndex := indexCommand(commands, "systemctl enable --now arivu-capture.service")
+	appIndex := indexCommand(commands, "systemctl enable --now arivu.service")
+	if captureIndex < 0 || appIndex < 0 || captureIndex > appIndex {
+		t.Fatalf("capture did not start before app: %#v", commands)
+	}
+}
+
+func TestCaptureArchiveExtractionRejectsTraversalAndLinks(t *testing.T) {
+	for name, entry := range map[string]tar.Header{
+		"traversal": {Name: "../outside", Mode: 0o644, Size: 1, Typeflag: tar.TypeReg},
+		"symlink":   {Name: "node", Mode: 0o777, Typeflag: tar.TypeSymlink, Linkname: "/bin/sh"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			archive := writeCaptureTar(t, []tar.Header{entry}, [][]byte{[]byte("x")})
+			if err := extractCaptureArchive(archive, t.TempDir()); err == nil {
+				t.Fatal("expected unsafe capture archive to fail")
+			}
+		})
+	}
+}
+
+func TestCaptureReleaseArchive(t *testing.T) {
+	archive := os.Getenv("ARIVU_CAPTURE_RELEASE_ARCHIVE")
+	if archive == "" {
+		t.Skip("set ARIVU_CAPTURE_RELEASE_ARCHIVE to validate a packaged runtime")
+	}
+	destination := t.TempDir()
+	if err := extractCaptureArchive(archive, destination); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateCaptureLayout(destination); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCaptureArchiveDownloadTimesOutBeforeResponseHeaders(t *testing.T) {
+	oldClient := captureHTTPClientFunc
+	captureHTTPClientFunc = func() *http.Client {
+		return &http.Client{
+			Timeout: 25 * time.Millisecond,
+			Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				<-request.Context().Done()
+				return nil, request.Context().Err()
+			}),
+		}
+	}
+	t.Cleanup(func() { captureHTTPClientFunc = oldClient })
+	sum := sha256.Sum256(nil)
+	sums := []byte(fmt.Sprintf("%x  archive.tar.gz\n", sum))
+
+	_, cleanup, err := downloadCaptureArchive(context.Background(), "https://release.example/archive.tar.gz", sums, t.TempDir())
+	cleanup()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("download error = %v", err)
+	}
+}
+
+func TestCaptureHTTPClientBoundsHeadersAndTotalDownload(t *testing.T) {
+	client := newCaptureHTTPClient()
+	if client.Timeout != 8*time.Minute {
+		t.Fatalf("client timeout = %s", client.Timeout)
+	}
+	transport, ok := client.Transport.(*http.Transport)
+	if !ok || transport.ResponseHeaderTimeout != 30*time.Second {
+		t.Fatalf("response header timeout = %#v", client.Transport)
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+func TestCaptureDirectoryReplacementRollsBack(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "arivu-capture")
+	if err := os.MkdirAll(target, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "version"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	archive := validCaptureArchive(t, "new")
+	replacement := &directoryReplacement{path: target}
+	if err := replacement.prepare(archive); err != nil {
+		t.Fatal(err)
+	}
+	defer replacement.cleanup()
+	if err := replacement.commit(); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContentMode(t, filepath.Join(target, "version"), "new", 0o644)
+	if err := replacement.rollback(); err != nil {
+		t.Fatal(err)
+	}
+	assertFileContentMode(t, filepath.Join(target, "version"), "old", 0o644)
+}
+
 func TestUpgradeReplacesAppAndInstallerFromSameVerifiedRelease(t *testing.T) {
 	root := upgradeFixture(t)
 	restoreClient := upgradeReleaseDownloads(t, []byte("new app"), []byte("new installer"))
@@ -293,6 +414,101 @@ func TestUpgradeWithCustomAppArtifactPreservesInstaller(t *testing.T) {
 	}
 	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu"), "custom app")
 	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu-installer"), "old installer")
+}
+
+func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
+	for _, activationFails := range []bool{false, true} {
+		t.Run(fmt.Sprintf("activation_fails_%v", activationFails), func(t *testing.T) {
+			root := upgradeFixture(t)
+			if err := os.MkdirAll(filepath.Join(root, "etc/arivu"), 0o750); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "etc/arivu/arivu.env"), []byte("ARIVU_BROWSER_CAPTURE_ENABLED=true\n"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			captureDir := filepath.Join(root, "usr/local/lib/arivu-capture")
+			if err := os.MkdirAll(captureDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(captureDir, "version"), []byte("old"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			restoreDownloads := upgradeReleaseDownloads(t, []byte("new app"), []byte("new installer"))
+			defer restoreDownloads()
+			archive := validCaptureArchive(t, "new")
+			oldCaptureDownload := captureArchiveDownloadFunc
+			captureArchiveDownloadFunc = func(context.Context, string, []byte, string) (string, func(), error) {
+				return archive, func() {}, nil
+			}
+			defer func() { captureArchiveDownloadFunc = oldCaptureDownload }()
+
+			activate := func(context.Context, string) error {
+				if activationFails {
+					return errors.New("capture unhealthy")
+				}
+				return nil
+			}
+			err := upgrade(context.Background(), HostFacts{Arch: "amd64"}, ApplyOptions{
+				ArtifactURL:          "https://release.example/arivu-linux-amd64",
+				InstallerArtifactURL: "https://release.example/arivu-installer-linux-amd64",
+				CaptureArtifactURL:   "https://release.example/arivu-capture-linux-amd64.tar.gz",
+				ChecksumsURL:         "https://release.example/SHA256SUMS",
+			}, "v1.2.3", root, activate)
+			if activationFails {
+				if err == nil || !strings.Contains(err.Error(), "capture unhealthy") {
+					t.Fatalf("upgrade error = %v", err)
+				}
+				assertFileContentMode(t, filepath.Join(captureDir, "version"), "old", 0o644)
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertFileContentMode(t, filepath.Join(captureDir, "version"), "new", 0o644)
+		})
+	}
+}
+
+func TestUpgradeRejectsCaptureArtifactWhenCaptureIsDisabled(t *testing.T) {
+	root := upgradeFixture(t)
+	restoreDownloads := upgradeReleaseDownloads(t, []byte("new app"), []byte("new installer"))
+	defer restoreDownloads()
+
+	err := upgrade(context.Background(), HostFacts{Arch: "amd64"}, ApplyOptions{
+		ArtifactURL:        "https://release.example/arivu-linux-amd64",
+		CaptureArtifactURL: "https://release.example/arivu-capture-linux-amd64.tar.gz",
+		ChecksumsURL:       "https://release.example/SHA256SUMS",
+	}, "v1.2.3", root, func(context.Context, string) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "complete capture is disabled") {
+		t.Fatalf("upgrade error = %v", err)
+	}
+}
+
+func TestRemoveCaptureRuntimePreservesOtherArivuFiles(t *testing.T) {
+	root := t.TempDir()
+	service := rootPath(root, captureServicePath)
+	runtime := rootPath(root, captureInstallPath)
+	data := rootPath(root, "/var/lib/arivu/arivu.db")
+	for _, dir := range []string{filepath.Dir(service), runtime, filepath.Dir(data)} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, file := range []string{service, filepath.Join(runtime, "node"), data} {
+		if err := os.WriteFile(file, []byte("preserve only data"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := removeCaptureRuntime(context.Background(), root); err != nil {
+		t.Fatal(err)
+	}
+	for _, removed := range []string{service, runtime} {
+		if _, err := os.Stat(removed); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("capture path still exists: %s", removed)
+		}
+	}
+	assertFileContentMode(t, data, "preserve only data", 0o644)
 }
 
 func TestInstallExecutableBinaryPreservesExecuteBitUnderRestrictiveUmask(t *testing.T) {
@@ -386,6 +602,11 @@ func upgradeReleaseDownloads(t *testing.T, app, installer []byte) func() {
 
 func assertFileContent(t *testing.T, path, want string) {
 	t.Helper()
+	assertFileContentMode(t, path, want, 0o755)
+}
+
+func assertFileContentMode(t *testing.T, path, want string, mode os.FileMode) {
+	t.Helper()
 	got, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
@@ -397,9 +618,56 @@ func assertFileContent(t *testing.T, path, want string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o755 {
-		t.Fatalf("%s mode = %o, want 755", path, info.Mode().Perm())
+	if info.Mode().Perm() != mode {
+		t.Fatalf("%s mode = %o, want %o", path, info.Mode().Perm(), mode)
 	}
+}
+
+func validCaptureArchive(t *testing.T, version string) string {
+	t.Helper()
+	headers := []tar.Header{
+		{Name: "node", Mode: 0o755, Size: 4, Typeflag: tar.TypeReg},
+		{Name: "monolith", Mode: 0o755, Size: 8, Typeflag: tar.TypeReg},
+		{Name: "src/index.mjs", Mode: 0o644, Size: 5, Typeflag: tar.TypeReg},
+		{Name: "src/preflight.mjs", Mode: 0o644, Size: 9, Typeflag: tar.TypeReg},
+		{Name: "node_modules/playwright/cli.js", Mode: 0o644, Size: 3, Typeflag: tar.TypeReg},
+		{Name: "browsers", Mode: 0o755, Typeflag: tar.TypeDir},
+		{Name: "version", Mode: 0o644, Size: int64(len(version)), Typeflag: tar.TypeReg},
+	}
+	bodies := [][]byte{[]byte("node"), []byte("monolith"), []byte("index"), []byte("preflight"), []byte("cli"), nil, []byte(version)}
+	return writeCaptureTar(t, headers, bodies)
+}
+
+func writeCaptureTar(t *testing.T, headers []tar.Header, bodies [][]byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "capture.tar.gz")
+	file, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gz := gzip.NewWriter(file)
+	tarWriter := tar.NewWriter(gz)
+	for index := range headers {
+		header := headers[index]
+		if err := tarWriter.WriteHeader(&header); err != nil {
+			t.Fatal(err)
+		}
+		if header.Size > 0 {
+			if _, err := tarWriter.Write(bodies[index]); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := gz.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func restoreFixture(t *testing.T, env string) string {

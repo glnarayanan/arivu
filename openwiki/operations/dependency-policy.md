@@ -1,4 +1,4 @@
-# Rewrite Dependency Policy
+# Dependency Policy
 
 The rewrite minimizes supply-chain surface by defaulting to the Go standard
 library and first-party browser code.
@@ -24,17 +24,18 @@ X are called through narrow direct HTTP clients.
   `go version -m` build info, `go list -m -json all` module inventory, and
   SHA-256 checksums. This keeps artifact provenance inspectable without adding
   a production dependency or a separate SBOM generator.
-- Release tags publish Linux AMD64 and ARM64 `arivu` and `arivu-installer`
-  binaries, the bootstrap `install.sh`, build info, module inventory,
-  `SHA256SUMS`, and GitHub artifact provenance attestations.
+- Release tags publish Linux AMD64 and ARM64 `arivu`, `arivu-installer`, and
+  native capture runtime artifacts, plus the bootstrap `install.sh`, build
+  info, module inventory, `SHA256SUMS`, and provenance attestations.
 - The bootstrap installer verifies release `SHA256SUMS` before executing
   `arivu-installer`. The installer verifies the Arivu binary checksum before
   replacing `/usr/local/bin/arivu`. Release attestations are still published for
   independent verification, but the target host does not need GitHub CLI auth.
 - CI runs first-party browser JavaScript syntax checks and the extension
-  URL/origin self-test with the GitHub runner's bundled Node runtime; Arivu
+  URL/origin self-test with the workflow's pinned Node runtime; Arivu
   still ships no npm dependency tree.
-- Dependabot monitors Go modules and GitHub Actions weekly.
+- Dependabot monitors Go modules, GitHub Actions, and capture npm packages
+  weekly.
 - The scheduled documentation workflow pins both the OpenWiki CLI version and
   the third-party pull-request action commit; generated documentation may
   update ordinary `openwiki/` pages and the lean `AGENTS.md`, but cannot rewrite
@@ -53,6 +54,30 @@ self-hosts the official OFL-licensed Geist and Noto Serif WOFF2 files under
 runtime dependency is required.
 The extension popup also uses native system font stacks and does not import
 remote font CSS.
+
+## Isolated Capture Bundle
+
+The optional `capture/` service is the only production boundary allowed to
+carry browser and DOM dependencies. It is not linked into the Go binary and
+nothing from it is imported by the embedded frontend. Its approved direct
+dependencies are pinned in `capture/package.json` and its lockfile:
+
+- Playwright `1.61.1` with its pinned Chromium runtime.
+- Mozilla Readability `0.6.0`.
+- JSDOM `29.1.1`.
+- Monolith `2.10.1` as a separately pinned executable.
+
+They are justified because a real browser, a mature article projection, an
+HTML DOM, and a self-contained archive engine are materially harder and less
+safe to recreate in the core application. CI installs from the lockfile, runs
+the capture protocol suite, and audits production npm dependencies. Updates
+require explicit approval plus security, integration, and capture-corpus review.
+Production releases bundle the pinned Node executable, Playwright Chromium,
+node modules, and Monolith into one architecture-specific archive. The installer
+is the only supported production lifecycle: it verifies, installs, upgrades,
+disables, and rolls back that archive without exposing npm or Docker to users.
+Both architectures build on the declared Ubuntu 22.04 compatibility baseline,
+matching the complete runtime's Ubuntu 22.04+ and Debian 12+ support policy.
 
 ## Adding A Dependency
 

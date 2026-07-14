@@ -29,6 +29,7 @@ type ApplyOptions struct {
 	DryRun               bool
 	ArtifactURL          string
 	InstallerArtifactURL string
+	CaptureArtifactURL   string
 	ChecksumsURL         string
 	InstallBinary        bool
 }
@@ -57,6 +58,23 @@ func Apply(ctx context.Context, plan Plan, opts ApplyOptions) error {
 		if err := ensureSystemUser(ctx, plan); err != nil {
 			return err
 		}
+	}
+	var captureReplacement *directoryReplacement
+	if root == "/" && plan.Options.CaptureEnabled {
+		captureURL := opts.CaptureArtifactURL
+		if captureURL == "" {
+			captureURL = CaptureArtifactURL("https://github.com/glnarayanan/arivu", plan.Options.Version, plan.Facts.Arch)
+		}
+		sumsURL := opts.ChecksumsURL
+		if sumsURL == "" {
+			_, _, sumsURL = ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", plan.Options.Version, plan.Facts.Arch)
+		}
+		prepared, prepareErr := prepareCaptureRuntime(ctx, root, captureURL, sumsURL)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		captureReplacement = prepared
+		defer captureReplacement.cleanup()
 	}
 	for _, dir := range []string{"/etc/arivu", "/etc/arivu/proxy", "/var/lib/arivu", "/var/backups/arivu"} {
 		if err := os.MkdirAll(rootPath(root, dir), 0o750); err != nil {
@@ -91,21 +109,60 @@ func Apply(ctx context.Context, plan Plan, opts ApplyOptions) error {
 			return err
 		}
 	}
+	if captureReplacement != nil {
+		_ = runCommand(ctx, "systemctl", "stop", "arivu-capture.service")
+		if err := captureReplacement.commit(); err != nil {
+			return err
+		}
+	}
 	if root == "/" {
 		if err := runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
-			return err
+			return rollbackCaptureApply(ctx, captureReplacement, err)
 		}
 		if err := activateProxy(ctx, plan); err != nil {
-			return err
+			return rollbackCaptureApply(ctx, captureReplacement, err)
 		}
 		if err := activateRootServices(ctx, plan); err != nil {
-			return err
+			return rollbackCaptureApply(ctx, captureReplacement, err)
+		}
+		if plan.Options.Reconfigure && !plan.Options.CaptureEnabled {
+			if err := removeCaptureRuntime(ctx, root); err != nil {
+				return err
+			}
+			if err := runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
+func rollbackCaptureApply(ctx context.Context, replacement *directoryReplacement, cause error) error {
+	if replacement == nil {
+		return cause
+	}
+	rollbackErr := replacement.rollback()
+	_ = runCommand(ctx, "systemctl", "daemon-reload")
+	if replacement.hadOriginal {
+		rollbackErr = errors.Join(rollbackErr, runCommand(ctx, "systemctl", "start", "arivu-capture.service"))
+	}
+	if rollbackErr != nil {
+		return fmt.Errorf("%w (capture rollback: %v)", cause, rollbackErr)
+	}
+	return cause
+}
+
 func activateRootServices(ctx context.Context, plan Plan) error {
+	if plan.Options.CaptureEnabled {
+		if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu-capture.service"); err != nil {
+			return err
+		}
+		if err := runCommand(ctx, "systemctl", "is-active", "--quiet", "arivu-capture.service"); err != nil {
+			return err
+		}
+	} else if plan.Options.Reconfigure {
+		_ = runCommand(ctx, "systemctl", "disable", "--now", "arivu-capture.service")
+	}
 	if err := runCommand(ctx, "systemctl", "enable", "--now", "arivu.service"); err != nil {
 		return err
 	}
@@ -561,35 +618,50 @@ func verifyArtifactRows(dbPath, assetRoot string) error {
 		return err
 	}
 	defer db.Close()
-	rows, err := db.Query(`SELECT storage_key,byte_size,sha256 FROM artifacts WHERE deleted_at IS NULL`)
-	if err != nil { // Legacy databases predate artifacts.
-		if strings.Contains(err.Error(), "no such table") {
-			return nil
-		}
-		return err
+	queries := []string{
+		`SELECT storage_key,byte_size,sha256 FROM artifacts WHERE deleted_at IS NULL`,
+		`SELECT storage_key,byte_size,sha256 FROM bookmark_media WHERE deleted_at IS NULL`,
+		`SELECT storage_key,byte_size,sha256 FROM public_share_media`,
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var key, digest string
-		var expected int64
-		if err = rows.Scan(&key, &expected, &digest); err != nil {
+	for _, query := range queries {
+		rows, err := db.Query(query)
+		if err != nil { // Older backups may predate any one asset table.
+			if strings.Contains(err.Error(), "no such table") {
+				continue
+			}
 			return err
 		}
-		if strings.Contains(key, "..") || filepath.IsAbs(key) {
-			return errors.New("invalid artifact storage key")
+		for rows.Next() {
+			var key, digest string
+			var expected int64
+			if err = rows.Scan(&key, &expected, &digest); err != nil {
+				_ = rows.Close()
+				return err
+			}
+			if strings.Contains(key, "..") || filepath.IsAbs(key) {
+				_ = rows.Close()
+				return errors.New("invalid artifact storage key")
+			}
+			f, e := os.Open(filepath.Join(assetRoot, "objects", filepath.FromSlash(key)))
+			if e != nil {
+				_ = rows.Close()
+				return fmt.Errorf("live artifact %s missing: %w", key, e)
+			}
+			h := sha256.New()
+			n, e := io.Copy(h, f)
+			_ = f.Close()
+			if e != nil || n != expected || hex.EncodeToString(h.Sum(nil)) != digest {
+				_ = rows.Close()
+				return fmt.Errorf("live artifact %s integrity check failed", key)
+			}
 		}
-		f, e := os.Open(filepath.Join(assetRoot, "objects", filepath.FromSlash(key)))
-		if e != nil {
-			return fmt.Errorf("live artifact %s missing: %w", key, e)
+		if err := rows.Err(); err != nil {
+			_ = rows.Close()
+			return err
 		}
-		h := sha256.New()
-		n, e := io.Copy(h, f)
-		f.Close()
-		if e != nil || n != expected || hex.EncodeToString(h.Sum(nil)) != digest {
-			return fmt.Errorf("live artifact %s integrity check failed", key)
-		}
+		_ = rows.Close()
 	}
-	return rows.Err()
+	return nil
 }
 
 func copyTree(src, dst string) error {
@@ -629,9 +701,20 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 	if sumsURL == "" {
 		sumsURL = defaultSumsURL
 	}
+	captureOpts, _ := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env"))
+	captureURL := opts.CaptureArtifactURL
+	if captureURL != "" && !captureOpts.CaptureEnabled {
+		return errors.New("complete capture is disabled; enable it with arivu-installer reconfigure before supplying a capture artifact")
+	}
+	if captureOpts.CaptureEnabled && captureURL == "" && !customAppArtifact {
+		captureURL = CaptureArtifactURL("https://github.com/glnarayanan/arivu", plan.Options.Version, facts.Arch)
+	}
 	targets := []string{appURL, sumsURL}
 	if installerURL != "" {
 		targets = append(targets, installerURL)
+	}
+	if captureURL != "" {
+		targets = append(targets, captureURL)
 	}
 	for _, target := range targets {
 		if err := validateDownloadURL(target); err != nil {
@@ -656,6 +739,14 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 		}
 		replacements = append(replacements, &binaryReplacement{path: rootPath(root, "/usr/local/bin/arivu-installer"), data: installerBinary})
 	}
+	var captureReplacement *directoryReplacement
+	if captureURL != "" {
+		captureReplacement, err = prepareCaptureRuntimeFromSums(ctx, root, captureURL, sums)
+		if err != nil {
+			return err
+		}
+		defer captureReplacement.cleanup()
+	}
 	for _, replacement := range replacements {
 		if err := replacement.prepare(); err != nil {
 			for _, item := range replacements {
@@ -677,8 +768,19 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 			return err
 		}
 	}
+	if captureReplacement != nil {
+		if err := captureReplacement.commit(); err != nil {
+			for index := len(replacements) - 1; index >= 0; index-- {
+				_ = replacements[index].rollback()
+			}
+			return err
+		}
+	}
 	if err := activate(ctx, root); err != nil {
 		var rollbackErr error
+		if captureReplacement != nil {
+			rollbackErr = errors.Join(rollbackErr, captureReplacement.rollback())
+		}
 		for index := len(replacements) - 1; index >= 0; index-- {
 			rollbackErr = errors.Join(rollbackErr, replacements[index].rollback())
 		}
@@ -692,20 +794,42 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 }
 
 func activateUpgrade(ctx context.Context, root string) error {
+	opts, _ := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env"))
+	if opts.CaptureEnabled {
+		if err := runCommand(ctx, "systemctl", "restart", "arivu-capture.service"); err != nil {
+			return fmt.Errorf("%w%s", err, systemdServiceFailureDetail(ctx, root, "arivu-capture.service"))
+		}
+		if err := runCommand(ctx, "systemctl", "is-active", "--quiet", "arivu-capture.service"); err != nil {
+			return fmt.Errorf("%w%s", err, systemdServiceFailureDetail(ctx, root, "arivu-capture.service"))
+		}
+	}
 	if err := runCommand(ctx, "systemctl", "restart", "arivu.service"); err != nil {
-		return fmt.Errorf("%w%s", err, serviceFailureDetail(ctx, root))
+		return fmt.Errorf("%w%s", err, systemdServiceFailureDetail(ctx, root, "arivu.service"))
 	}
 	if err := runCommand(ctx, "systemctl", "is-active", "--quiet", "arivu.service"); err != nil {
-		return fmt.Errorf("%w%s", err, serviceFailureDetail(ctx, root))
+		return fmt.Errorf("%w%s", err, systemdServiceFailureDetail(ctx, root, "arivu.service"))
 	}
 	port := 8080
-	if opts, err := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env")); err == nil && opts.BindPort != 0 {
+	if opts.BindPort != 0 {
 		port = opts.BindPort
 	}
 	if err := healthCheckFunc(ctx, port); err != nil {
-		return fmt.Errorf("%w%s", err, serviceFailureDetail(ctx, root))
+		return fmt.Errorf("%w%s", err, systemdServiceFailureDetail(ctx, root, "arivu.service"))
 	}
 	return nil
+}
+
+func systemdServiceFailureDetail(ctx context.Context, root, unit string) string {
+	if root != "/" && root != "" {
+		return ""
+	}
+	var b strings.Builder
+	appendCommandOutput(&b, ctx, "systemctl", "status", unit, "--no-pager", "-l")
+	appendCommandOutput(&b, ctx, "journalctl", "-u", unit, "-n", "20", "--no-pager")
+	if b.Len() == 0 {
+		return ""
+	}
+	return "\n" + strings.TrimSpace(b.String())
 }
 
 // installExecutableBinary writes a release binary with explicit execute bits.
@@ -737,19 +861,6 @@ func installExecutableBinary(path string, data []byte) error {
 		return err
 	}
 	return nil
-}
-
-func serviceFailureDetail(ctx context.Context, root string) string {
-	if root != "/" && root != "" {
-		return ""
-	}
-	var b strings.Builder
-	appendCommandOutput(&b, ctx, "systemctl", "status", "arivu.service", "--no-pager", "-l")
-	appendCommandOutput(&b, ctx, "journalctl", "-u", "arivu.service", "-n", "20", "--no-pager")
-	if b.Len() == 0 {
-		return ""
-	}
-	return "\n" + strings.TrimSpace(b.String())
 }
 
 func appendCommandOutput(b *strings.Builder, ctx context.Context, name string, args ...string) {
@@ -863,11 +974,13 @@ func (r *binaryReplacement) cleanup() {
 }
 
 func Uninstall(ctx context.Context, purge bool) error {
+	_ = runCommand(ctx, "systemctl", "disable", "--now", "arivu-capture.service")
 	_ = runCommand(ctx, "systemctl", "disable", "--now", "arivu-backup.timer")
 	_ = runCommand(ctx, "systemctl", "disable", "--now", "arivu.service")
-	for _, path := range []string{"/etc/systemd/system/arivu.service", "/etc/systemd/system/arivu-backup.service", "/etc/systemd/system/arivu-backup.timer", "/usr/local/bin/arivu"} {
+	for _, path := range []string{"/etc/systemd/system/arivu.service", "/etc/systemd/system/arivu-capture.service", "/etc/systemd/system/arivu-backup.service", "/etc/systemd/system/arivu-backup.timer", "/usr/local/bin/arivu"} {
 		_ = os.Remove(path)
 	}
+	_ = os.RemoveAll(captureInstallPath)
 	if purge {
 		_ = os.RemoveAll("/etc/arivu")
 		_ = os.RemoveAll("/var/lib/arivu")
@@ -972,17 +1085,25 @@ func healthCheck(ctx context.Context, port int) error {
 func VerifyChecksum(data []byte, sums []byte, name string) error {
 	sum := sha256.Sum256(data)
 	actual := hex.EncodeToString(sum[:])
+	expected, ok := checksumFromManifest(sums, name)
+	if !ok {
+		return fmt.Errorf("checksum for %s not found", name)
+	}
+	if expected != actual {
+		return fmt.Errorf("checksum mismatch for %s", name)
+	}
+	return nil
+}
+
+func checksumFromManifest(sums []byte, name string) (string, bool) {
 	scanner := bufio.NewScanner(bytes.NewReader(sums))
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
 		if len(fields) >= 2 && strings.TrimPrefix(fields[1], "*") == name {
-			if fields[0] == actual {
-				return nil
-			}
-			return fmt.Errorf("checksum mismatch for %s", name)
+			return fields[0], true
 		}
 	}
-	return fmt.Errorf("checksum for %s not found", name)
+	return "", false
 }
 
 func download(ctx context.Context, target string) ([]byte, error) {

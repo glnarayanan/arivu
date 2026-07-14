@@ -7,11 +7,13 @@ and public bookmark fields are copied into snapshot columns. Public projections
 never join live bookmark or evidence content. The embedded public-reader JS and
 CSS are served by the normal static asset path under the default self-only CSP.
 
-Optional browser preservation runs only after successful direct capture through
-the versioned stdin/stdout helper protocol documented in the deployment guide.
-Outputs enter a mode-0700 staging directory, are type/MIME/path/size checked,
-SHA-256 hashed while entering the private content-addressed asset store, and are
-served only through owner-authenticated artifact endpoints.
+Optional browser preservation runs beside direct capture through the versioned
+Unix-socket protocol documented in the deployment guide. A rendered result may
+upgrade weak direct evidence, but a browser challenge or failure cannot replace
+the last good reader copy. Outputs enter a mode-0700 staging directory, are
+type/MIME/size checked, SHA-256 hashed while entering the private
+content-addressed asset store, and are served only through owner-authenticated
+artifact or media endpoints.
 
 ## Capture attempts and local artifacts
 
@@ -23,6 +25,13 @@ Writes use random staging files, enforce the fetch bound while hashing, fsync,
 and atomically rename to SHA-256-derived object keys before metadata is stored.
 Authenticated artifact APIs filter by owner and return content with `nosniff`
 and `no-store`.
+
+Rendered reader images are rehosted into the same private content-addressed
+store and reader HTML is rewritten to owner-scoped `/api/media/` URLs before it
+can activate. Remote thumbnail URLs are never projected into Library, avoiding
+tracking requests from legacy imports. Evidence, rewritten HTML, thumbnail, and
+media rows share a staged activation boundary; retry and stale-batch cleanup do
+not disturb the active reader.
 
 Rows can be made unreachable with `deleted_at`; physical garbage collection and
 orphan reconciliation are grace-based maintenance operations and never remove

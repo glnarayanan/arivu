@@ -50,6 +50,10 @@ Existing product deep links remain compatibility routes.
 - Outbound fetching is SSRF-shielded, archived HTML is sanitized on the backend,
   and provider integrations use direct HTTP clients for model providers, Resend,
   and X.
+- Complete rendered preservation runs in a separate installer-managed headless
+  service, adding local reader images, screenshots, PDFs, and an offline page
+  without putting Node or browser dependencies in the core application. Fresh
+  installs may opt out with `--browser-capture=false`.
 
 ## Quick Start
 
@@ -84,9 +88,9 @@ the installed binary unless a version or artifact override is explicit.
 On an existing installation, the same one-line bootstrap refreshes the
 installer and upgrades Arivu without rerunning the setup wizard. Future
 upgrades can use `sudo arivu-installer upgrade`; that command verifies and
-updates both `arivu` and `arivu-installer`, then rolls both back if the service
-does not become healthy. Check installed versions with `arivu --version` and
-`arivu-installer --version`.
+updates `arivu`, `arivu-installer`, and the enabled capture runtime from one
+release, then rolls them back together if activation does not become healthy.
+Check installed versions with `arivu --version` and `arivu-installer --version`.
 
 For local development, use the Go version declared in `go.mod` (currently Go 1.25.12):
 
@@ -126,7 +130,8 @@ docker run --rm \
   arivu:local
 ```
 
-A Compose sample is available at `deploy/compose.yaml`.
+A Compose sample is available at `deploy/compose.yaml`. It covers the core app
+only; the supported complete-capture path is managed by `arivu-installer`.
 
 ## Migration
 
