@@ -935,6 +935,7 @@ progress::-moz-progress-bar {
 }
 
 .table-wrap {
+  max-width: 100%;
   overflow-x: auto;
   margin-top: var(--space-5);
   border: 1px dashed var(--line);
@@ -964,6 +965,101 @@ progress::-moz-progress-bar {
 
 .data-table td {
   font: 500 0.875rem/1.4 var(--font-ui);
+}
+
+.admin-failures-table {
+  min-width: 1040px;
+  table-layout: fixed;
+}
+
+.admin-failure-select { width: 3rem; }
+.admin-failure-job { width: 11rem; }
+.admin-failure-owner { width: 15.5rem; }
+.admin-failure-attempts { width: 4.5rem; }
+.admin-failure-reason { width: auto; }
+.admin-failure-date { width: 10rem; }
+.admin-failure-action { width: 7rem; }
+
+.admin-failures-table th,
+.admin-failures-table td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.admin-failures-table th {
+  white-space: nowrap;
+}
+
+.admin-job-cell code,
+.admin-owner-cell > * {
+  display: block;
+}
+
+.admin-job-cell code {
+  margin-top: var(--space-1);
+  color: var(--base-600);
+  overflow-wrap: anywhere;
+}
+
+.admin-attempts-cell,
+.admin-action-cell,
+.admin-action-cell button {
+  white-space: nowrap;
+}
+
+.admin-date-cell {
+  white-space: normal;
+}
+
+.admin-action-cell button {
+  min-width: 0;
+}
+
+.admin-failures-table td:first-child,
+.admin-action-cell {
+  vertical-align: middle;
+}
+
+.admin-failure-actions {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  border-block: 1px dashed var(--line);
+  padding-block: var(--space-3);
+}
+
+.admin-owner-retries {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.admin-failures-wrap {
+  margin-top: var(--space-3);
+}
+
+.admin-summary-failures-table {
+  min-width: 1056px;
+  table-layout: fixed;
+}
+
+.admin-summary-bookmark { width: 15rem; }
+.admin-summary-owner { width: 9rem; }
+.admin-summary-status { width: 10rem; }
+.admin-summary-reasons { width: 14rem; }
+.admin-summary-provider { width: 8rem; }
+.admin-summary-date { width: 10rem; }
+
+.admin-summary-status-cell {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.admin-error-detail {
+  display: inline-block;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .chips,
@@ -1269,6 +1365,10 @@ progress::-moz-progress-bar {
 .tabs {
   display: grid;
   gap: var(--space-5);
+}
+
+.tabs > [role="tabpanel"] {
+  min-width: 0;
 }
 
 .tab-list {

@@ -4809,8 +4809,9 @@ async function adminPage() {
     <div role="tabpanel" id="panel-collections" aria-labelledby="tab-collections">${adminCollectionsPanel(collections)}</div>
     <div role="tabpanel" id="panel-settings" aria-labelledby="tab-settings">${adminSettingsPanel(settings)}</div>
     <div role="tabpanel" id="panel-audit" aria-labelledby="tab-audit"><section class="stack">${auditEvents(audit.events || [])}</section></div>
-  </section>`));
+  </section>`, { wide: true }));
   ui.tabs(document.querySelector("#admin-tabs"));
+  bindAdminUsagePanel();
   bindAdminUsersPanel();
   bindAdminSettingsPanel();
 }
@@ -4838,8 +4839,112 @@ function adminUsagePanel(data) {
   </section>
   <section class="stack">${Object.entries(ops).map(([name, item]) => `<article class="annotation">
     <p><strong>${escapeHTML(name)}</strong> <span class="meta">${formatCount(item.requests)} calls · ${formatCount(item.errors)} errors</span></p>
-    ${item.last_error ? `<p class="meta">${escapeHTML(item.last_error)}</p>` : ""}
-  </article>`).join("") || `<p class="meta">No AI calls recorded for this process.</p>`}</section>`;
+    <p class="meta">Last request ${escapeHTML(formatDate(item.last_request) || "not recorded")}</p>
+    ${item.last_error ? `<p><code class="admin-error-detail">${escapeHTML(item.last_error_code || "provider_error")}</code> · ${escapeHTML(item.last_error)}</p>` : ""}
+  </article>`).join("") || `<p class="meta">No AI calls recorded for this process.</p>`}</section>
+  <section class="panel">
+    <h3>Failed jobs</h3>
+    <p class="meta">Durable failure history from the database. Retrying creates a new job and keeps the failed record for investigation.</p>
+    ${adminFailedJobs(data.recent_failed_jobs || [])}
+  </section>
+  <section class="panel">
+    <h3>Failed summaries</h3>
+    <p class="meta">Summary validation and evidence failures, including failures that did not exhaust a background job.</p>
+    ${adminFailedSummaries(data.recent_failed_summaries || [])}
+  </section>`;
+}
+
+function adminFailedJobs(jobs) {
+  if (!jobs.length) return `<p class="meta">No failed jobs.</p>`;
+  const owners = [...new Map(jobs.filter((job) => job.retryable && job.user_id).map((job) => [job.user_id, job.user_email || job.user_id])).entries()];
+  return `<div class="admin-failure-actions">
+    <div class="bulk-toolbar">
+      <label class="checkbox-row"><input type="checkbox" data-admin-select-all-jobs> Select all retryable</label>
+      <span class="meta"><span data-admin-selected-job-count>0</span> selected</span>
+      <button type="button" class="secondary" data-admin-retry-selected disabled>Retry selected</button>
+    </div>
+    ${owners.length ? `<div class="admin-owner-retries"><span class="meta">Retry failed by owner</span>${owners.map(([userID, label]) => `<button type="button" class="secondary" data-admin-retry-user="${escapeHTML(userID)}">${escapeHTML(label)}</button>`).join("")}</div>` : ""}
+  </div>
+  <div class="table-wrap admin-failures-wrap"><table class="data-table admin-failures-table">
+    <colgroup><col class="admin-failure-select"><col class="admin-failure-job"><col class="admin-failure-owner"><col class="admin-failure-attempts"><col class="admin-failure-reason"><col class="admin-failure-date"><col class="admin-failure-action"></colgroup>
+    <thead><tr><th scope="col"><span class="sr-only">Select</span></th><th scope="col">Job</th><th scope="col">Bookmark / owner</th><th scope="col">Attempts</th><th scope="col">Failure</th><th scope="col">Failed</th><th scope="col">Action</th></tr></thead>
+    <tbody>${jobs.map((job) => `<tr>
+      <td>${job.retryable ? `<input type="checkbox" data-admin-select-job value="${escapeHTML(job.id || "")}" aria-label="Select failed job for ${escapeHTML(job.bookmark_title || job.id || "bookmark")}">` : ""}</td>
+      <td class="admin-job-cell"><strong>${escapeHTML(job.type || "job")}</strong><code>${escapeHTML(job.id || "")}</code></td>
+      <td class="admin-owner-cell">${job.bookmark_id ? `<a class="text-link" href="/bookmark/${encodeURIComponent(job.bookmark_id)}">${escapeHTML(job.bookmark_title || job.bookmark_url || job.bookmark_id)}</a>` : `<span class="meta">No bookmark</span>`}<span class="meta">${escapeHTML(job.user_email || job.user_id || "system")}</span></td>
+      <td class="admin-attempts-cell">${formatCount(job.attempts)} / ${formatCount(job.max_attempts)}</td>
+      <td><code class="admin-error-detail">${escapeHTML(job.error || "No error was recorded")}</code></td>
+      <td class="admin-date-cell"><time datetime="${escapeHTML(job.failed_at || "")}">${escapeHTML(formatDate(job.failed_at))}</time></td>
+      <td class="admin-action-cell">${job.retryable ? `<button type="button" class="secondary" data-admin-retry-job="${escapeHTML(job.id || "")}">Retry</button>` : `<span class="meta">Unavailable</span>`}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function adminFailedSummaries(summaries) {
+  if (!summaries.length) return `<p class="meta">No failed summaries.</p>`;
+  return `<div class="table-wrap admin-failures-wrap"><table class="data-table admin-failures-table admin-summary-failures-table">
+    <colgroup><col class="admin-summary-bookmark"><col class="admin-summary-owner"><col class="admin-summary-status"><col class="admin-summary-reasons"><col class="admin-summary-provider"><col class="admin-summary-date"></colgroup>
+    <thead><tr><th>Bookmark</th><th>Owner</th><th>Status</th><th>Reasons</th><th>Provider / model</th><th>Failed</th></tr></thead>
+    <tbody>${summaries.map((summary) => `<tr>
+      <td><a class="text-link" href="/bookmark/${encodeURIComponent(summary.bookmark_id || "")}">${escapeHTML(summary.bookmark_title || summary.bookmark_url || summary.bookmark_id || "Unknown bookmark")}</a></td>
+      <td>${escapeHTML(summary.user_email || "")}</td>
+      <td class="admin-summary-status-cell">${escapeHTML(String(summary.validation_status || "failed").replaceAll("_", " "))}</td>
+      <td>${(summary.validation_reasons || []).length ? (summary.validation_reasons || []).map((reason) => `<code class="admin-error-detail">${escapeHTML(reason)}</code>`).join("<br>") : `<span class="meta">No validation reason was recorded</span>`}</td>
+      <td>${escapeHTML([summary.provider, summary.model].filter(Boolean).join(" · ") || "Not recorded")}</td>
+      <td class="admin-date-cell"><time datetime="${escapeHTML(summary.failed_at || "")}">${escapeHTML(formatDate(summary.failed_at))}</time></td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function bindAdminUsagePanel() {
+  document.querySelectorAll("[data-admin-retry-job]").forEach((button) => button.addEventListener("click", async () => {
+    const jobID = button.dataset.adminRetryJob;
+    const done = setButtonBusy(button, "Queueing");
+    try {
+      const result = await api(`/admin/jobs/${encodeURIComponent(jobID)}/retry`, { method: "POST", body: "{}" });
+      ui.toast(`Retry queued (${result.job_id})`, "success");
+      render();
+    } catch (err) {
+      ui.toast(err.message, "error");
+      done();
+    }
+  }));
+  const selectedJobs = () => [...document.querySelectorAll("[data-admin-select-job]:checked")].map((input) => input.value);
+  const updateSelection = () => {
+    const selected = selectedJobs().length;
+    const count = document.querySelector("[data-admin-selected-job-count]");
+    const retry = document.querySelector("[data-admin-retry-selected]");
+    const all = document.querySelector("[data-admin-select-all-jobs]");
+    const choices = [...document.querySelectorAll("[data-admin-select-job]")];
+    if (count) count.textContent = String(selected);
+    if (retry) retry.disabled = selected === 0;
+    if (all) {
+      all.checked = choices.length > 0 && selected === choices.length;
+      all.indeterminate = selected > 0 && selected < choices.length;
+    }
+  };
+  document.querySelectorAll("[data-admin-select-job]").forEach((input) => input.addEventListener("change", updateSelection));
+  document.querySelector("[data-admin-select-all-jobs]")?.addEventListener("change", (event) => {
+    document.querySelectorAll("[data-admin-select-job]").forEach((input) => { input.checked = event.currentTarget.checked; });
+    updateSelection();
+  });
+  document.querySelector("[data-admin-retry-selected]")?.addEventListener("click", (event) => runAdminBulkRetry(event.currentTarget, { job_ids: selectedJobs() }));
+  document.querySelectorAll("#panel-api [data-admin-retry-user]").forEach((button) => button.addEventListener("click", () => runAdminBulkRetry(button, { user_id: button.dataset.adminRetryUser })));
+  updateSelection();
+}
+
+async function runAdminBulkRetry(button, payload) {
+  const done = setButtonBusy(button, "Queueing");
+  try {
+    const result = await api("/admin/jobs/retry", { method: "POST", body: JSON.stringify(payload) });
+    const queued = Number(result.queued_count || 0);
+    const skipped = Number(result.failed_count || 0);
+    ui.toast(`${queued} ${queued === 1 ? "job" : "jobs"} queued${skipped ? ` · ${skipped} skipped` : ""}`, queued ? "success" : "error");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+    done();
+  }
 }
 
 function adminUsersPanel(users, sort, order) {
@@ -4878,6 +4983,7 @@ function adminUserRow(user) {
     <td>${user.is_admin ? "Admin" : user.invite_pending ? "Invited" : user.banned ? "Banned" : "Active"}</td>
     <td><div class="button-row">
       <button type="button" class="secondary" data-admin-user-detail="${escapeHTML(user.id)}">View details</button>
+      <button type="button" class="secondary" data-admin-retry-user="${escapeHTML(user.id)}"${Number(user.failed_job_count || 0) ? "" : " disabled"}>Retry failures (${formatCount(user.failed_job_count)})</button>
       <button type="button" class="secondary" data-admin-user-action="${action}" data-user-id="${escapeHTML(user.id)}">${action === "ban" ? "Ban user" : "Unban user"}</button>
       <button type="button" class="secondary" data-admin-user-action="reset-password" data-user-id="${escapeHTML(user.id)}">Reset password</button>
       <button type="button" class="danger" data-admin-user-action="delete" data-user-id="${escapeHTML(user.id)}">Delete user</button>
@@ -4939,6 +5045,7 @@ function bindAdminUsersPanel() {
     }
   });
   document.querySelectorAll("[data-admin-user-detail]").forEach((button) => button.addEventListener("click", () => showAdminUser(button.dataset.adminUserDetail)));
+  document.querySelectorAll("#panel-users [data-admin-retry-user]").forEach((button) => button.addEventListener("click", () => runAdminBulkRetry(button, { user_id: button.dataset.adminRetryUser })));
   document.querySelectorAll("[data-admin-user-action]").forEach((button) => button.addEventListener("click", () => runAdminUserAction(button)));
 }
 

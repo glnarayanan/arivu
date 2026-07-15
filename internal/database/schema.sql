@@ -737,6 +737,8 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_ready ON jobs(status, run_after, priority);
+CREATE INDEX IF NOT EXISTS idx_jobs_status_updated ON jobs(status, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_jobs_user_type_status_updated ON jobs(user_id, type, status, updated_at DESC, id DESC);
 
 CREATE TABLE IF NOT EXISTS quality_reprocess_runs (
   id TEXT PRIMARY KEY,

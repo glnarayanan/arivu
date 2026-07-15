@@ -290,6 +290,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/settings", a.withAdmin(a.adminUpdateSettings))
 	mux.HandleFunc("DELETE /api/admin/settings/{key}", a.withAdmin(a.adminDeleteSetting))
 	mux.HandleFunc("GET /api/admin/api-usage", a.withAdmin(a.adminAPIUsage))
+	mux.HandleFunc("POST /api/admin/jobs/retry", a.withAdmin(a.adminRetryJobs))
+	mux.HandleFunc("POST /api/admin/jobs/{id}/retry", a.withAdmin(a.adminRetryJob))
 	mux.HandleFunc("GET /api/admin/activity", a.withAdmin(a.adminActivity))
 	mux.HandleFunc("GET /api/admin/collections-stats", a.withAdmin(a.adminCollectionsStats))
 	mux.HandleFunc("GET /api/admin/audit-events", a.withAdmin(a.adminAuditEvents))
