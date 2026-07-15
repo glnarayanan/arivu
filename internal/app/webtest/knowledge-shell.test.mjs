@@ -113,7 +113,7 @@ test("provides discoverable global keyboard shortcuts without hijacking form inp
     'event.key === "?"',
     'key === "q"',
     'event.key === "/" || key === "f"',
-    'key === "k"',
+    'event.key.toLowerCase() === "k"',
     'key === "p"',
     'event.key === "ArrowDown" || event.key === "ArrowUp"',
     "document.querySelector(\".dialog-backdrop\")",
