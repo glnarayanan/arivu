@@ -5270,7 +5270,7 @@ function globalKeyboardShortcuts(event) {
   if (event.defaultPrevented) return;
   const key = event.key.toLowerCase();
   const command = event.metaKey || event.ctrlKey;
-  if (command && !event.altKey && key === "k") {
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && !event.altKey) {
     event.preventDefault();
     if (!document.querySelector(".dialog-backdrop")) openCommandPalette();
     return;
