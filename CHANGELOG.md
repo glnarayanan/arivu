@@ -4,6 +4,48 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-07-15
+
+- Fixed complete browser captures to fetch every image referenced by the
+  Readability projection through the attempt-scoped safe proxy, before optional
+  preservation artifacts consume the byte budget. Browser navigation now uses
+  a normal Chromium identity so bot-sensitive publishers do not degrade into a
+  stored `Forbidden` reader page.
+- Added the same owner-scoped reader-image localization to ordinary direct HTTP
+  captures, so installations without the optional browser helper still download,
+  store, and rewrite article figures instead of silently removing them. Text-only
+  captures now report `saved` rather than inaccurately claiming `preserved`.
+- Corrected reading-time estimates to use 238 words per minute with upward
+  rounding. When a model provider is unavailable or rejects its output,
+  summaries now prefer the publisher's description and preserve decimal version
+  numbers instead of truncating titles such as `Claude Code 2.0` to `2`. Rich
+  model output is salvaged field-by-field after validation instead of losing all
+  executive-summary paragraphs, key points, and highlights because one field
+  failed; evidence-derived rich fields remain available during provider outages.
+- Made Administration's API Usage view operationally useful by listing durable
+  failed jobs and summaries with owners, bookmark links, attempts, timestamps,
+  provider/model metadata, safe provider error codes, and recorded failure
+  details. Admins can safely retry failed bookmark-processing jobs without
+  deleting their failure history; duplicate active retries are rejected and
+  every retry is audited. Failure tables now retain legible column widths and
+  non-breaking actions, and admins can bulk retry selected failures or the most
+  recent failed processing attempt per bookmark for a specific user.
+- Preserved safe native MathML in archived reader content so matrices,
+  fractions, superscripts, and display equations retain their mathematical
+  layout instead of collapsing into a wall of text. Equally good successful
+  recaptures now refresh older evidence, so Reprocess activates extractor fixes
+  rather than retaining a stale reader solely because its quality score tied.
+- Reduced Library noise by showing saved and user-authored items by default and
+  moving generated concepts and entities into a clearly labeled secondary view;
+  both remain searchable and available in Graph.
+- Restored keyboard-first workflows from the legacy application: quick capture,
+  search focus, quick actions, printing, saved-item navigation, and Escape
+  handling. A discoverable `?` shortcut guide is also available from Quick
+  actions, while single-key commands stay disabled during form entry and in
+  dialogs. Persistent Capture, Search, and More actions show compact shortcut
+  hints on larger screens so the commands can be learned without opening the
+  guide.
+
 ## [1.4.0] - 2026-07-14
 
 - Added the optional isolated browser-capture service using pinned Playwright /
