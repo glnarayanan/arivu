@@ -1,6 +1,7 @@
 package bookmarks
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/browsercapture"
 	"github.com/glnarayanan/arivu/internal/ids"
+	"github.com/glnarayanan/arivu/internal/safefetch"
 	"github.com/glnarayanan/arivu/internal/sanitize"
 	"golang.org/x/net/html"
 )
@@ -21,6 +23,104 @@ import (
 type storedCaptureMedia struct {
 	id        string
 	sourceURL string
+}
+
+const (
+	directMediaFileLimit  = int64(10 << 20)
+	directMediaTotalLimit = int64(50 << 20)
+	directMediaCountLimit = 40
+)
+
+func (s *Service) storeDirectCaptureMedia(ctx context.Context, userID, bookmarkID, attemptID string, result safefetch.Result) ([]storedCaptureMedia, string, error) {
+	if s.assets == nil || s.fetchMedia == nil || attemptID == "" || strings.TrimSpace(result.ReaderHTML) == "" {
+		return nil, "", nil
+	}
+	urls := readerImageURLs(result.ReaderHTML, result.URL, directMediaCountLimit)
+	if len(urls) == 0 {
+		return nil, "", nil
+	}
+	batchID := ids.New()
+	if err := s.beginCaptureMediaBatch(ctx, userID, bookmarkID, attemptID, batchID); err != nil {
+		return nil, "", err
+	}
+	stored := make([]storedCaptureMedia, 0, len(urls))
+	var firstError error
+	var total int64
+	for ordinal, sourceURL := range urls {
+		mediaResult, err := s.fetchMedia(ctx, sourceURL, directMediaFileLimit)
+		if err != nil {
+			if firstError == nil {
+				firstError = err
+			}
+			continue
+		}
+		size := int64(len(mediaResult.Body))
+		if size == 0 || total > directMediaTotalLimit-size {
+			if firstError == nil {
+				firstError = ErrArtifactQuota
+			}
+			continue
+		}
+		total += size
+		key, digest, storedSize, err := s.assets.Put(bytes.NewReader(mediaResult.Body))
+		if err != nil {
+			if firstError == nil {
+				firstError = err
+			}
+			continue
+		}
+		id := ids.New()
+		item := browsercapture.V2Media{SourceURL: sourceURL, Role: "reader_image", V2File: browsercapture.V2File{MIME: mediaResult.ContentType, Size: storedSize}}
+		if err := s.commitMedia(ctx, id, userID, bookmarkID, attemptID, batchID, ordinal, item, storedSize, digest, key); err != nil {
+			if firstError == nil {
+				firstError = err
+			}
+			continue
+		}
+		stored = append(stored, storedCaptureMedia{id: id, sourceURL: sourceURL})
+	}
+	return stored, batchID, firstError
+}
+
+func readerImageURLs(input, baseURL string, limit int) []string {
+	root, err := html.Parse(strings.NewReader(input))
+	if err != nil {
+		return nil
+	}
+	base, _ := url.Parse(baseURL)
+	seen := map[string]bool{}
+	urls := []string{}
+	var walk func(*html.Node)
+	walk = func(node *html.Node) {
+		if len(urls) >= limit {
+			return
+		}
+		if node.Type == html.ElementNode && strings.EqualFold(node.Data, "img") {
+			for _, attr := range node.Attr {
+				if !strings.EqualFold(attr.Key, "src") {
+					continue
+				}
+				parsed, parseErr := url.Parse(strings.TrimSpace(attr.Val))
+				if parseErr != nil || parsed == nil {
+					break
+				}
+				if base != nil {
+					parsed = base.ResolveReference(parsed)
+				}
+				resolved := parsed.String()
+				if resolved != "" && !seen[resolved] {
+					seen[resolved] = true
+					urls = append(urls, resolved)
+				}
+				break
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(root)
+	return urls
 }
 
 func (s *Service) storeCaptureMedia(ctx context.Context, userID, bookmarkID, attemptID, batchID string, media []browsercapture.V2Media) ([]storedCaptureMedia, error) {
@@ -81,10 +181,29 @@ func (s *Service) beginCaptureMediaBatch(ctx context.Context, userID, bookmarkID
 	if currentAttempt != attemptID {
 		return errors.New("capture attempt superseded")
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_media SET deleted_at=? WHERE user_id=? AND bookmark_id=? AND is_staged=1 AND capture_batch_id<>?`, nowString(), userID, bookmarkID, batchID); err != nil {
+	return tx.Commit()
+}
+
+func (s *Service) prepareCaptureMediaAttempt(ctx context.Context, userID, bookmarkID, attemptID string) error {
+	s.artifactMu.Lock()
+	defer s.artifactMu.Unlock()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, `UPDATE artifacts SET deleted_at=? WHERE user_id=? AND bookmark_id=? AND is_staged=1 AND capture_batch_id<>?`, nowString(), userID, bookmarkID, batchID); err != nil {
+	defer tx.Rollback()
+	var currentAttempt string
+	if err := tx.QueryRowContext(ctx, `SELECT id FROM capture_attempts WHERE user_id=? AND bookmark_id=? ORDER BY queued_at DESC,rowid DESC LIMIT 1`, userID, bookmarkID).Scan(&currentAttempt); err != nil {
+		return err
+	}
+	if currentAttempt != attemptID {
+		return errors.New("capture attempt superseded")
+	}
+	now := nowString()
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmark_media SET deleted_at=? WHERE user_id=? AND bookmark_id=? AND is_staged=1`, now, userID, bookmarkID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE artifacts SET deleted_at=? WHERE user_id=? AND bookmark_id=? AND is_staged=1`, now, userID, bookmarkID); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -129,7 +248,7 @@ func (s *Service) commitMedia(ctx context.Context, id, userID, bookmarkID, attem
 
 func linkCaptureMediaTx(ctx context.Context, tx *sql.Tx, userID, bookmarkID, attemptID, batchID, evidenceID string, media []storedCaptureMedia) error {
 	for _, item := range media {
-		result, err := tx.ExecContext(ctx, `UPDATE bookmark_media SET evidence_id=? WHERE id=? AND user_id=? AND bookmark_id=? AND capture_attempt_id=? AND capture_batch_id=? AND is_staged=1`, evidenceID, item.id, userID, bookmarkID, attemptID, batchID)
+		result, err := tx.ExecContext(ctx, `UPDATE bookmark_media SET evidence_id=? WHERE id=? AND user_id=? AND bookmark_id=? AND capture_attempt_id=? AND capture_batch_id=? AND is_staged=1 AND deleted_at IS NULL`, evidenceID, item.id, userID, bookmarkID, attemptID, batchID)
 		if err != nil {
 			return err
 		}
@@ -178,7 +297,11 @@ func rewriteReaderMedia(input, baseURL string, media []storedCaptureMedia) strin
 					continue
 				}
 				source, parseErr := url.Parse(strings.TrimSpace(node.Attr[i].Val))
-				if parseErr == nil && base != nil {
+				if parseErr != nil || source == nil {
+					node.Attr[i].Val = ""
+					break
+				}
+				if base != nil {
 					source = base.ResolveReference(source)
 				}
 				if id := refs[source.String()]; id != "" {

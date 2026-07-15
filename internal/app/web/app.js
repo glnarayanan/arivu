@@ -980,11 +980,11 @@ function preservationPanel(artifacts = [], captureStatus = "saved") {
   const preservedPage = artifacts.find((artifact) => artifact.type === "self_contained_html");
   const status = String(captureStatus || "saved").replaceAll("_", " ");
   const messages = {
+    saved: "Reader text is stored. This capture did not preserve reader images or additional offline formats; Reprocess can try again.",
     processing: "Browser preservation is still running in the background. The reader remains available as soon as its text is ready.",
     partially_preserved: "The reader is available. One or more preserved formats could not be completed; Reprocess can try them again.",
     preserved: artifacts.length ? "Reader content and preserved files are stored on this instance." : "The reader copy is stored. Additional preserved formats are not enabled for this instance.",
     failed: "The latest preservation attempt failed. Your last good reader copy remains available.",
-    saved: "Reader text is stored when available. Preserved page files have not been created yet.",
   };
   const actions = artifacts.map((artifact) => {
     const labels = {
@@ -2312,8 +2312,8 @@ function summaryPanel(summary) {
   }[summary.processing_status] || "";
   const summaryContent = hasSummary ? `
     ${summary.one_sentence ? `<p>${escapeHTML(summary.one_sentence)}</p>` : ""}
-    ${longForm ? `<div class="summary-long-form">${longForm.split(/\n\s*\n/).map((paragraph) => `<p>${escapeHTML(paragraph)}</p>`).join("")}</div>` : ""}
-    ${bullets.length ? `<ul>${bullets.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
+    ${longForm ? `<p class="meta">Executive summary</p><div class="summary-long-form">${longForm.split(/\n\s*\n/).map((paragraph) => `<p>${escapeHTML(paragraph)}</p>`).join("")}</div>` : ""}
+    ${bullets.length ? `<p class="meta">Key points</p><ul>${bullets.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${highlights.length ? `<p class="meta">Highlights</p><ul>${highlights.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${tags.length ? `<div class="chips">${tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}</div>` : ""}` : "";
   return `<section class="insight-strip">

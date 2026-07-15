@@ -145,7 +145,15 @@ func (s *Service) captureStatus(ctx context.Context, userID, bookmarkID string) 
 		return "saved"
 	}
 	if status == "complete" {
-		return "preserved"
+		var preserved int
+		_ = s.db.QueryRowContext(ctx, `SELECT
+			EXISTS(SELECT 1 FROM bookmark_media WHERE user_id=? AND bookmark_id=? AND is_staged=0 AND deleted_at IS NULL)
+			OR EXISTS(SELECT 1 FROM artifacts WHERE user_id=? AND bookmark_id=? AND artifact_type IN ('screenshot','pdf','self_contained_html') AND is_staged=0 AND deleted_at IS NULL)`,
+			userID, bookmarkID, userID, bookmarkID).Scan(&preserved)
+		if preserved != 0 {
+			return "preserved"
+		}
+		return "saved"
 	}
 	if status == "partial" {
 		return "partially_preserved"

@@ -63,6 +63,13 @@ process. Go validates the full manifest first, copies exact byte counts into its
 own mode-`0700` directory, rejects truncation and trailing bytes, and removes
 the directory after ingestion.
 
+Reader images are derived from the final Readability projection and fetched
+explicitly through the same authenticated safe proxy. This does not depend on
+whether lazy loading happened to request each image while Chromium scrolled the
+page. Reader media gets its bounded quota before optional screenshot, PDF, or
+self-contained HTML generation, so a large preservation artifact cannot silently
+strip figures from the primary reading copy.
+
 Monolith receives the browser-rendered DOM on stdin with the final page URL as
 its base. Archives use isolation and omit JavaScript, audio, video, frames, and
 remote fonts. Monolith receives the same per-attempt authenticated proxy and an

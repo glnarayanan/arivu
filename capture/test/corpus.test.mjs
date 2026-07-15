@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { extractPage, readerImageURLs } from '../src/capture.mjs';
+import { browserUserAgent, collectReaderMedia, extractPage, readerImageURLs } from '../src/capture.mjs';
 import { assessQuality } from '../src/quality.mjs';
 
 const articleText = Array.from({ length: 240 }, (_, index) => `Rendered evidence sentence ${index + 1}.`).join(' ');
@@ -17,6 +17,18 @@ test('extracts a static article with useful metadata and figures', () => {
   assert.equal(result.metadata.language, 'en');
   assert.match(result.projection.textContent, /Rendered evidence sentence 240/);
   assert.match(result.projection.content, /Evidence figure/);
+});
+
+test('prefers the publisher description over a generated reader excerpt', () => {
+  const result = extractPage(`<!doctype html><html><head>
+    <title>Guide 2.0</title><meta name="description" content="The publisher-authored summary.">
+  </head><body><article><h1>Guide 2.0</h1><p>${articleText}</p></article></body></html>`, 'https://example.com/guide');
+
+  assert.equal(result.metadata.description, 'The publisher-authored summary.');
+});
+
+test('browser identity tracks the installed Chromium version', () => {
+  assert.match(browserUserAgent('149.0.7758.0'), /Chrome\/149\.0\.7758\.0 Safari/);
 });
 
 test('extracts the final DOM produced by a JavaScript application', () => {
@@ -36,6 +48,34 @@ test('resolves and deduplicates reader media without treating data URLs as fetch
     <img src="/images/one.jpg"><img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=">`, 'https://example.com/story')];
 
   assert.deepEqual(urls, ['https://example.com/images/one.jpg', 'https://cdn.example/two.webp']);
+});
+
+test('fetches reader images directly instead of depending on viewport-loaded responses', async () => {
+  const requested = [];
+  const request = {
+    async get(url) {
+      requested.push(url);
+      return {
+        ok: () => true,
+        url: () => url,
+        headers: () => ({ 'content-type': 'image/webp', 'content-length': '5' }),
+        body: async () => Buffer.from('image'),
+        dispose: async () => {},
+      };
+    },
+  };
+  const limits = { max_media_files: 2, max_media_file_bytes: 10, max_media_total_bytes: 20 };
+
+  const result = await collectReaderMedia(request, [
+    'https://cdn.example/first.webp',
+    'https://cdn.example/second.webp',
+    'https://cdn.example/over-limit.webp',
+  ], limits, 0);
+
+  assert.deepEqual(requested, ['https://cdn.example/first.webp', 'https://cdn.example/second.webp']);
+  assert.deepEqual(result.media.map((item) => item.source_url), requested);
+  assert.equal(result.payloads.length, 2);
+  assert.equal(result.total, 10);
 });
 
 test('classifies a rendered challenge as unsafe replacement evidence', () => {

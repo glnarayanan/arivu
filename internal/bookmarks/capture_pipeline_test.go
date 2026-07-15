@@ -22,6 +22,13 @@ import (
 	"github.com/glnarayanan/arivu/internal/safefetch"
 )
 
+func TestReadingTimeUsesStandardAdultReadingSpeedAndRoundsUp(t *testing.T) {
+	text := strings.TrimSpace(strings.Repeat("word ", 9639))
+	if got := readingTime(text); got != 41 {
+		t.Fatalf("readingTime() = %d, want 41", got)
+	}
+}
+
 func TestDirectCaptureActivatesReaderWithoutAI(t *testing.T) {
 	service, db := capturePipelineService(t)
 	service.fetchPage = func(context.Context, string) (safefetch.Result, error) {
@@ -37,6 +44,46 @@ func TestDirectCaptureActivatesReaderWithoutAI(t *testing.T) {
 	}
 	if text != "New rendered-independent evidence" || selected == "" || summaryStatus != "fallback" {
 		t.Fatalf("text=%q selected=%q summary=%q", text, selected, summaryStatus)
+	}
+	_, _ = db.Exec(`UPDATE capture_attempts SET status='complete' WHERE id='attempt-1'`)
+	if status := service.captureStatus(t.Context(), "user-1", "bookmark-1"); status != "saved" {
+		t.Fatalf("text-only direct capture status=%q, want saved", status)
+	}
+}
+
+func TestDirectCaptureLocalizesReaderImagesWithoutBrowserHelper(t *testing.T) {
+	service, db := capturePipelineService(t)
+	store, err := assets.New(filepath.Join(t.TempDir(), "capture.sqlite3"), 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.SetAssetStore(store)
+	service.fetchPage = func(context.Context, string) (safefetch.Result, error) {
+		result := completeDirectResult("Direct evidence with an image", 88)
+		result.ReaderHTML = `<article><p>Direct evidence with an image</p><figure><img src="https://cdn.example.com/guide.webp" alt="Guide screenshot"><figcaption>Guide</figcaption></figure></article>`
+		return result, nil
+	}
+	service.fetchMedia = func(context.Context, string, int64) (safefetch.MediaResult, error) {
+		return safefetch.MediaResult{URL: "https://cdn.example.com/guide.webp", Body: []byte("webp"), ContentType: "image/webp"}, nil
+	}
+
+	if err := service.processWebBookmarkAttempt(t.Context(), "user-1", "bookmark-1", "https://example.com/article", "attempt-1", "Example", "", "example.com"); err != nil {
+		t.Fatal(err)
+	}
+	var readerHTML, thumbnail string
+	if err := db.QueryRow(`SELECT sanitized_html,COALESCE(thumbnail,'') FROM bookmarks WHERE id='bookmark-1'`).Scan(&readerHTML, &thumbnail); err != nil {
+		t.Fatal(err)
+	}
+	var mediaCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmark_media WHERE bookmark_id='bookmark-1' AND is_staged=0 AND deleted_at IS NULL`).Scan(&mediaCount); err != nil {
+		t.Fatal(err)
+	}
+	if mediaCount != 1 || !strings.Contains(readerHTML, `<img src="/api/media/`) || strings.Contains(readerHTML, "cdn.example.com") || !strings.HasPrefix(thumbnail, "/api/media/") {
+		t.Fatalf("media_count=%d html=%q thumbnail=%q", mediaCount, readerHTML, thumbnail)
+	}
+	_, _ = db.Exec(`UPDATE capture_attempts SET status='complete' WHERE id='attempt-1'`)
+	if status := service.captureStatus(t.Context(), "user-1", "bookmark-1"); status != "preserved" {
+		t.Fatalf("localized direct capture status=%q, want preserved", status)
 	}
 }
 
@@ -237,7 +284,9 @@ func TestRenderedCaptureOutranksDirectAndPersistsBothEvidenceRows(t *testing.T) 
 		MaxFileBytes: 1024, MaxTotalBytes: 4096, MaxMediaFiles: 1, MaxMediaFileBytes: 1024, MaxMediaTotalBytes: 1024,
 	})
 	service.fetchPage = func(context.Context, string) (safefetch.Result, error) {
-		return completeDirectResult("Direct evidence with the higher numeric score", 99), nil
+		result := completeDirectResult("Direct evidence with the higher numeric score", 99)
+		result.Description = "Publisher-authored description."
+		return result, nil
 	}
 
 	if err := service.processWebBookmarkAttempt(t.Context(), "user-1", "bookmark-1", "https://example.com/article", "attempt-1", "Example", "", "example.com"); err != nil {
@@ -246,8 +295,8 @@ func TestRenderedCaptureOutranksDirectAndPersistsBothEvidenceRows(t *testing.T) 
 	if err := <-helperDone; err != nil {
 		t.Fatal(err)
 	}
-	var origin, text, readerHTML, thumbnail string
-	if err := db.QueryRow(`SELECT e.evidence_origin,b.text_content,b.sanitized_html,COALESCE(b.thumbnail,'') FROM bookmark_evidence e JOIN bookmarks b ON b.id=e.bookmark_id WHERE e.bookmark_id='bookmark-1' AND e.is_selected=1`).Scan(&origin, &text, &readerHTML, &thumbnail); err != nil {
+	var origin, text, description, readerHTML, thumbnail string
+	if err := db.QueryRow(`SELECT e.evidence_origin,b.text_content,b.description,b.sanitized_html,COALESCE(b.thumbnail,'') FROM bookmark_evidence e JOIN bookmarks b ON b.id=e.bookmark_id WHERE e.bookmark_id='bookmark-1' AND e.is_selected=1`).Scan(&origin, &text, &description, &readerHTML, &thumbnail); err != nil {
 		t.Fatal(err)
 	}
 	var evidenceCount int
@@ -258,8 +307,8 @@ func TestRenderedCaptureOutranksDirectAndPersistsBothEvidenceRows(t *testing.T) 
 	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmark_media WHERE bookmark_id='bookmark-1' AND deleted_at IS NULL`).Scan(&mediaCount); err != nil {
 		t.Fatal(err)
 	}
-	if origin != "browser_render" || text != "Rendered evidence" || evidenceCount != 2 || mediaCount != 1 || !strings.Contains(readerHTML, `<img src="/api/media/`) || strings.Contains(readerHTML, "https://example.com/image.png") || !strings.HasPrefix(thumbnail, "/api/media/") {
-		t.Fatalf("origin=%q text=%q evidence_count=%d media_count=%d html=%q thumbnail=%q", origin, text, evidenceCount, mediaCount, readerHTML, thumbnail)
+	if origin != "browser_render" || text != "Rendered evidence" || description != "Publisher-authored description." || evidenceCount != 2 || mediaCount != 1 || !strings.Contains(readerHTML, `<img src="/api/media/`) || strings.Contains(readerHTML, "https://example.com/image.png") || !strings.HasPrefix(thumbnail, "/api/media/") {
+		t.Fatalf("origin=%q text=%q description=%q evidence_count=%d media_count=%d html=%q thumbnail=%q", origin, text, description, evidenceCount, mediaCount, readerHTML, thumbnail)
 	}
 }
 

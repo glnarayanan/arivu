@@ -1086,6 +1086,20 @@ progress::-moz-progress-bar {
   margin: var(--space-6) 0;
 }
 
+.reader-content math {
+  font-family: "STIX Two Math", "Cambria Math", "Times New Roman", serif;
+  font-size: 1.05em;
+}
+
+.reader-content math[display="block"] {
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-block: var(--space-4);
+  padding-block: var(--space-1);
+}
+
 .reader-content figure img {
   display: block;
 }

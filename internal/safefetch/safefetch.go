@@ -65,6 +65,7 @@ type Result struct {
 	Title       string
 	Description string
 	HTML        string
+	ReaderHTML  string
 	Text        string
 	Domain      string
 	Quality     Assessment
@@ -79,6 +80,55 @@ type RawResult struct {
 	URL                             string
 	Body                            []byte
 	ETag, LastModified, ContentType string
+}
+
+type MediaResult struct {
+	URL         string
+	Body        []byte
+	ContentType string
+}
+
+func (c *Client) FetchMedia(ctx context.Context, rawURL string, maxBytes int64) (MediaResult, error) {
+	if maxBytes <= 0 || maxBytes > MaxBodyBytes {
+		maxBytes = MaxBodyBytes
+	}
+	req, err := c.newRequest(ctx, rawURL)
+	if err != nil {
+		return MediaResult{}, err
+	}
+	req.Header.Set("Accept", "image/webp,image/png,image/jpeg,image/gif")
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return MediaResult{}, &FetchError{Reason: "fetch_failed", Err: err}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return MediaResult{}, &FetchError{Reason: fmt.Sprintf("upstream_http_%d", resp.StatusCode), Err: fmt.Errorf("upstream status %d", resp.StatusCode)}
+	}
+	contentType := strings.TrimSpace(strings.Split(strings.ToLower(resp.Header.Get("Content-Type")), ";")[0])
+	if !supportedMediaType(contentType) {
+		return MediaResult{}, &FetchError{Reason: "unsupported_content_type", Err: fmt.Errorf("unsupported media content type %q", contentType)}
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes+1))
+	if err != nil {
+		return MediaResult{}, err
+	}
+	if int64(len(body)) > maxBytes {
+		return MediaResult{}, &FetchError{Reason: "content_too_large", Err: errors.New("media content too large")}
+	}
+	if detected := http.DetectContentType(body); detected != contentType {
+		return MediaResult{}, &FetchError{Reason: "invalid_media_body", Err: fmt.Errorf("media body type %q does not match %q", detected, contentType)}
+	}
+	return MediaResult{URL: resp.Request.URL.String(), Body: body, ContentType: contentType}, nil
+}
+
+func supportedMediaType(contentType string) bool {
+	switch contentType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+		return true
+	default:
+		return false
+	}
 }
 
 func (c *Client) FetchRaw(ctx context.Context, rawURL, etag, modified string) (RawResult, error) {
@@ -226,9 +276,9 @@ func (c *Client) Fetch(ctx context.Context, rawURL string) (Result, error) {
 		return Result{URL: parsed.String(), Title: parsed.Hostname(), HTML: stdhtml.EscapeString(text), Text: text, Domain: parsed.Hostname(), Quality: Assess("plain_text", "document", parsed.Hostname(), text), Body: body, ContentType: contentType}, nil
 	}
 	title := ExtractTitle(raw)
-	articleHTML, text, description := extractPage(raw)
+	articleHTML, text, description, readerHTML := extractPage(raw)
 	text = trimLeadingChrome(text, title)
-	return Result{URL: parsed.String(), Title: title, Description: description, HTML: articleHTML, Text: text, Domain: parsed.Hostname(), Quality: Assess("article_extraction", "article", title, text), Body: body, ContentType: contentType}, nil
+	return Result{URL: parsed.String(), Title: title, Description: description, HTML: articleHTML, ReaderHTML: readerHTML, Text: text, Domain: parsed.Hostname(), Quality: Assess("article_extraction", "article", title, text), Body: body, ContentType: contentType}, nil
 }
 
 func (c *Client) newRequest(ctx context.Context, rawURL string) (*http.Request, error) {
@@ -390,19 +440,21 @@ func hasLeadingChrome(text string) bool {
 }
 
 func ExtractArticle(input string) (string, string) {
-	articleHTML, text, _ := extractPage(input)
+	articleHTML, text, _, _ := extractPage(input)
 	return articleHTML, text
 }
 
-func extractPage(input string) (string, string, string) {
+func extractPage(input string) (string, string, string, string) {
 	root, err := html.Parse(strings.NewReader(input))
 	if err != nil {
 		text := strings.Join(strings.Fields(stdhtml.UnescapeString(input)), " ")
-		return stdhtml.EscapeString(text), text, ""
+		return stdhtml.EscapeString(text), text, "", ""
 	}
 	description := extractDescription(root)
 	dropNonContent(root)
 	node := bestArticleNode(root)
+	var readerOut strings.Builder
+	_ = html.Render(&readerOut, node)
 	var htmlOut strings.Builder
 	_ = html.Render(&htmlOut, node)
 	articleHTML := strings.TrimSpace(sanitize.HTML(htmlOut.String()))
@@ -411,7 +463,7 @@ func extractPage(input string) (string, string, string) {
 		text = strings.Join(strings.Fields(textContent(root)), " ")
 		articleHTML = stdhtml.EscapeString(text)
 	}
-	return articleHTML, text, description
+	return articleHTML, text, description, strings.TrimSpace(readerOut.String())
 }
 
 func Assess(origin, contentKind, title, text string) Assessment {

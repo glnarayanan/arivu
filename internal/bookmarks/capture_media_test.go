@@ -23,6 +23,18 @@ func TestRewriteReaderMediaRehostsOnlyCapturedImages(t *testing.T) {
 	}
 }
 
+func TestReaderMediaIgnoresMalformedImageURLs(t *testing.T) {
+	input := `<article><img src="%"><img src="https://example.com/valid.png"></article>`
+	urls := readerImageURLs(input, "https://example.com/article", 10)
+	if len(urls) != 1 || urls[0] != "https://example.com/valid.png" {
+		t.Fatalf("reader image URLs = %#v", urls)
+	}
+	got := rewriteReaderMedia(input, "https://example.com/article", nil)
+	if strings.Contains(got, `src="%"`) {
+		t.Fatalf("malformed image survived rewrite: %q", got)
+	}
+}
+
 func TestMediaAndArtifactsShareOneQuota(t *testing.T) {
 	service, _ := capturePipelineService(t)
 	service.SetArtifactQuota(6)
@@ -97,7 +109,7 @@ func TestStagedMediaReservationsPreventConcurrentQuotaOvercommit(t *testing.T) {
 	}
 }
 
-func TestMediaBatchRetryRetiresPriorStagingAndRejectsSupersededAttempts(t *testing.T) {
+func TestSameAttemptMediaBatchesCoexistAndSupersededAttemptsAreRejected(t *testing.T) {
 	service, db := capturePipelineService(t)
 	media := browsercapture.V2Media{SourceURL: "https://example.com/image.png", Role: "reader_image", V2File: browsercapture.V2File{MIME: "image/png", Size: 5}}
 	if err := service.commitMedia(t.Context(), "old-stage", "user-1", "bookmark-1", "attempt-1", "old-batch", 0, media, 5, "old", "aa/old"); err != nil {
@@ -110,8 +122,8 @@ func TestMediaBatchRetryRetiresPriorStagingAndRejectsSupersededAttempts(t *testi
 	if err := db.QueryRow(`SELECT deleted_at IS NOT NULL FROM bookmark_media WHERE id='old-stage'`).Scan(&retired); err != nil {
 		t.Fatal(err)
 	}
-	if retired != 1 {
-		t.Fatal("prior retry staging remains reserved")
+	if retired != 0 {
+		t.Fatal("one capture lane retired its same-attempt sibling batch")
 	}
 	queued := time.Now().UTC().Add(time.Second).Format(time.RFC3339Nano)
 	if _, err := db.Exec(`INSERT INTO capture_attempts(id,bookmark_id,user_id,status,requested_url,engine,queued_at) VALUES('attempt-2','bookmark-1','user-1','running','https://example.com/article','direct_http',?)`, queued); err != nil {

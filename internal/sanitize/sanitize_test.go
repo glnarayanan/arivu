@@ -23,3 +23,11 @@ func TestHTMLAllowsOnlyRehostedReaderImages(t *testing.T) {
 		t.Fatalf("HTML() = %q, want %q", got, want)
 	}
 }
+
+func TestHTMLPreservesNativeMathMLWithoutUnsafeAttributes(t *testing.T) {
+	input := `<math xmlns="http://www.w3.org/1998/Math/MathML" display="block" onclick="alert(1)"><mrow><mi>A</mi><mo>=</mo><mfrac><mn>2</mn><msup><mi>v</mi><mn>2</mn></msup></mfrac></mrow><script>alert(2)</script></math>`
+	want := `<math display="block"><mrow><mi>A</mi><mo>=</mo><mfrac><mn>2</mn><msup><mi>v</mi><mn>2</mn></msup></mfrac></mrow></math>`
+	if got := HTML(input); got != want {
+		t.Fatalf("HTML() = %q, want %q", got, want)
+	}
+}

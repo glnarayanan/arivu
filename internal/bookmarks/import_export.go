@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/ids"
@@ -293,7 +294,6 @@ func (s *Service) persistSelectedEvidenceForAttemptWithMedia(ctx context.Context
 		}
 		return err
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
 	request := s.summaryRequestForEvidence(ctx, userID, bookmarkID, title, evidence)
 	generated, generationErr := s.aiClient(ctx).GenerateSummary(ctx, request)
 	if generationErr != nil && s.hasValidActiveSummary(ctx, userID, bookmarkID, evidence.ContentHash) {
@@ -301,11 +301,10 @@ func (s *Service) persistSelectedEvidenceForAttemptWithMedia(ctx context.Context
 	}
 	validationReasons := summaryFailureReasons(generationErr)
 	if generationErr != nil {
-		generated = providers.SummaryResult{
-			OneSentence: oneSentence(evidence.Text), Status: providers.SummaryStatusCompleted,
-			PromptVersion: providers.SummaryPromptVersion, ValidatorVersion: providers.SummaryValidatorVersion,
-			ValidationCodes: validationReasons,
-		}
+		generated = providers.SalvageSummary(request, generated, oneSentence(fallback(description, fallback(title, evidence.Text))))
+		generated.PromptVersion = providers.SummaryPromptVersion
+		generated.ValidatorVersion = providers.SummaryValidatorVersion
+		generated.ValidationCodes = validationReasons
 	}
 	summaryStatus := string(generated.Status)
 	validationStatus := "validated"
@@ -322,9 +321,18 @@ func (s *Service) persistSelectedEvidenceForAttemptWithMedia(ctx context.Context
 	if evidence.QualityStatus == string(providers.QualityComplete) {
 		enrichment = s.enrichText(ctx, bookmarkID, userID, title, description, evidence.Text, semanticResult)
 	}
+	if generationErr != nil {
+		if len(generated.BulletPoints) == 0 {
+			generated.BulletPoints = enrichment.Bullets
+		}
+		if len(generated.Highlights) == 0 {
+			generated.Highlights = enrichment.Highlights
+		}
+	}
 	enrichment.Tags = s.allowedAITags(ctx, userID, generated.SuggestedTags)
 	highlightSpans := highlightSpansJSON(evidence.ID, evidence.Text, generated.Highlights)
 	generatedAt := nullableTimeString(generated.GeneratedAt)
+	now := time.Now().UTC().Format(time.RFC3339)
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -399,7 +407,7 @@ func (s *Service) activateSelectedEvidenceWithMedia(ctx context.Context, userID,
 	}
 	replacementBookmarkID := ""
 	var mediaCount int
-	if evidence.Origin == "browser_render" {
+	if mediaBatchID != "" {
 		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM bookmark_media WHERE user_id=? AND bookmark_id=? AND evidence_id=? AND capture_batch_id=? AND is_staged=1 AND deleted_at IS NULL`, userID, bookmarkID, evidence.ID, mediaBatchID).Scan(&mediaCount); err != nil {
 			return false, err
 		}
@@ -429,7 +437,7 @@ func (s *Service) activateSelectedEvidenceWithMedia(ctx context.Context, userID,
 	}
 	var thumbnail string
 	_ = tx.QueryRowContext(ctx, `SELECT '/api/media/'||id FROM bookmark_media WHERE user_id=? AND bookmark_id=? AND evidence_id=? AND media_role='reader_image' AND is_staged=0 AND deleted_at IS NULL ORDER BY ordinal,id LIMIT 1`, userID, bookmarkID, evidence.ID).Scan(&thumbnail)
-	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN description='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,thumbnail=CASE WHEN ?='' THEN thumbnail ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`,
+	if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET canonical_url=CASE WHEN ?='' THEN canonical_url ELSE ? END,title=CASE WHEN title='' OR title=domain OR title=url THEN ? ELSE title END,description=CASE WHEN trim(COALESCE(description,''))='' THEN ? ELSE description END,domain=CASE WHEN ?='' THEN domain ELSE ? END,thumbnail=CASE WHEN ?='' THEN thumbnail ELSE ? END,sanitized_html=?,text_content=?,reading_time=?,processed_at=?,fetch_version=? WHERE id=? AND user_id=?`,
 		evidence.CanonicalURL, evidence.CanonicalURL, title, description, domain, domain, thumbnail, thumbnail, sanitize.HTML(htmlContent), evidence.Text, readingTime(evidence.Text), now, fallback(evidence.ExtractorVersion, safefetch.ExtractorVersion), bookmarkID, userID); err != nil {
 		return false, err
 	}
@@ -2445,15 +2453,24 @@ func scanImportJob(row scanner) map[string]any {
 }
 
 func oneSentence(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
+	runes := []rune(strings.TrimSpace(text))
+	if len(runes) == 0 {
 		return ""
 	}
-	if idx := strings.IndexAny(text, ".!?"); idx > 0 && idx < 280 {
-		return text[:idx+1]
+	for idx, char := range runes {
+		if char != '.' && char != '!' && char != '?' {
+			continue
+		}
+		if char == '.' && idx > 0 && idx+1 < len(runes) && unicode.IsDigit(runes[idx-1]) && unicode.IsDigit(runes[idx+1]) {
+			continue
+		}
+		if idx > 0 && idx < 280 {
+			return string(runes[:idx+1])
+		}
+		break
 	}
-	if len(text) > 280 {
-		return text[:280] + "..."
+	if len(runes) > 280 {
+		return string(runes[:280]) + "..."
 	}
-	return text
+	return string(runes)
 }

@@ -46,7 +46,10 @@ func SelectReaderEvidence(current Candidate, candidates []Candidate) (Candidate,
 		if rank < 0 {
 			return
 		}
-		if rank > bestRank || (rank == bestRank && candidate.Score > best.Score) {
+		// A newly captured candidate replaces equally good current evidence. This
+		// lets an explicit Reprocess refresh extractor output while lower-quality,
+		// empty, failed, and challenged candidates remain ineligible above.
+		if rank > bestRank || (rank == bestRank && candidate.Score >= best.Score) {
 			best, bestRank = candidate, rank
 		}
 	}

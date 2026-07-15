@@ -83,6 +83,19 @@ func TestNewWithUserAgentFallsBackToNeutralDefault(t *testing.T) {
 	}
 }
 
+func TestDirectMediaTypesMatchTheStorageContract(t *testing.T) {
+	for _, mime := range []string{"image/jpeg", "image/png", "image/gif", "image/webp"} {
+		if !supportedMediaType(mime) {
+			t.Errorf("supported media type %q was rejected", mime)
+		}
+	}
+	for _, mime := range []string{"image/avif", "image/svg+xml", "image/bmp", "text/html"} {
+		if supportedMediaType(mime) {
+			t.Errorf("unsupported media type %q was accepted", mime)
+		}
+	}
+}
+
 func TestExtractArticlePrefersReadableContent(t *testing.T) {
 	html := `<!doctype html><html><head><title>Ignored chrome</title><style>.app{display:none}</style><script id="__NEXT_DATA__">{"props":"bad"}</script></head><body>
 		<header>Subscribe now</header><nav>Home Pricing Login</nav>
@@ -99,6 +112,17 @@ func TestExtractArticlePrefersReadableContent(t *testing.T) {
 	}
 	if !strings.Contains(articleHTML, "<article>") || !strings.Contains(articleHTML, "Useful &amp; Specific") {
 		t.Fatalf("article html not preserved safely: %q", articleHTML)
+	}
+}
+
+func TestExtractPageRetainsRemoteReaderImagesForLocalizationOnly(t *testing.T) {
+	input := `<html><body><article><h1>Image guide</h1><p>This article contains enough useful reader text to preserve.</p><figure><img src="https://cdn.example.com/guide.webp" alt="Guide screenshot"><figcaption>Guide</figcaption></figure></article></body></html>`
+	safeHTML, _, _, readerHTML := extractPage(input)
+	if strings.Contains(safeHTML, "cdn.example.com") || strings.Contains(safeHTML, "<img") {
+		t.Fatalf("public reader HTML retained an untrusted remote image: %q", safeHTML)
+	}
+	if !strings.Contains(readerHTML, `src="https://cdn.example.com/guide.webp"`) || !strings.Contains(readerHTML, `alt="Guide screenshot"`) {
+		t.Fatalf("transient reader HTML lost the image before localization: %q", readerHTML)
 	}
 }
 
