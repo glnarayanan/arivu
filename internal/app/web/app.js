@@ -902,10 +902,13 @@ async function libraryPage() {
   request.delete("collection");
   if (request.has("search") && !request.has("q")) request.set("q", request.get("search"));
   request.delete("search");
+  if (!request.has("scope") && !request.has("type")) request.set("scope", "content");
   if (!request.has("limit")) request.set("limit", "48");
   const [result, collections] = await Promise.all([api(`/library/items?${request}`), api("/collections")]);
   const sort = params.get("sort") || (params.get("q") ? "relevance" : "newest");
   const density = params.get("density") || localStorage.getItem("arivu-library-density") || "comfortable";
+  const scope = params.get("scope") === "derived" ? "derived" : "content";
+  const typeOptions = scope === "derived" ? ["entity", "concept"] : ["bookmark", "note", "daily_note", "annotation", "knowledge_object"];
   const items = [...(result.items || [])].sort((a, b) => sort === "oldest" ? String(a.updated_at).localeCompare(String(b.updated_at)) : sort === "title" ? String(a.title).localeCompare(String(b.title)) : sort === "domain" ? String(a.source).localeCompare(String(b.source)) : sort === "newest" ? String(b.updated_at).localeCompare(String(a.updated_at)) : 0);
   setRoot(shell("Library", `
     <section class="library-heading">
@@ -918,10 +921,16 @@ async function libraryPage() {
         <button type="button" class="secondary" id="library-new-object">New object</button>
       </div>
     </section>
+    <nav class="library-views" aria-label="Library view">
+      <a href="/library"${scope === "content" ? ' aria-current="page"' : ""}>Saved items</a>
+      <a href="/library?scope=derived"${scope === "derived" ? ' aria-current="page"' : ""}>Concepts &amp; entities</a>
+    </nav>
+    ${scope === "derived" ? '<p class="library-view-help">Concepts and entities are generated from your saved material. Explore them here, or use Graph to see how they connect.</p>' : ""}
     ${collectionBrowser(collections, params.get("collection_id") || params.get("collection"))}
     <form class="library-filters" role="search" id="library-filter-form">
+      <input type="hidden" name="scope" value="${escapeHTML(scope)}">
       <div class="field library-query"><label for="library-query">Search library</label><input id="library-query" name="q" type="search" value="${escapeHTML(params.get("q") || "")}" placeholder="Title, text, or topic"></div>
-      <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(["bookmark", "note", "daily_note", "annotation", "knowledge_object", "entity", "concept"], params.get("type"), "All types")}</select></div>
+      <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(typeOptions, params.get("type"), "All types")}</select></div>
       <div class="field"><label for="library-stage">Stage</label><select id="library-stage" name="stage">${libraryFilterOptions(["inbox", "processing", "processed", "archived"], params.get("stage"), "Any stage")}</select></div>
       <div class="field"><label for="library-connection">Connections</label><select id="library-connection" name="connection">${libraryFilterOptions(["connected", "unconnected"], params.get("connection"), "Any state")}</select></div>
       <div class="field"><label for="library-topic">Topic</label><input id="library-topic" name="topic" value="${escapeHTML(params.get("topic") || "")}" placeholder="Topic"></div>

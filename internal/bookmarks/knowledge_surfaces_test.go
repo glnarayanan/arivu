@@ -58,6 +58,31 @@ func TestLibraryItemsAcceptLegacyNewestCursor(t *testing.T) {
 	}
 }
 
+func TestLibraryItemsSeparateCapturedContentFromDerivedKnowledge(t *testing.T) {
+	service, db := newKnowledgeTestService(t)
+	seedKnowledgeUser(t, db, "u1", "one@example.com")
+	seedKnowledgeBookmark(t, db, "u1", "saved", "Saved article", "2026-07-10T00:00:00Z")
+	seedInsightConcept(t, db, "u1", "saved", "Householder reflections")
+	_, _ = db.Exec(`INSERT INTO bookmark_entities(bookmark_id,user_id,entity,source,confidence,validated_at) VALUES('saved','u1','CUDA','model',0.9,'2026-07-10T00:00:00Z')`)
+
+	content := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?scope=content", "")
+	for _, raw := range content["items"].([]any) {
+		if itemType := raw.(map[string]any)["type"]; itemType == "concept" || itemType == "entity" {
+			t.Fatalf("content scope included derived knowledge: %#v", content)
+		}
+	}
+	derived := callKnowledgeHandler(t, service.LibraryItems, auth.User{ID: "u1"}, http.MethodGet, "/api/library/items?scope=derived", "")
+	items := derived["items"].([]any)
+	if len(items) == 0 {
+		t.Fatalf("derived scope did not return validated knowledge: %#v", derived)
+	}
+	for _, raw := range items {
+		if itemType := raw.(map[string]any)["type"]; itemType != "concept" && itemType != "entity" {
+			t.Fatalf("derived scope included primary content: %#v", derived)
+		}
+	}
+}
+
 func TestLibraryItemsHideOnlyUnresolvedTCOPlaceholders(t *testing.T) {
 	service, db := newKnowledgeTestService(t)
 	seedKnowledgeUser(t, db, "u1", "one@example.com")

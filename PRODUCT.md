@@ -35,7 +35,9 @@ The authenticated interface has five primary destinations:
 - **Home** (`/today`) is a knowledge pulse: daily note, active work, new
   material, useful memories, and contextual Focus, Review, and Board views.
 - **Library** (`/library`) browses bookmarks, notes, daily notes, annotations,
-  knowledge objects, entities, and concepts. It supports cursor pagination and
+  and knowledge objects by default. Generated entities and concepts remain
+  available in a separate Library view and in Graph, rather than competing with
+  saved material in the primary list. Library supports cursor pagination and
   filters for type, topic, source, stage, date, and connection state.
 - **Notes** (`/notes`) is the primary writing workspace for standalone notes,
   note details, tasks, reminders, and explicit connections to saved material.

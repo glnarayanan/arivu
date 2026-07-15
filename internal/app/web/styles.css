@@ -1470,6 +1470,37 @@ progress::-moz-progress-bar {
   margin-bottom: 0;
 }
 
+.library-views {
+  display: flex;
+  gap: var(--space-1);
+  width: fit-content;
+  margin-bottom: var(--space-3);
+  border-radius: 999px;
+  background: var(--sand-100);
+  padding: var(--space-1);
+}
+
+.library-views a {
+  border-radius: 999px;
+  color: var(--base-700);
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.library-views a[aria-current="page"] {
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+}
+
+.library-view-help {
+  max-width: 68ch;
+  margin: 0 0 var(--space-4);
+  color: var(--base-600);
+}
+
 .library-filters {
   display: flex;
   align-items: end;

@@ -71,6 +71,9 @@ test("keeps Home navigation and purpose-built layouts across every view", () => 
 
 test("uses additive knowledge APIs and approachable object fields", () => {
   assert.ok(app.includes('/library/items?'));
+  assert.ok(app.includes('request.set("scope", "content")'));
+  assert.ok(app.includes('href="/library?scope=derived"'));
+  assert.ok(app.includes("Concepts &amp; entities"));
   assert.ok(app.includes('/knowledge-graph/v2?'));
   assert.ok(app.includes('insightQuery.set("family", family)'));
   assert.ok(app.includes('api(`/insights?${insightQuery}`)'));

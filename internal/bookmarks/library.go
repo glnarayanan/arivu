@@ -20,6 +20,17 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 	limit := queryInt(r, "limit", 50, 1, 200)
 	where := []string{"user_id=?", libraryDisplayEligibilitySQL("library")}
 	args := []any{user.ID}
+	scope := strings.TrimSpace(r.URL.Query().Get("scope"))
+	switch scope {
+	case "", "all":
+	case "content":
+		where = append(where, "item_type NOT IN ('entity','concept')")
+	case "derived":
+		where = append(where, "item_type IN ('entity','concept')")
+	default:
+		writeError(w, http.StatusBadRequest, "Invalid library scope")
+		return
+	}
 	for _, filter := range []struct {
 		key, column string
 	}{{"type", "item_type"}, {"source", "source"}, {"stage", "stage"}, {"connection", "connection_state"}} {
