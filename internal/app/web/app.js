@@ -5,6 +5,7 @@ const state = {
   cleanup: [],
   pendingRoutes: 0,
   focusMainAfterRender: false,
+  pendingFocusSelector: "",
 };
 const offlineQueueKey = "arivu.offline.bookmarks";
 const offlineSnapshotKey = "arivu.offline.snapshots";
@@ -144,6 +145,13 @@ function syncRouteAccessibility() {
     document.body.append(announcer);
   }
   announcer.textContent = title;
+  if (state.pendingFocusSelector) {
+    const target = document.querySelector(state.pendingFocusSelector);
+    state.pendingFocusSelector = "";
+    state.focusMainAfterRender = false;
+    if (target) requestAnimationFrame(() => target.focus({ preventScroll: true }));
+    return;
+  }
   if (!state.focusMainAfterRender) return;
   state.focusMainAfterRender = false;
   const target = document.querySelector("#main-content") || document.querySelector("main") || document.querySelector("h1");
@@ -537,7 +545,12 @@ function primaryNavActive(href) {
   return location.pathname === href || location.pathname.startsWith(`${href}/`) || (href === "/library" && location.pathname.startsWith("/bookmark/"));
 }
 
+function shortcutModifierLabel() {
+  return /Mac|iPhone|iPad/.test(navigator.platform) ? "Cmd" : "Ctrl";
+}
+
 function shell(title, content, { wide = false } = {}) {
+  const shortcutModifier = shortcutModifierLabel();
   const nav = [
     ["/today", "Home"],
     ["/library", "Library"],
@@ -564,9 +577,9 @@ function shell(title, content, { wide = false } = {}) {
             <h1 class="headline" id="route-title">${escapeHTML(title)}</h1>
           </div>
           <div class="top-actions">
-            <button id="global-capture" type="button">Capture</button>
-            <a class="button secondary" href="/search">Search / Ask</a>
-            <button id="global-actions" class="secondary" type="button">More</button>
+            <button id="global-capture" type="button" aria-keyshortcuts="Q">Capture <span class="shortcut-badge" aria-hidden="true">Q</span></button>
+            <a class="button secondary" href="/search" aria-keyshortcuts="/">Search / Ask <span class="shortcut-badge" aria-hidden="true">/</span></a>
+            <button id="global-actions" class="secondary" type="button" aria-keyshortcuts="Meta+K Control+K">More <span class="shortcut-badge" aria-hidden="true">${shortcutModifier === "Cmd" ? "⌘K" : "Ctrl K"}</span></button>
             <button id="profile-menu" class="icon-button" type="button" aria-label="Open profile and settings menu">${escapeHTML((state.user?.name || state.user?.email || "A").slice(0, 1).toUpperCase())}</button>
           </div>
         </div>
@@ -972,7 +985,7 @@ function libraryFilterOptions(values, selected, emptyLabel) {
 function libraryItem(item) {
   const href = knowledgeItemHref(item.type, item.id, item.title);
   const thumbnail = item.type === "bookmark" && item.thumbnail ? `<div class="library-thumbnail" aria-hidden="true"><img src="${escapeHTML(item.thumbnail)}" alt="" loading="lazy" decoding="async"></div>` : "";
-  return `<article class="library-row${thumbnail ? " has-thumbnail" : ""}">
+  return `<article class="library-row${thumbnail ? " has-thumbnail" : ""}" data-shortcut-item>
     <div class="library-kind" data-kind="${escapeHTML(item.type || "item")}">${escapeHTML(knowledgeTypeLabel(item.type))}</div>
     ${thumbnail}
     <div class="library-copy">
@@ -1208,6 +1221,7 @@ async function openCommandPalette() {
           ["/notes", "Notes"],
           ["/assistant", "Assistant"],
         ].map(([href, label]) => `<button type="button" class="secondary" data-command-nav="${href}">${label}</button>`).join("")}
+        <button type="button" class="secondary" data-command-shortcuts>Keyboard shortcuts</button>
       </div>
     </section>
     <form class="form" data-command-save>
@@ -1250,6 +1264,10 @@ async function openCommandPalette() {
       document.querySelector("[data-dialog-close]")?.click();
       navigate(button.dataset.commandNav);
     });
+  });
+  body.querySelector("[data-command-shortcuts]").addEventListener("click", () => {
+    document.querySelector("[data-dialog-close]")?.click();
+    openKeyboardShortcuts();
   });
   body.querySelector("[data-command-save]").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1573,7 +1591,7 @@ function sharedCaptureParams() {
 
 function bookmarkCard(b) {
   const bookmarkID = encodeURIComponent(b.id || "");
-  return `<a class="panel bookmark" href="/bookmark/${bookmarkID}">
+  return `<a class="panel bookmark" data-shortcut-item href="/bookmark/${bookmarkID}">
     <span class="meta">${escapeHTML(b.domain || "web")} · ${Number(b.reading_time || 0)} min</span>
     <h2>${escapeHTML(b.title || b.url)}</h2>
     <p>${escapeHTML(b.description || "No description available.")}</p>
@@ -5179,12 +5197,7 @@ async function render() {
     await page();
     syncRouteAccessibility();
     bindGlobalShellActions();
-    ui.on(document, "keydown", (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        openCommandPalette();
-      }
-    });
+    ui.on(document, "keydown", globalKeyboardShortcuts);
     document.querySelector("#logout")?.addEventListener("click", async (event) => {
       const done = setButtonBusy(event.currentTarget, "Signing out");
       await api("/auth/logout", { method: "POST" }).catch(() => {});
@@ -5216,6 +5229,94 @@ function bindGlobalShellActions() {
     navigate("/auth", true);
   } });
   ui.menu(profile, items);
+}
+
+function isShortcutTypingTarget(target) {
+  return target instanceof Element && (target.matches("input, textarea, select") || target.closest("[contenteditable='true']"));
+}
+
+function visibleShortcutItems() {
+  return [...document.querySelectorAll("[data-shortcut-item]")].filter((item) => item.getClientRects().length > 0);
+}
+
+function shortcutItemLink(item) {
+  return item.matches("a[href]") ? item : item.querySelector("a[href]");
+}
+
+function moveShortcutSelection(delta) {
+  const items = visibleShortcutItems();
+  if (!items.length) return false;
+  const current = items.findIndex((item) => item.contains(document.activeElement) || item.classList.contains("keyboard-selected"));
+  const nextIndex = current < 0 ? (delta > 0 ? 0 : items.length - 1) : Math.max(0, Math.min(items.length - 1, current + delta));
+  items.forEach((item, index) => item.classList.toggle("keyboard-selected", index === nextIndex));
+  const link = shortcutItemLink(items[nextIndex]);
+  link?.focus({ preventScroll: true });
+  items[nextIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+  return Boolean(link);
+}
+
+function focusGlobalSearch() {
+  const search = [...document.querySelectorAll("input[type='search']")].find((input) => input.getClientRects().length > 0);
+  if (search) {
+    search.focus();
+    search.select();
+    return;
+  }
+  state.pendingFocusSelector = "#knowledge-search";
+  navigate("/search");
+}
+
+function globalKeyboardShortcuts(event) {
+  if (event.defaultPrevented) return;
+  const key = event.key.toLowerCase();
+  const command = event.metaKey || event.ctrlKey;
+  if (command && !event.altKey && key === "k") {
+    event.preventDefault();
+    if (!document.querySelector(".dialog-backdrop")) openCommandPalette();
+    return;
+  }
+  if (command && !event.altKey && key === "p") {
+    if (document.querySelector(".dialog-backdrop")) return;
+    event.preventDefault();
+    window.print();
+    return;
+  }
+  if (event.key === "Escape" && isShortcutTypingTarget(event.target)) {
+    event.target.blur();
+    return;
+  }
+  if (command || event.altKey || isShortcutTypingTarget(event.target) || document.querySelector(".dialog-backdrop")) return;
+  if (event.key === "?") {
+    event.preventDefault();
+    openKeyboardShortcuts();
+  } else if (key === "q") {
+    event.preventDefault();
+    openCaptureComposer();
+  } else if (event.key === "/" || key === "f") {
+    event.preventDefault();
+    focusGlobalSearch();
+  } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (moveShortcutSelection(event.key === "ArrowDown" ? 1 : -1)) event.preventDefault();
+  }
+}
+
+function openKeyboardShortcuts() {
+  const modifier = shortcutModifierLabel();
+  const shortcuts = [
+    ["Q", "Capture a bookmark, note, quote, or file"],
+    ["/ or F", "Focus search"],
+    ["↑ / ↓", "Navigate visible saved items"],
+    ["Enter", "Open the focused item"],
+    ["Esc", "Dismiss a dialog or leave a field"],
+    [`${modifier} + K`, "Open quick actions"],
+    [`${modifier} + P`, "Print the current view"],
+    ["?", "Show keyboard shortcuts"],
+  ];
+  const body = document.createElement("div");
+  body.className = "shortcut-list";
+  body.setAttribute("aria-label", "Available keyboard shortcuts");
+  body.innerHTML = shortcuts.map(([keys, description]) => `<div class="shortcut-row"><span>${escapeHTML(description)}</span><kbd>${escapeHTML(keys)}</kbd></div>`).join("");
+  return ui.dialog({ title: "Keyboard shortcuts", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
 }
 
 function routeMatches(route) {

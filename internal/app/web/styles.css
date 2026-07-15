@@ -342,6 +342,16 @@ textarea:focus-visible,
   justify-content: flex-end;
 }
 
+.shortcut-badge {
+  min-width: 1.4rem;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  padding: 2px 5px;
+  font: 700 0.6875rem/1.2 var(--font-mono);
+  letter-spacing: 0;
+  opacity: 0.82;
+}
+
 .workspace-label {
   margin: 0 0 var(--space-1);
   color: var(--base-600);
@@ -1524,6 +1534,41 @@ progress::-moz-progress-bar {
   font: 650 1rem/1.2 var(--font-ui);
 }
 
+.shortcut-list {
+  display: grid;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  border-bottom: 1px dashed var(--line);
+  padding: var(--space-3) 0;
+}
+
+.shortcut-row:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-row kbd {
+  flex: none;
+  min-width: 3rem;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--sand-100);
+  padding: var(--space-1) var(--space-2);
+  color: var(--base-800);
+  font: 650 0.75rem/1.4 var(--font-mono);
+  text-align: center;
+}
+
+[data-shortcut-item].keyboard-selected {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
 .menu {
   position: absolute;
   top: calc(100% + var(--space-2));
@@ -2194,6 +2239,10 @@ progress::-moz-progress-bar {
   .top-actions > .button {
     min-width: 0;
     padding-inline: var(--space-3);
+  }
+
+  .top-actions .shortcut-badge {
+    display: none;
   }
 
   .headline {
