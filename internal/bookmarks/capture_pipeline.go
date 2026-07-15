@@ -35,6 +35,11 @@ type captureMetadata struct {
 
 func (s *Service) processWebBookmarkAttempt(ctx context.Context, userID, bookmarkID, rawURL, attemptID, currentTitle, currentDescription, currentDomain string) error {
 	renderedRequired := s.browser.Enabled && s.browser.Protocol == 2 && attemptID != ""
+	if attemptID != "" && s.assets != nil {
+		if err := s.prepareCaptureMediaAttempt(ctx, userID, bookmarkID, attemptID); err != nil {
+			return err
+		}
+	}
 	directChannel := make(chan directCapture, 1)
 	go func() {
 		if s.fetchPage == nil {
@@ -53,7 +58,14 @@ func (s *Service) processWebBookmarkAttempt(ctx context.Context, userID, bookmar
 	}
 
 	direct := <-directChannel
-	storedDirect, directStoreErr := s.storeDirectCapture(ctx, userID, bookmarkID, attemptID, rawURL, direct)
+	storedDirect, directMediaBatchID, directStoreErr := s.storeDirectCapture(ctx, userID, bookmarkID, attemptID, rawURL, direct)
+	if directMediaBatchID != "" {
+		defer func() {
+			if directMediaBatchID != "" {
+				s.discardCaptureMedia(ctx, userID, bookmarkID, directMediaBatchID)
+			}
+		}()
+	}
 	directMetadata := captureMetadata{title: fallback(direct.result.Title, direct.result.Domain), description: direct.result.Description, domain: direct.result.Domain}
 	if directStoreErr != nil && attemptID != "" {
 		code := "direct_capture_store_failed"
@@ -76,8 +88,12 @@ func (s *Service) processWebBookmarkAttempt(ctx context.Context, userID, bookmar
 		}
 		preliminary, ok := capture.SelectReaderEvidence(current, []capture.Candidate{evidenceCandidate(storedDirect, capture.SourceDirect, false)})
 		if ok && preliminary.ID == storedDirect.ID && preliminary.ID != current.ID {
-			if _, err := s.activateSelectedEvidence(ctx, userID, bookmarkID, directMetadata.title, directMetadata.description, directMetadata.domain, storedDirect, attemptID); err != nil {
+			activated, err := s.activateSelectedEvidenceWithMedia(ctx, userID, bookmarkID, directMetadata.title, directMetadata.description, directMetadata.domain, storedDirect, attemptID, directMediaBatchID)
+			if err != nil {
 				return err
+			}
+			if activated {
+				directMediaBatchID = ""
 			}
 		}
 	}
@@ -128,8 +144,12 @@ func (s *Service) processWebBookmarkAttempt(ctx context.Context, userID, bookmar
 	if rendered.evidence.ID != "" && selected.ID == rendered.evidence.ID {
 		selectedEvidence = rendered.evidence
 		selectedMetadata = rendered.metadata
+		selectedMetadata.description = fallback(directMetadata.description, rendered.metadata.description)
 	}
 	mediaBatchID := ""
+	if storedDirect.ID != "" && selectedEvidence.ID == storedDirect.ID {
+		mediaBatchID = directMediaBatchID
+	}
 	if rendered.evidence.ID != "" && selectedEvidence.ID == rendered.evidence.ID {
 		mediaBatchID = rendered.mediaBatchID
 	}
@@ -210,39 +230,50 @@ func (s *Service) captureRendered(ctx context.Context, userID, bookmarkID, rawUR
 	return captured
 }
 
-func (s *Service) storeDirectCapture(ctx context.Context, userID, bookmarkID, attemptID, rawURL string, direct directCapture) (BookmarkEvidence, error) {
+func (s *Service) storeDirectCapture(ctx context.Context, userID, bookmarkID, attemptID, rawURL string, direct directCapture) (BookmarkEvidence, string, error) {
 	if direct.err != nil {
 		_, _ = s.UpsertEvidence(ctx, userID, bookmarkID, BookmarkEvidence{
 			Kind: "fetched_article", Origin: "web_fetch", CanonicalURL: rawURL, ExtractionMethod: "generic_web",
 			QualityStatus: "failed", QualityReasons: []string{safefetch.FailureReason(direct.err)}, ExtractorVersion: safefetch.ExtractorVersion,
 		})
-		return BookmarkEvidence{}, nil
+		return BookmarkEvidence{}, "", nil
 	}
 	result := direct.result
-	evidence, err := s.UpsertEvidence(ctx, userID, bookmarkID, BookmarkEvidence{
+	storedMedia, mediaBatchID, mediaErr := s.storeDirectCaptureMedia(ctx, userID, bookmarkID, attemptID, result)
+	if strings.TrimSpace(result.ReaderHTML) != "" {
+		result.HTML = rewriteReaderMedia(result.ReaderHTML, result.URL, storedMedia)
+	}
+	storeEvidence := BookmarkEvidence{
 		Kind: "fetched_article", Origin: "web_fetch", Authority: 70, Text: result.Text, SanitizedHTML: result.HTML,
 		CanonicalURL: result.URL, PublisherKey: result.Domain, ExtractionMethod: result.Quality.Method,
 		QualityStatus: string(result.Quality.Status), QualityScore: result.Quality.Score,
 		QualityReasons: result.Quality.Reasons, ExtractorVersion: result.Quality.Version,
-	})
+	}
+	var evidence BookmarkEvidence
+	var err error
+	if mediaBatchID != "" {
+		evidence, err = s.storeRenderedEvidenceWithMedia(ctx, userID, bookmarkID, attemptID, mediaBatchID, storeEvidence, storedMedia)
+	} else {
+		evidence, err = s.UpsertEvidence(ctx, userID, bookmarkID, storeEvidence)
+	}
 	if err != nil {
-		return BookmarkEvidence{}, err
+		return BookmarkEvidence{}, mediaBatchID, err
 	}
 	if s.assets != nil && attemptID != "" && len(result.Body) > 0 {
 		key, digest, size, err := s.assets.Put(bytes.NewReader(result.Body))
 		if err != nil {
-			return evidence, err
+			return evidence, mediaBatchID, err
 		}
 		mime := strings.TrimSpace(strings.Split(result.ContentType, ";")[0])
 		if mime == "" {
 			mime = "application/octet-stream"
 		}
 		if err := s.commitArtifact(ctx, ids.New(), userID, bookmarkID, attemptID, evidence.ID, "source_response", mime, size, digest, key); err != nil {
-			return evidence, err
+			return evidence, mediaBatchID, err
 		}
 		_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET final_url=?,engine_version=? WHERE id=? AND user_id=?`, result.URL, safefetch.ExtractorVersion, attemptID, userID)
 	}
-	return evidence, nil
+	return evidence, mediaBatchID, mediaErr
 }
 
 func browserCaptureErrorCode(err error) string {

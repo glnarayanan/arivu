@@ -10,20 +10,35 @@ Saving a bookmark initiates several processing stages to build a structured grap
 
 1. **Extraction**: `safefetch` validates URLs, enforces SSRF and size limits,
    removes chrome, and records complete, partial, metadata-only, or failed
-   evidence with stable reasons. When the isolated capture service is enabled,
-   headless Chromium and Readability can contribute rendered evidence and local
-   reader images. Deterministic authority and quality rules choose the result;
-   a challenge page cannot overwrite stronger direct or source-native evidence.
+   evidence with stable reasons. Direct HTTP capture retains image references
+   only long enough to fetch them through the same SSRF-safe client, store them
+   owner-scoped, rewrite them to local `/api/media/` URLs, and sanitize the final
+   reader. When the isolated capture service is enabled, headless Chromium and
+   Readability can additionally contribute rendered evidence and local reader
+   images. The helper fetches exact reader-projection images through the
+   attempt-scoped safe proxy before optional artifacts consume their byte budget,
+   rather than depending on viewport-triggered lazy loading. Deterministic
+   authority and quality rules choose the result; a challenge page cannot
+   overwrite stronger direct or source-native evidence.
 2. **Analysis**: Selected evidence drives bounded summaries, extractive
    highlights, and supported phrase-level semantics. Short evidence may produce
    only a sentence; metadata-only or failed evidence produces no synthetic
-   claim. No-provider operation does not repopulate the graph with raw tokens.
+   claim. Validation salvages independently safe executive-summary paragraphs,
+   key points, highlights, and tags rather than discarding the whole structured
+   response because one field failed. No-provider operation prefers a publisher
+   description and adds evidence-derived key points and highlights without
+   repopulating the graph with raw tokens. Reading time uses a 238-word-per-minute
+   adult-reading baseline and rounds partial minutes up.
 3. **Knowledge projection**: `/api/library/items` unions bookmarks, notes, daily
    notes, annotations, knowledge objects, entities, and concepts into stable
    user-scoped rows without duplicating canonical content. Generated entities
    and concepts appear only when their confidence, enrichment version, selected
    complete evidence, and source span all pass the shared semantic gate; legacy
    token rows remain stored for audit but are quarantined from every surface.
+   The Library UI defaults to primary saved and authored content, with generated
+   entities and concepts available through a separate derived-knowledge view;
+   API clients can request these projections with `scope=content` or
+   `scope=derived` while the empty/default scope retains compatibility.
    Unresolved X short-link placeholders whose title and body are only the same
    `t.co` URL also remain stored for repair but are omitted from Library rows;
    ordinary unenriched URLs and `t.co` captures with useful context remain

@@ -71,6 +71,9 @@ test("keeps Home navigation and purpose-built layouts across every view", () => 
 
 test("uses additive knowledge APIs and approachable object fields", () => {
   assert.ok(app.includes('/library/items?'));
+  assert.ok(app.includes('request.set("scope", "content")'));
+  assert.ok(app.includes('href="/library?scope=derived"'));
+  assert.ok(app.includes("Concepts &amp; entities"));
   assert.ok(app.includes('/knowledge-graph/v2?'));
   assert.ok(app.includes('insightQuery.set("family", family)'));
   assert.ok(app.includes('api(`/insights?${insightQuery}`)'));
@@ -85,6 +88,51 @@ test("uses additive knowledge APIs and approachable object fields", () => {
   assert.ok(app.includes('data-insight-reason'));
   assert.ok(!app.includes("Fields JSON"));
   assert.ok(!app.includes("Fields JSON must be an object."));
+});
+
+test("keeps administration failure logs readable and supports bounded bulk retry", () => {
+  for (const contract of [
+    'class="table-wrap admin-failures-wrap"',
+    "data-admin-select-all-jobs",
+    "data-admin-retry-selected",
+    "data-admin-retry-user",
+    'api("/admin/jobs/retry"',
+    "Retry failures (",
+  ]) assert.ok(app.includes(contract), `missing admin retry contract: ${contract}`);
+  assert.ok(styles.includes(".admin-failure-attempts"));
+  assert.ok(styles.includes(".admin-action-cell button"));
+  assert.ok(styles.includes("white-space: nowrap"));
+});
+
+test("provides discoverable global keyboard shortcuts without hijacking form input", () => {
+  for (const contract of [
+    "function globalKeyboardShortcuts(event)",
+    "function openKeyboardShortcuts()",
+    "function isShortcutTypingTarget(target)",
+    'data-command-shortcuts>Keyboard shortcuts',
+    'event.key === "?"',
+    'key === "q"',
+    'event.key === "/" || key === "f"',
+    'event.key.toLowerCase() === "k"',
+    'key === "p"',
+    'event.key === "ArrowDown" || event.key === "ArrowUp"',
+    "document.querySelector(\".dialog-backdrop\")",
+  ]) assert.ok(app.includes(contract), `missing keyboard shortcut contract: ${contract}`);
+  assert.ok(app.includes('data-shortcut-item href="/bookmark/'));
+  assert.ok(app.includes('data-shortcut-item>'));
+  assert.ok(styles.includes(".shortcut-row kbd"));
+  assert.ok(styles.includes("[data-shortcut-item].keyboard-selected"));
+});
+
+test("shows restrained shortcut hints on persistent actions", () => {
+  for (const contract of [
+    'id="global-capture" type="button" aria-keyshortcuts="Q"',
+    'href="/search" aria-keyshortcuts="/"',
+    'aria-keyshortcuts="Meta+K Control+K"',
+    'class="shortcut-badge" aria-hidden="true"',
+  ]) assert.ok(app.includes(contract), `missing shortcut hint contract: ${contract}`);
+  assert.ok(styles.includes(".shortcut-badge"));
+  assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.top-actions \.shortcut-badge \{\s+display: none;/);
 });
 
 test("escapes user-controlled library filters in pagination links", () => {

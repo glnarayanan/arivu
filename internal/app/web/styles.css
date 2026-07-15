@@ -342,6 +342,16 @@ textarea:focus-visible,
   justify-content: flex-end;
 }
 
+.shortcut-badge {
+  min-width: 1.4rem;
+  border: 1px solid currentColor;
+  border-radius: var(--radius-sm);
+  padding: 2px 5px;
+  font: 700 0.6875rem/1.2 var(--font-mono);
+  letter-spacing: 0;
+  opacity: 0.82;
+}
+
 .workspace-label {
   margin: 0 0 var(--space-1);
   color: var(--base-600);
@@ -935,6 +945,7 @@ progress::-moz-progress-bar {
 }
 
 .table-wrap {
+  max-width: 100%;
   overflow-x: auto;
   margin-top: var(--space-5);
   border: 1px dashed var(--line);
@@ -964,6 +975,101 @@ progress::-moz-progress-bar {
 
 .data-table td {
   font: 500 0.875rem/1.4 var(--font-ui);
+}
+
+.admin-failures-table {
+  min-width: 1040px;
+  table-layout: fixed;
+}
+
+.admin-failure-select { width: 3rem; }
+.admin-failure-job { width: 11rem; }
+.admin-failure-owner { width: 15.5rem; }
+.admin-failure-attempts { width: 4.5rem; }
+.admin-failure-reason { width: auto; }
+.admin-failure-date { width: 10rem; }
+.admin-failure-action { width: 7rem; }
+
+.admin-failures-table th,
+.admin-failures-table td {
+  overflow-wrap: normal;
+  word-break: normal;
+}
+
+.admin-failures-table th {
+  white-space: nowrap;
+}
+
+.admin-job-cell code,
+.admin-owner-cell > * {
+  display: block;
+}
+
+.admin-job-cell code {
+  margin-top: var(--space-1);
+  color: var(--base-600);
+  overflow-wrap: anywhere;
+}
+
+.admin-attempts-cell,
+.admin-action-cell,
+.admin-action-cell button {
+  white-space: nowrap;
+}
+
+.admin-date-cell {
+  white-space: normal;
+}
+
+.admin-action-cell button {
+  min-width: 0;
+}
+
+.admin-failures-table td:first-child,
+.admin-action-cell {
+  vertical-align: middle;
+}
+
+.admin-failure-actions {
+  display: grid;
+  gap: var(--space-3);
+  margin-top: var(--space-4);
+  border-block: 1px dashed var(--line);
+  padding-block: var(--space-3);
+}
+
+.admin-owner-retries {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.admin-failures-wrap {
+  margin-top: var(--space-3);
+}
+
+.admin-summary-failures-table {
+  min-width: 1056px;
+  table-layout: fixed;
+}
+
+.admin-summary-bookmark { width: 15rem; }
+.admin-summary-owner { width: 9rem; }
+.admin-summary-status { width: 10rem; }
+.admin-summary-reasons { width: 14rem; }
+.admin-summary-provider { width: 8rem; }
+.admin-summary-date { width: 10rem; }
+
+.admin-summary-status-cell {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.admin-error-detail {
+  display: inline-block;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .chips,
@@ -1084,6 +1190,20 @@ progress::-moz-progress-bar {
 
 .reader-content figure {
   margin: var(--space-6) 0;
+}
+
+.reader-content math {
+  font-family: "STIX Two Math", "Cambria Math", "Times New Roman", serif;
+  font-size: 1.05em;
+}
+
+.reader-content math[display="block"] {
+  max-width: 100%;
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-block: var(--space-4);
+  padding-block: var(--space-1);
 }
 
 .reader-content figure img {
@@ -1257,6 +1377,10 @@ progress::-moz-progress-bar {
   gap: var(--space-5);
 }
 
+.tabs > [role="tabpanel"] {
+  min-width: 0;
+}
+
 .tab-list {
   display: flex;
   flex-wrap: wrap;
@@ -1410,6 +1534,41 @@ progress::-moz-progress-bar {
   font: 650 1rem/1.2 var(--font-ui);
 }
 
+.shortcut-list {
+  display: grid;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-5);
+  border-bottom: 1px dashed var(--line);
+  padding: var(--space-3) 0;
+}
+
+.shortcut-row:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-row kbd {
+  flex: none;
+  min-width: 3rem;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--sand-100);
+  padding: var(--space-1) var(--space-2);
+  color: var(--base-800);
+  font: 650 0.75rem/1.4 var(--font-mono);
+  text-align: center;
+}
+
+[data-shortcut-item].keyboard-selected {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+
 .menu {
   position: absolute;
   top: calc(100% + var(--space-2));
@@ -1454,6 +1613,37 @@ progress::-moz-progress-bar {
 .graph-intro .meta,
 .insights-heading .meta {
   margin-bottom: 0;
+}
+
+.library-views {
+  display: flex;
+  gap: var(--space-1);
+  width: fit-content;
+  margin-bottom: var(--space-3);
+  border-radius: 999px;
+  background: var(--sand-100);
+  padding: var(--space-1);
+}
+
+.library-views a {
+  border-radius: 999px;
+  color: var(--base-700);
+  padding: var(--space-2) var(--space-4);
+  font-size: 0.875rem;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.library-views a[aria-current="page"] {
+  background: var(--panel);
+  box-shadow: var(--shadow-sm);
+  color: var(--ink);
+}
+
+.library-view-help {
+  max-width: 68ch;
+  margin: 0 0 var(--space-4);
+  color: var(--base-600);
 }
 
 .library-filters {
@@ -2049,6 +2239,10 @@ progress::-moz-progress-bar {
   .top-actions > .button {
     min-width: 0;
     padding-inline: var(--space-3);
+  }
+
+  .top-actions .shortcut-badge {
+    display: none;
   }
 
   .headline {

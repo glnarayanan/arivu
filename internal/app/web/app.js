@@ -5,6 +5,7 @@ const state = {
   cleanup: [],
   pendingRoutes: 0,
   focusMainAfterRender: false,
+  pendingFocusSelector: "",
 };
 const offlineQueueKey = "arivu.offline.bookmarks";
 const offlineSnapshotKey = "arivu.offline.snapshots";
@@ -144,6 +145,13 @@ function syncRouteAccessibility() {
     document.body.append(announcer);
   }
   announcer.textContent = title;
+  if (state.pendingFocusSelector) {
+    const target = document.querySelector(state.pendingFocusSelector);
+    state.pendingFocusSelector = "";
+    state.focusMainAfterRender = false;
+    if (target) requestAnimationFrame(() => target.focus({ preventScroll: true }));
+    return;
+  }
   if (!state.focusMainAfterRender) return;
   state.focusMainAfterRender = false;
   const target = document.querySelector("#main-content") || document.querySelector("main") || document.querySelector("h1");
@@ -537,7 +545,12 @@ function primaryNavActive(href) {
   return location.pathname === href || location.pathname.startsWith(`${href}/`) || (href === "/library" && location.pathname.startsWith("/bookmark/"));
 }
 
+function shortcutModifierLabel() {
+  return /Mac|iPhone|iPad/.test(navigator.platform) ? "Cmd" : "Ctrl";
+}
+
 function shell(title, content, { wide = false } = {}) {
+  const shortcutModifier = shortcutModifierLabel();
   const nav = [
     ["/today", "Home"],
     ["/library", "Library"],
@@ -564,9 +577,9 @@ function shell(title, content, { wide = false } = {}) {
             <h1 class="headline" id="route-title">${escapeHTML(title)}</h1>
           </div>
           <div class="top-actions">
-            <button id="global-capture" type="button">Capture</button>
-            <a class="button secondary" href="/search">Search / Ask</a>
-            <button id="global-actions" class="secondary" type="button">More</button>
+            <button id="global-capture" type="button" aria-keyshortcuts="Q">Capture <span class="shortcut-badge" aria-hidden="true">Q</span></button>
+            <a class="button secondary" href="/search" aria-keyshortcuts="/">Search / Ask <span class="shortcut-badge" aria-hidden="true">/</span></a>
+            <button id="global-actions" class="secondary" type="button" aria-keyshortcuts="Meta+K Control+K">More <span class="shortcut-badge" aria-hidden="true">${shortcutModifier === "Cmd" ? "⌘K" : "Ctrl K"}</span></button>
             <button id="profile-menu" class="icon-button" type="button" aria-label="Open profile and settings menu">${escapeHTML((state.user?.name || state.user?.email || "A").slice(0, 1).toUpperCase())}</button>
           </div>
         </div>
@@ -902,10 +915,13 @@ async function libraryPage() {
   request.delete("collection");
   if (request.has("search") && !request.has("q")) request.set("q", request.get("search"));
   request.delete("search");
+  if (!request.has("scope") && !request.has("type")) request.set("scope", "content");
   if (!request.has("limit")) request.set("limit", "48");
   const [result, collections] = await Promise.all([api(`/library/items?${request}`), api("/collections")]);
   const sort = params.get("sort") || (params.get("q") ? "relevance" : "newest");
   const density = params.get("density") || localStorage.getItem("arivu-library-density") || "comfortable";
+  const scope = params.get("scope") === "derived" ? "derived" : "content";
+  const typeOptions = scope === "derived" ? ["entity", "concept"] : ["bookmark", "note", "daily_note", "annotation", "knowledge_object"];
   const items = [...(result.items || [])].sort((a, b) => sort === "oldest" ? String(a.updated_at).localeCompare(String(b.updated_at)) : sort === "title" ? String(a.title).localeCompare(String(b.title)) : sort === "domain" ? String(a.source).localeCompare(String(b.source)) : sort === "newest" ? String(b.updated_at).localeCompare(String(a.updated_at)) : 0);
   setRoot(shell("Library", `
     <section class="library-heading">
@@ -918,10 +934,16 @@ async function libraryPage() {
         <button type="button" class="secondary" id="library-new-object">New object</button>
       </div>
     </section>
+    <nav class="library-views" aria-label="Library view">
+      <a href="/library"${scope === "content" ? ' aria-current="page"' : ""}>Saved items</a>
+      <a href="/library?scope=derived"${scope === "derived" ? ' aria-current="page"' : ""}>Concepts &amp; entities</a>
+    </nav>
+    ${scope === "derived" ? '<p class="library-view-help">Concepts and entities are generated from your saved material. Explore them here, or use Graph to see how they connect.</p>' : ""}
     ${collectionBrowser(collections, params.get("collection_id") || params.get("collection"))}
     <form class="library-filters" role="search" id="library-filter-form">
+      <input type="hidden" name="scope" value="${escapeHTML(scope)}">
       <div class="field library-query"><label for="library-query">Search library</label><input id="library-query" name="q" type="search" value="${escapeHTML(params.get("q") || "")}" placeholder="Title, text, or topic"></div>
-      <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(["bookmark", "note", "daily_note", "annotation", "knowledge_object", "entity", "concept"], params.get("type"), "All types")}</select></div>
+      <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(typeOptions, params.get("type"), "All types")}</select></div>
       <div class="field"><label for="library-stage">Stage</label><select id="library-stage" name="stage">${libraryFilterOptions(["inbox", "processing", "processed", "archived"], params.get("stage"), "Any stage")}</select></div>
       <div class="field"><label for="library-connection">Connections</label><select id="library-connection" name="connection">${libraryFilterOptions(["connected", "unconnected"], params.get("connection"), "Any state")}</select></div>
       <div class="field"><label for="library-topic">Topic</label><input id="library-topic" name="topic" value="${escapeHTML(params.get("topic") || "")}" placeholder="Topic"></div>
@@ -963,7 +985,7 @@ function libraryFilterOptions(values, selected, emptyLabel) {
 function libraryItem(item) {
   const href = knowledgeItemHref(item.type, item.id, item.title);
   const thumbnail = item.type === "bookmark" && item.thumbnail ? `<div class="library-thumbnail" aria-hidden="true"><img src="${escapeHTML(item.thumbnail)}" alt="" loading="lazy" decoding="async"></div>` : "";
-  return `<article class="library-row${thumbnail ? " has-thumbnail" : ""}">
+  return `<article class="library-row${thumbnail ? " has-thumbnail" : ""}" data-shortcut-item>
     <div class="library-kind" data-kind="${escapeHTML(item.type || "item")}">${escapeHTML(knowledgeTypeLabel(item.type))}</div>
     ${thumbnail}
     <div class="library-copy">
@@ -980,11 +1002,11 @@ function preservationPanel(artifacts = [], captureStatus = "saved") {
   const preservedPage = artifacts.find((artifact) => artifact.type === "self_contained_html");
   const status = String(captureStatus || "saved").replaceAll("_", " ");
   const messages = {
+    saved: "Reader text is stored. This capture did not preserve reader images or additional offline formats; Reprocess can try again.",
     processing: "Browser preservation is still running in the background. The reader remains available as soon as its text is ready.",
     partially_preserved: "The reader is available. One or more preserved formats could not be completed; Reprocess can try them again.",
     preserved: artifacts.length ? "Reader content and preserved files are stored on this instance." : "The reader copy is stored. Additional preserved formats are not enabled for this instance.",
     failed: "The latest preservation attempt failed. Your last good reader copy remains available.",
-    saved: "Reader text is stored when available. Preserved page files have not been created yet.",
   };
   const actions = artifacts.map((artifact) => {
     const labels = {
@@ -1199,6 +1221,7 @@ async function openCommandPalette() {
           ["/notes", "Notes"],
           ["/assistant", "Assistant"],
         ].map(([href, label]) => `<button type="button" class="secondary" data-command-nav="${href}">${label}</button>`).join("")}
+        <button type="button" class="secondary" data-command-shortcuts>Keyboard shortcuts</button>
       </div>
     </section>
     <form class="form" data-command-save>
@@ -1241,6 +1264,10 @@ async function openCommandPalette() {
       document.querySelector("[data-dialog-close]")?.click();
       navigate(button.dataset.commandNav);
     });
+  });
+  body.querySelector("[data-command-shortcuts]").addEventListener("click", () => {
+    document.querySelector("[data-dialog-close]")?.click();
+    openKeyboardShortcuts();
   });
   body.querySelector("[data-command-save]").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -1564,7 +1591,7 @@ function sharedCaptureParams() {
 
 function bookmarkCard(b) {
   const bookmarkID = encodeURIComponent(b.id || "");
-  return `<a class="panel bookmark" href="/bookmark/${bookmarkID}">
+  return `<a class="panel bookmark" data-shortcut-item href="/bookmark/${bookmarkID}">
     <span class="meta">${escapeHTML(b.domain || "web")} · ${Number(b.reading_time || 0)} min</span>
     <h2>${escapeHTML(b.title || b.url)}</h2>
     <p>${escapeHTML(b.description || "No description available.")}</p>
@@ -2312,8 +2339,8 @@ function summaryPanel(summary) {
   }[summary.processing_status] || "";
   const summaryContent = hasSummary ? `
     ${summary.one_sentence ? `<p>${escapeHTML(summary.one_sentence)}</p>` : ""}
-    ${longForm ? `<div class="summary-long-form">${longForm.split(/\n\s*\n/).map((paragraph) => `<p>${escapeHTML(paragraph)}</p>`).join("")}</div>` : ""}
-    ${bullets.length ? `<ul>${bullets.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
+    ${longForm ? `<p class="meta">Executive summary</p><div class="summary-long-form">${longForm.split(/\n\s*\n/).map((paragraph) => `<p>${escapeHTML(paragraph)}</p>`).join("")}</div>` : ""}
+    ${bullets.length ? `<p class="meta">Key points</p><ul>${bullets.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${highlights.length ? `<p class="meta">Highlights</p><ul>${highlights.map((item) => `<li>${escapeHTML(item)}</li>`).join("")}</ul>` : ""}
     ${tags.length ? `<div class="chips">${tags.map((tag) => `<span>${escapeHTML(tag)}</span>`).join("")}</div>` : ""}` : "";
   return `<section class="insight-strip">
@@ -4800,8 +4827,9 @@ async function adminPage() {
     <div role="tabpanel" id="panel-collections" aria-labelledby="tab-collections">${adminCollectionsPanel(collections)}</div>
     <div role="tabpanel" id="panel-settings" aria-labelledby="tab-settings">${adminSettingsPanel(settings)}</div>
     <div role="tabpanel" id="panel-audit" aria-labelledby="tab-audit"><section class="stack">${auditEvents(audit.events || [])}</section></div>
-  </section>`));
+  </section>`, { wide: true }));
   ui.tabs(document.querySelector("#admin-tabs"));
+  bindAdminUsagePanel();
   bindAdminUsersPanel();
   bindAdminSettingsPanel();
 }
@@ -4829,8 +4857,112 @@ function adminUsagePanel(data) {
   </section>
   <section class="stack">${Object.entries(ops).map(([name, item]) => `<article class="annotation">
     <p><strong>${escapeHTML(name)}</strong> <span class="meta">${formatCount(item.requests)} calls · ${formatCount(item.errors)} errors</span></p>
-    ${item.last_error ? `<p class="meta">${escapeHTML(item.last_error)}</p>` : ""}
-  </article>`).join("") || `<p class="meta">No AI calls recorded for this process.</p>`}</section>`;
+    <p class="meta">Last request ${escapeHTML(formatDate(item.last_request) || "not recorded")}</p>
+    ${item.last_error ? `<p><code class="admin-error-detail">${escapeHTML(item.last_error_code || "provider_error")}</code> · ${escapeHTML(item.last_error)}</p>` : ""}
+  </article>`).join("") || `<p class="meta">No AI calls recorded for this process.</p>`}</section>
+  <section class="panel">
+    <h3>Failed jobs</h3>
+    <p class="meta">Durable failure history from the database. Retrying creates a new job and keeps the failed record for investigation.</p>
+    ${adminFailedJobs(data.recent_failed_jobs || [])}
+  </section>
+  <section class="panel">
+    <h3>Failed summaries</h3>
+    <p class="meta">Summary validation and evidence failures, including failures that did not exhaust a background job.</p>
+    ${adminFailedSummaries(data.recent_failed_summaries || [])}
+  </section>`;
+}
+
+function adminFailedJobs(jobs) {
+  if (!jobs.length) return `<p class="meta">No failed jobs.</p>`;
+  const owners = [...new Map(jobs.filter((job) => job.retryable && job.user_id).map((job) => [job.user_id, job.user_email || job.user_id])).entries()];
+  return `<div class="admin-failure-actions">
+    <div class="bulk-toolbar">
+      <label class="checkbox-row"><input type="checkbox" data-admin-select-all-jobs> Select all retryable</label>
+      <span class="meta"><span data-admin-selected-job-count>0</span> selected</span>
+      <button type="button" class="secondary" data-admin-retry-selected disabled>Retry selected</button>
+    </div>
+    ${owners.length ? `<div class="admin-owner-retries"><span class="meta">Retry failed by owner</span>${owners.map(([userID, label]) => `<button type="button" class="secondary" data-admin-retry-user="${escapeHTML(userID)}">${escapeHTML(label)}</button>`).join("")}</div>` : ""}
+  </div>
+  <div class="table-wrap admin-failures-wrap"><table class="data-table admin-failures-table">
+    <colgroup><col class="admin-failure-select"><col class="admin-failure-job"><col class="admin-failure-owner"><col class="admin-failure-attempts"><col class="admin-failure-reason"><col class="admin-failure-date"><col class="admin-failure-action"></colgroup>
+    <thead><tr><th scope="col"><span class="sr-only">Select</span></th><th scope="col">Job</th><th scope="col">Bookmark / owner</th><th scope="col">Attempts</th><th scope="col">Failure</th><th scope="col">Failed</th><th scope="col">Action</th></tr></thead>
+    <tbody>${jobs.map((job) => `<tr>
+      <td>${job.retryable ? `<input type="checkbox" data-admin-select-job value="${escapeHTML(job.id || "")}" aria-label="Select failed job for ${escapeHTML(job.bookmark_title || job.id || "bookmark")}">` : ""}</td>
+      <td class="admin-job-cell"><strong>${escapeHTML(job.type || "job")}</strong><code>${escapeHTML(job.id || "")}</code></td>
+      <td class="admin-owner-cell">${job.bookmark_id ? `<a class="text-link" href="/bookmark/${encodeURIComponent(job.bookmark_id)}">${escapeHTML(job.bookmark_title || job.bookmark_url || job.bookmark_id)}</a>` : `<span class="meta">No bookmark</span>`}<span class="meta">${escapeHTML(job.user_email || job.user_id || "system")}</span></td>
+      <td class="admin-attempts-cell">${formatCount(job.attempts)} / ${formatCount(job.max_attempts)}</td>
+      <td><code class="admin-error-detail">${escapeHTML(job.error || "No error was recorded")}</code></td>
+      <td class="admin-date-cell"><time datetime="${escapeHTML(job.failed_at || "")}">${escapeHTML(formatDate(job.failed_at))}</time></td>
+      <td class="admin-action-cell">${job.retryable ? `<button type="button" class="secondary" data-admin-retry-job="${escapeHTML(job.id || "")}">Retry</button>` : `<span class="meta">Unavailable</span>`}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function adminFailedSummaries(summaries) {
+  if (!summaries.length) return `<p class="meta">No failed summaries.</p>`;
+  return `<div class="table-wrap admin-failures-wrap"><table class="data-table admin-failures-table admin-summary-failures-table">
+    <colgroup><col class="admin-summary-bookmark"><col class="admin-summary-owner"><col class="admin-summary-status"><col class="admin-summary-reasons"><col class="admin-summary-provider"><col class="admin-summary-date"></colgroup>
+    <thead><tr><th>Bookmark</th><th>Owner</th><th>Status</th><th>Reasons</th><th>Provider / model</th><th>Failed</th></tr></thead>
+    <tbody>${summaries.map((summary) => `<tr>
+      <td><a class="text-link" href="/bookmark/${encodeURIComponent(summary.bookmark_id || "")}">${escapeHTML(summary.bookmark_title || summary.bookmark_url || summary.bookmark_id || "Unknown bookmark")}</a></td>
+      <td>${escapeHTML(summary.user_email || "")}</td>
+      <td class="admin-summary-status-cell">${escapeHTML(String(summary.validation_status || "failed").replaceAll("_", " "))}</td>
+      <td>${(summary.validation_reasons || []).length ? (summary.validation_reasons || []).map((reason) => `<code class="admin-error-detail">${escapeHTML(reason)}</code>`).join("<br>") : `<span class="meta">No validation reason was recorded</span>`}</td>
+      <td>${escapeHTML([summary.provider, summary.model].filter(Boolean).join(" · ") || "Not recorded")}</td>
+      <td class="admin-date-cell"><time datetime="${escapeHTML(summary.failed_at || "")}">${escapeHTML(formatDate(summary.failed_at))}</time></td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function bindAdminUsagePanel() {
+  document.querySelectorAll("[data-admin-retry-job]").forEach((button) => button.addEventListener("click", async () => {
+    const jobID = button.dataset.adminRetryJob;
+    const done = setButtonBusy(button, "Queueing");
+    try {
+      const result = await api(`/admin/jobs/${encodeURIComponent(jobID)}/retry`, { method: "POST", body: "{}" });
+      ui.toast(`Retry queued (${result.job_id})`, "success");
+      render();
+    } catch (err) {
+      ui.toast(err.message, "error");
+      done();
+    }
+  }));
+  const selectedJobs = () => [...document.querySelectorAll("[data-admin-select-job]:checked")].map((input) => input.value);
+  const updateSelection = () => {
+    const selected = selectedJobs().length;
+    const count = document.querySelector("[data-admin-selected-job-count]");
+    const retry = document.querySelector("[data-admin-retry-selected]");
+    const all = document.querySelector("[data-admin-select-all-jobs]");
+    const choices = [...document.querySelectorAll("[data-admin-select-job]")];
+    if (count) count.textContent = String(selected);
+    if (retry) retry.disabled = selected === 0;
+    if (all) {
+      all.checked = choices.length > 0 && selected === choices.length;
+      all.indeterminate = selected > 0 && selected < choices.length;
+    }
+  };
+  document.querySelectorAll("[data-admin-select-job]").forEach((input) => input.addEventListener("change", updateSelection));
+  document.querySelector("[data-admin-select-all-jobs]")?.addEventListener("change", (event) => {
+    document.querySelectorAll("[data-admin-select-job]").forEach((input) => { input.checked = event.currentTarget.checked; });
+    updateSelection();
+  });
+  document.querySelector("[data-admin-retry-selected]")?.addEventListener("click", (event) => runAdminBulkRetry(event.currentTarget, { job_ids: selectedJobs() }));
+  document.querySelectorAll("#panel-api [data-admin-retry-user]").forEach((button) => button.addEventListener("click", () => runAdminBulkRetry(button, { user_id: button.dataset.adminRetryUser })));
+  updateSelection();
+}
+
+async function runAdminBulkRetry(button, payload) {
+  const done = setButtonBusy(button, "Queueing");
+  try {
+    const result = await api("/admin/jobs/retry", { method: "POST", body: JSON.stringify(payload) });
+    const queued = Number(result.queued_count || 0);
+    const skipped = Number(result.failed_count || 0);
+    ui.toast(`${queued} ${queued === 1 ? "job" : "jobs"} queued${skipped ? ` · ${skipped} skipped` : ""}`, queued ? "success" : "error");
+    render();
+  } catch (err) {
+    ui.toast(err.message, "error");
+    done();
+  }
 }
 
 function adminUsersPanel(users, sort, order) {
@@ -4869,6 +5001,7 @@ function adminUserRow(user) {
     <td>${user.is_admin ? "Admin" : user.invite_pending ? "Invited" : user.banned ? "Banned" : "Active"}</td>
     <td><div class="button-row">
       <button type="button" class="secondary" data-admin-user-detail="${escapeHTML(user.id)}">View details</button>
+      <button type="button" class="secondary" data-admin-retry-user="${escapeHTML(user.id)}"${Number(user.failed_job_count || 0) ? "" : " disabled"}>Retry failures (${formatCount(user.failed_job_count)})</button>
       <button type="button" class="secondary" data-admin-user-action="${action}" data-user-id="${escapeHTML(user.id)}">${action === "ban" ? "Ban user" : "Unban user"}</button>
       <button type="button" class="secondary" data-admin-user-action="reset-password" data-user-id="${escapeHTML(user.id)}">Reset password</button>
       <button type="button" class="danger" data-admin-user-action="delete" data-user-id="${escapeHTML(user.id)}">Delete user</button>
@@ -4930,6 +5063,7 @@ function bindAdminUsersPanel() {
     }
   });
   document.querySelectorAll("[data-admin-user-detail]").forEach((button) => button.addEventListener("click", () => showAdminUser(button.dataset.adminUserDetail)));
+  document.querySelectorAll("#panel-users [data-admin-retry-user]").forEach((button) => button.addEventListener("click", () => runAdminBulkRetry(button, { user_id: button.dataset.adminRetryUser })));
   document.querySelectorAll("[data-admin-user-action]").forEach((button) => button.addEventListener("click", () => runAdminUserAction(button)));
 }
 
@@ -5063,12 +5197,7 @@ async function render() {
     await page();
     syncRouteAccessibility();
     bindGlobalShellActions();
-    ui.on(document, "keydown", (event) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
-        event.preventDefault();
-        openCommandPalette();
-      }
-    });
+    ui.on(document, "keydown", globalKeyboardShortcuts);
     document.querySelector("#logout")?.addEventListener("click", async (event) => {
       const done = setButtonBusy(event.currentTarget, "Signing out");
       await api("/auth/logout", { method: "POST" }).catch(() => {});
@@ -5100,6 +5229,94 @@ function bindGlobalShellActions() {
     navigate("/auth", true);
   } });
   ui.menu(profile, items);
+}
+
+function isShortcutTypingTarget(target) {
+  return target instanceof Element && (target.matches("input, textarea, select") || target.closest("[contenteditable='true']"));
+}
+
+function visibleShortcutItems() {
+  return [...document.querySelectorAll("[data-shortcut-item]")].filter((item) => item.getClientRects().length > 0);
+}
+
+function shortcutItemLink(item) {
+  return item.matches("a[href]") ? item : item.querySelector("a[href]");
+}
+
+function moveShortcutSelection(delta) {
+  const items = visibleShortcutItems();
+  if (!items.length) return false;
+  const current = items.findIndex((item) => item.contains(document.activeElement) || item.classList.contains("keyboard-selected"));
+  const nextIndex = current < 0 ? (delta > 0 ? 0 : items.length - 1) : Math.max(0, Math.min(items.length - 1, current + delta));
+  items.forEach((item, index) => item.classList.toggle("keyboard-selected", index === nextIndex));
+  const link = shortcutItemLink(items[nextIndex]);
+  link?.focus({ preventScroll: true });
+  items[nextIndex].scrollIntoView({ block: "nearest", behavior: "smooth" });
+  return Boolean(link);
+}
+
+function focusGlobalSearch() {
+  const search = [...document.querySelectorAll("input[type='search']")].find((input) => input.getClientRects().length > 0);
+  if (search) {
+    search.focus();
+    search.select();
+    return;
+  }
+  state.pendingFocusSelector = "#knowledge-search";
+  navigate("/search");
+}
+
+function globalKeyboardShortcuts(event) {
+  if (event.defaultPrevented) return;
+  const key = event.key.toLowerCase();
+  const command = event.metaKey || event.ctrlKey;
+  if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k" && !event.altKey) {
+    event.preventDefault();
+    if (!document.querySelector(".dialog-backdrop")) openCommandPalette();
+    return;
+  }
+  if (command && !event.altKey && key === "p") {
+    if (document.querySelector(".dialog-backdrop")) return;
+    event.preventDefault();
+    window.print();
+    return;
+  }
+  if (event.key === "Escape" && isShortcutTypingTarget(event.target)) {
+    event.target.blur();
+    return;
+  }
+  if (command || event.altKey || isShortcutTypingTarget(event.target) || document.querySelector(".dialog-backdrop")) return;
+  if (event.key === "?") {
+    event.preventDefault();
+    openKeyboardShortcuts();
+  } else if (key === "q") {
+    event.preventDefault();
+    openCaptureComposer();
+  } else if (event.key === "/" || key === "f") {
+    event.preventDefault();
+    focusGlobalSearch();
+  } else if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    if (moveShortcutSelection(event.key === "ArrowDown" ? 1 : -1)) event.preventDefault();
+  }
+}
+
+function openKeyboardShortcuts() {
+  const modifier = shortcutModifierLabel();
+  const shortcuts = [
+    ["Q", "Capture a bookmark, note, quote, or file"],
+    ["/ or F", "Focus search"],
+    ["↑ / ↓", "Navigate visible saved items"],
+    ["Enter", "Open the focused item"],
+    ["Esc", "Dismiss a dialog or leave a field"],
+    [`${modifier} + K`, "Open quick actions"],
+    [`${modifier} + P`, "Print the current view"],
+    ["?", "Show keyboard shortcuts"],
+  ];
+  const body = document.createElement("div");
+  body.className = "shortcut-list";
+  body.setAttribute("aria-label", "Available keyboard shortcuts");
+  body.innerHTML = shortcuts.map(([keys, description]) => `<div class="shortcut-row"><span>${escapeHTML(description)}</span><kbd>${escapeHTML(keys)}</kbd></div>`).join("");
+  return ui.dialog({ title: "Keyboard shortcuts", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
 }
 
 function routeMatches(route) {

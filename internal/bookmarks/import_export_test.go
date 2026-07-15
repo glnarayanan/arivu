@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/database"
@@ -649,6 +650,60 @@ func TestPersistSelectedEvidenceRepairsInconsistentValidSummaryStateWithFallback
 	}
 	if summary == "Last valid summary" || textContent != newEvidence.Text || selectedID != newEvidence.ID {
 		t.Fatalf("inconsistent state was not repaired: summary=%q text=%q selected=%q old=%q", summary, textContent, selectedID, oldEvidence.ID)
+	}
+}
+
+func TestPersistSelectedEvidenceUsesSourceDescriptionWhenProviderIsUnavailable(t *testing.T) {
+	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	now := nowString()
+	_, _ = db.Exec(`INSERT INTO users(id,email,password_hash,created_at,updated_at) VALUES('user-1','reader@example.com','hash',?,?)`, now, now)
+	_, _ = db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,description,domain,created_at,updated_at) VALUES('bookmark-1','user-1','https://example.com/guide','A Guide 2.0','A useful guide to version 2.0 capture, summaries, and offline reader images. More details follow.','example.com',?,?)`, now, now)
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	evidence, err := service.UpsertEvidence(context.Background(), "user-1", "bookmark-1", BookmarkEvidence{
+		Kind: "fetched_article", Origin: "web_fetch", Authority: 70,
+		Text:         strings.Repeat("Table of Contents Intro Setup Details. Substantive article evidence follows. ", 30),
+		CanonicalURL: "https://example.com/guide", QualityStatus: "complete", QualityScore: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.persistSelectedEvidence(context.Background(), "user-1", "bookmark-1", "A Guide 2.0", "A useful guide to version 2.0 capture, summaries, and offline reader images. More details follow.", "example.com", evidence); err != nil {
+		t.Fatal(err)
+	}
+	var summary, bullets, highlights string
+	if err := db.QueryRow(`SELECT one_sentence,bullet_points_json,highlights_json FROM ai_summaries WHERE bookmark_id='bookmark-1'`).Scan(&summary, &bullets, &highlights); err != nil {
+		t.Fatal(err)
+	}
+	if summary != "A useful guide to version 2.0 capture, summaries, and offline reader images." {
+		t.Fatalf("fallback summary = %q", summary)
+	}
+	var bulletItems, highlightItems []string
+	_ = json.Unmarshal([]byte(bullets), &bulletItems)
+	_ = json.Unmarshal([]byte(highlights), &highlightItems)
+	if len(bulletItems) == 0 || len(highlightItems) == 0 {
+		t.Fatalf("provider fallback discarded rich evidence-derived fields: bullets=%s highlights=%s", bullets, highlights)
+	}
+}
+
+func TestOneSentencePreservesDecimalsAndUnicode(t *testing.T) {
+	if got := oneSentence("版本 2.0 capture works. More details."); got != "版本 2.0 capture works." {
+		t.Fatalf("decimal sentence = %q", got)
+	}
+	got := oneSentence(strings.Repeat("界", 300))
+	if !utf8.ValidString(got) || len([]rune(strings.TrimSuffix(got, "..."))) != 280 {
+		t.Fatalf("unicode fallback is invalid or wrong length: valid=%v runes=%d", utf8.ValidString(got), len([]rune(strings.TrimSuffix(got, "..."))))
+	}
+}
+
+func TestProviderFailureFallbackUsesTitleBeforeArticleChrome(t *testing.T) {
+	title := "A Guide to Claude Code 2.0 and better coding agents"
+	article := "28 Dec, 2025 Table of Contents Intro Timeline Setup"
+	if got := oneSentence(fallback("", fallback(title, article))); got != title {
+		t.Fatalf("title fallback = %q", got)
 	}
 }
 

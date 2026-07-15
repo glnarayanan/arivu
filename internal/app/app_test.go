@@ -3355,6 +3355,158 @@ func TestAdminUserMutations(t *testing.T) {
 	}
 }
 
+func TestAdminAPIUsageExplainsAndRetriesFailedJobs(t *testing.T) {
+	a, err := New(config.Config{
+		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:      "test-secret",
+		AdminEmails:    map[string]bool{"admin@example.com": true},
+		SignupEnabled:  true,
+		SessionTTL:     time.Hour,
+		RefreshTTL:     time.Hour,
+		ExtensionTTL:   time.Hour,
+		MaxRequestBody: 1 << 20,
+	})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	defer a.Close()
+	handler := a.Handler()
+	accessCookie, csrfCookie := signupForCookies(t, handler, "admin@example.com")
+	userID := userIDForEmail(t, a, "admin@example.com")
+	now := time.Now().UTC().Format(time.RFC3339)
+	if _, err := a.db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,created_at,updated_at) VALUES(?,?,?,?,?,?)`, "failed-bookmark", userID, "https://example.com/failed", "Failed article", now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.Exec(`INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,validation_status,validation_reasons_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, "failed-summary", "failed-bookmark", userID, "failed", "invalid", `["unsupported_claim"]`, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.db.Exec(`INSERT INTO capture_attempts(id,bookmark_id,user_id,status,requested_url,queued_at) VALUES(?,?,?,?,?,?)`, "old-attempt", "failed-bookmark", userID, "failed", "https://example.com/failed", now); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"bookmark_id":"failed-bookmark","url":"https://stale.example/","capture_attempt_id":"old-attempt","import_job_id":"finished-import","quality_reprocess_run_id":"finished-run","expected_evidence_hash":"stale-hash"}`
+	if _, err := a.db.Exec(`INSERT INTO jobs(id,user_id,type,status,payload_json,attempts,max_attempts,last_error,run_after,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, "failed-job", userID, "bookmark.process", "failed", payload, 5, 5, "upstream status 401", now, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	usage := adminRequest(t, handler, http.MethodGet, "/api/admin/api-usage", "", accessCookie, csrfCookie)
+	if usage.StatusCode != http.StatusOK {
+		t.Fatalf("usage status = %d body=%s", usage.StatusCode, readBody(usage))
+	}
+	var body struct {
+		FailedJobs []struct {
+			ID            string `json:"id"`
+			Error         string `json:"error"`
+			UserEmail     string `json:"user_email"`
+			BookmarkTitle string `json:"bookmark_title"`
+			Attempts      int    `json:"attempts"`
+			Retryable     bool   `json:"retryable"`
+		} `json:"recent_failed_jobs"`
+		FailedSummaries []struct {
+			BookmarkID string   `json:"bookmark_id"`
+			Reasons    []string `json:"validation_reasons"`
+		} `json:"recent_failed_summaries"`
+	}
+	if err := json.NewDecoder(usage.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	usage.Body.Close()
+	if len(body.FailedJobs) != 1 || body.FailedJobs[0].ID != "failed-job" || body.FailedJobs[0].Error != "upstream status 401" || body.FailedJobs[0].UserEmail != "admin@example.com" || body.FailedJobs[0].BookmarkTitle != "Failed article" || body.FailedJobs[0].Attempts != 5 || !body.FailedJobs[0].Retryable {
+		t.Fatalf("failed job detail missing: %#v", body.FailedJobs)
+	}
+	if len(body.FailedSummaries) != 1 || body.FailedSummaries[0].BookmarkID != "failed-bookmark" || len(body.FailedSummaries[0].Reasons) != 1 || body.FailedSummaries[0].Reasons[0] != "unsupported_claim" {
+		t.Fatalf("failed summary detail missing: %#v", body.FailedSummaries)
+	}
+
+	retry := adminRequest(t, handler, http.MethodPost, "/api/admin/jobs/failed-job/retry", `{}`, accessCookie, csrfCookie)
+	if retry.StatusCode != http.StatusOK {
+		t.Fatalf("retry status = %d body=%s", retry.StatusCode, readBody(retry))
+	}
+	var retryBody map[string]any
+	if err := json.NewDecoder(retry.Body).Decode(&retryBody); err != nil {
+		t.Fatal(err)
+	}
+	retry.Body.Close()
+	newJobID, _ := retryBody["job_id"].(string)
+	if newJobID == "" || newJobID == "failed-job" {
+		t.Fatalf("retry did not create a distinct durable job: %#v", retryBody)
+	}
+	var status, retryPayload, summaryStatus string
+	if err := a.db.QueryRow(`SELECT status,payload_json FROM jobs WHERE id=?`, newJobID).Scan(&status, &retryPayload); err != nil {
+		t.Fatal(err)
+	}
+	var decodedPayload map[string]string
+	if err := json.Unmarshal([]byte(retryPayload), &decodedPayload); err != nil {
+		t.Fatal(err)
+	}
+	newAttemptID := decodedPayload["capture_attempt_id"]
+	if status != "queued" || decodedPayload["url"] != "https://example.com/failed" || newAttemptID == "" || len(decodedPayload) != 3 {
+		t.Fatalf("retried job status=%q payload=%s", status, retryPayload)
+	}
+	var retryOf, attemptStatus string
+	if err := a.db.QueryRow(`SELECT COALESCE(retry_of_id,''),status FROM capture_attempts WHERE id=?`, newAttemptID).Scan(&retryOf, &attemptStatus); err != nil || retryOf != "old-attempt" || attemptStatus != "queued" {
+		t.Fatalf("new capture attempt retry_of=%q status=%q err=%v", retryOf, attemptStatus, err)
+	}
+	if err := a.db.QueryRow(`SELECT processing_status FROM ai_summaries WHERE bookmark_id='failed-bookmark'`).Scan(&summaryStatus); err != nil || summaryStatus != "pending" {
+		t.Fatalf("summary status=%q err=%v", summaryStatus, err)
+	}
+	var oldStatus string
+	if err := a.db.QueryRow(`SELECT status FROM jobs WHERE id='failed-job'`).Scan(&oldStatus); err != nil || oldStatus != "failed" {
+		t.Fatalf("failed job history was not preserved: status=%q err=%v", oldStatus, err)
+	}
+	assertAuditAction(t, a, "admin.job.retry", "job", "failed-job")
+
+	duplicate := adminRequest(t, handler, http.MethodPost, "/api/admin/jobs/failed-job/retry", `{}`, accessCookie, csrfCookie)
+	if duplicate.StatusCode != http.StatusConflict {
+		t.Fatalf("duplicate retry status = %d body=%s", duplicate.StatusCode, readBody(duplicate))
+	}
+	duplicate.Body.Close()
+
+	for _, item := range []struct{ bookmarkID, jobID string }{{"failed-bookmark-2", "failed-job-2"}, {"failed-bookmark-3", "failed-job-3"}} {
+		if _, err := a.db.Exec(`INSERT INTO bookmarks(id,user_id,url,title,created_at,updated_at) VALUES(?,?,?,?,?,?)`, item.bookmarkID, userID, "https://example.com/"+item.bookmarkID, item.bookmarkID, now, now); err != nil {
+			t.Fatal(err)
+		}
+		itemPayload := `{"bookmark_id":"` + item.bookmarkID + `","url":"https://stale.example/"}`
+		if _, err := a.db.Exec(`INSERT INTO jobs(id,user_id,type,status,payload_json,attempts,max_attempts,last_error,run_after,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)`, item.jobID, userID, "bookmark.process", "failed", itemPayload, 5, 5, "provider unavailable", now, now, now); err != nil {
+			t.Fatal(err)
+		}
+	}
+	selectedBulk := adminRequest(t, handler, http.MethodPost, "/api/admin/jobs/retry", `{"job_ids":["failed-job-2","failed-job-2"]}`, accessCookie, csrfCookie)
+	if selectedBulk.StatusCode != http.StatusOK {
+		t.Fatalf("selected bulk retry status = %d body=%s", selectedBulk.StatusCode, readBody(selectedBulk))
+	}
+	var selectedBulkBody struct {
+		QueuedCount int `json:"queued_count"`
+		FailedCount int `json:"failed_count"`
+	}
+	if err := json.NewDecoder(selectedBulk.Body).Decode(&selectedBulkBody); err != nil {
+		t.Fatal(err)
+	}
+	selectedBulk.Body.Close()
+	if selectedBulkBody.QueuedCount != 1 || selectedBulkBody.FailedCount != 0 {
+		t.Fatalf("selected bulk retry = %#v", selectedBulkBody)
+	}
+
+	userBulk := adminRequest(t, handler, http.MethodPost, "/api/admin/jobs/retry", `{"user_id":"`+userID+`"}`, accessCookie, csrfCookie)
+	if userBulk.StatusCode != http.StatusOK {
+		t.Fatalf("user bulk retry status = %d body=%s", userBulk.StatusCode, readBody(userBulk))
+	}
+	var userBulkBody struct {
+		QueuedCount int `json:"queued_count"`
+		FailedCount int `json:"failed_count"`
+	}
+	if err := json.NewDecoder(userBulk.Body).Decode(&userBulkBody); err != nil {
+		t.Fatal(err)
+	}
+	userBulk.Body.Close()
+	if userBulkBody.QueuedCount != 1 || userBulkBody.FailedCount != 2 {
+		t.Fatalf("user bulk retry = %#v", userBulkBody)
+	}
+	var activeBookmarks int
+	if err := a.db.QueryRow(`SELECT COUNT(DISTINCT json_extract(payload_json,'$.bookmark_id')) FROM jobs WHERE user_id=? AND type='bookmark.process' AND status IN ('queued','leased')`, userID).Scan(&activeBookmarks); err != nil || activeBookmarks != 3 {
+		t.Fatalf("active retried bookmarks=%d err=%v", activeBookmarks, err)
+	}
+}
+
 func TestAdminSettingsAffectRuntimeAuth(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),

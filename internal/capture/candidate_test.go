@@ -91,6 +91,14 @@ func TestSelectReaderEvidencePriority(t *testing.T) {
 			},
 			wantID: "higher",
 		},
+		{
+			name:    "equally good recapture refreshes current evidence",
+			current: Candidate{ID: "old", Source: SourceRendered, Quality: QualityComplete, Score: 95},
+			candidates: []Candidate{
+				{ID: "refreshed", Source: SourceRendered, Quality: QualityComplete, Score: 95},
+			},
+			wantID: "refreshed",
+		},
 	}
 
 	for _, tt := range tests {

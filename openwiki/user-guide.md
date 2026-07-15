@@ -79,6 +79,13 @@ continues to explain why an item returned and supports complete/snooze actions.
 The More button and `Cmd/Ctrl+K` retain the command palette for navigation,
 capture, search, cited Ask, and current-item actions.
 
+Keyboard-first navigation is available throughout the signed-in application:
+press `Q` to capture, `/` or `F` to focus search, `Cmd/Ctrl+K` for quick actions,
+and `Cmd/Ctrl+P` to print. In Library and bookmark result grids, use the up and
+down arrows to move through visible items and Enter to open the focused item.
+Press `?` at any time outside a form field to see the complete shortcut list;
+Escape dismisses dialogs or leaves the field currently being edited.
+
 ## Reading, Notes, And Objects
 
 Notes is a primary navigation destination alongside Home, Library, Graph, and

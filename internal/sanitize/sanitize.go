@@ -13,6 +13,31 @@ var allowedTags = map[string]bool{
 	"ul": true, "ol": true, "li": true, "blockquote": true, "pre": true, "code": true,
 	"h1": true, "h2": true, "h3": true, "h4": true, "a": true,
 	"figure": true, "figcaption": true, "img": true,
+	// Native MathML keeps equations readable without retaining publisher CSS or
+	// executing a third-party math renderer in the archived reader.
+	"math": true, "mrow": true, "mi": true, "mn": true, "mo": true, "mtext": true, "mspace": true, "ms": true,
+	"mfrac": true, "msqrt": true, "mroot": true, "mstyle": true, "merror": true, "mpadded": true, "mphantom": true, "mfenced": true, "menclose": true,
+	"msub": true, "msup": true, "msubsup": true, "munder": true, "mover": true, "munderover": true,
+	"mmultiscripts": true, "mprescripts": true, "none": true, "mtable": true, "mtr": true, "mtd": true, "mlabeledtr": true,
+	"maligngroup": true, "malignmark": true, "semantics": true, "annotation": true,
+}
+
+var mathTags = map[string]bool{
+	"math": true, "mrow": true, "mi": true, "mn": true, "mo": true, "mtext": true, "mspace": true, "ms": true,
+	"mfrac": true, "msqrt": true, "mroot": true, "mstyle": true, "merror": true, "mpadded": true, "mphantom": true, "mfenced": true, "menclose": true,
+	"msub": true, "msup": true, "msubsup": true, "munder": true, "mover": true, "munderover": true,
+	"mmultiscripts": true, "mprescripts": true, "none": true, "mtable": true, "mtr": true, "mtd": true, "mlabeledtr": true,
+	"maligngroup": true, "malignmark": true, "semantics": true, "annotation": true,
+}
+
+var allowedMathAttrs = map[string]bool{
+	"display": true, "displaystyle": true, "scriptlevel": true, "mathvariant": true,
+	"stretchy": true, "symmetric": true, "fence": true, "separator": true, "accent": true, "accentunder": true,
+	"width": true, "height": true, "depth": true, "lspace": true, "rspace": true, "minsize": true, "maxsize": true,
+	"linethickness": true, "bevelled": true, "notation": true, "columnalign": true, "rowalign": true,
+	"columnspacing": true, "rowspacing": true, "columnlines": true, "rowlines": true, "frame": true,
+	"framespacing": true, "equalrows": true, "equalcolumns": true, "columnspan": true, "rowspan": true,
+	"encoding": true,
 }
 
 var dropTags = map[string]bool{
@@ -62,6 +87,17 @@ func renderNode(out *bytes.Buffer, n *html.Node) {
 					out.WriteString(stdhtml.EscapeString(attr.Val))
 					out.WriteString(`" rel="nofollow noopener noreferrer" target="_blank"`)
 					break
+				}
+			}
+		} else if mathTags[tag] {
+			for _, attr := range n.Attr {
+				key := strings.ToLower(attr.Key)
+				if allowedMathAttrs[key] {
+					out.WriteByte(' ')
+					out.WriteString(key)
+					out.WriteString(`="`)
+					out.WriteString(stdhtml.EscapeString(attr.Val))
+					out.WriteByte('"')
 				}
 			}
 		}

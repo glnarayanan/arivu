@@ -37,33 +37,14 @@ export async function capturePage(request, signal) {
     } catch {
       throw coded('browser_launch_failed');
     }
-    const context = await browser.newContext({ serviceWorkers: 'block', javaScriptEnabled: true });
-    const page = await context.newPage();
-    const imageResponses = new Map();
-    const imageTasks = new Set();
-    let capturedImageBytes = 0;
-    let capturedImages = 0;
-    page.on('response', (response) => {
-      const task = (async () => {
-        try {
-          const mime = response.headers()['content-type']?.split(';', 1)[0].trim().toLowerCase();
-          if (!imageMIMEs.has(mime) || capturedImages >= request.max_media_files) return;
-          const length = Number(response.headers()['content-length'] ?? 0);
-          if (length > request.max_media_file_bytes || capturedImageBytes + length > request.max_media_total_bytes) return;
-          const body = await response.body();
-          if (body.length < 1 || body.length > request.max_media_file_bytes || capturedImages >= request.max_media_files || capturedImageBytes + body.length > request.max_media_total_bytes) return;
-          const image = { mime, body };
-          imageResponses.set(response.url(), image);
-          for (let redirected = response.request().redirectedFrom(); redirected; redirected = redirected.redirectedFrom()) imageResponses.set(redirected.url(), image);
-          capturedImages += 1;
-          capturedImageBytes += body.length;
-        } catch {
-          // A failed optional image body must not discard usable reader content.
-        }
-      })();
-      imageTasks.add(task);
-      task.finally(() => imageTasks.delete(task));
+    const context = await browser.newContext({
+      serviceWorkers: 'block',
+      javaScriptEnabled: true,
+      userAgent: browserUserAgent(browser.version()),
+      locale: 'en-US',
+      viewport: { width: 1440, height: 900 },
     });
+    const page = await context.newPage();
     await page.route('**/*', async (route) => {
       const protocol = new URL(route.request().url()).protocol;
       if (protocol === 'http:' || protocol === 'https:' || protocol === 'data:' || protocol === 'blob:') await route.continue();
@@ -76,7 +57,6 @@ export async function capturePage(request, signal) {
     }
     await page.waitForLoadState('networkidle', { timeout: Math.min(5000, request.navigation_timeout_ms) }).catch(() => {});
     await boundedScroll(page);
-    await Promise.allSettled([...imageTasks]);
 
     const finalURL = page.url();
     const renderedHTML = await page.content();
@@ -95,6 +75,10 @@ export async function capturePage(request, signal) {
     const artifactPayloads = [];
     let acceptedBytes = html.length + text.length;
     if (acceptedBytes > request.max_total_bytes) throw coded('reader_output_too_large');
+    const capturedMedia = await collectReaderMedia(page.request, readerImageURLs(readerHTML, finalURL), request, acceptedBytes);
+    const media = capturedMedia.media;
+    const mediaPayloads = capturedMedia.payloads;
+    acceptedBytes += capturedMedia.total;
     const components = { browser: { status: 'complete', error_code: '' }, readability: { status: 'complete', error_code: '' } };
     let errorCode = '';
     for (const format of request.formats) {
@@ -112,22 +96,10 @@ export async function capturePage(request, signal) {
       }
     }
 
-    const media = [];
-    const mediaPayloads = [];
-    let mediaTotal = 0;
-    for (const sourceURL of readerImageURLs(readerHTML, finalURL)) {
-      const image = imageResponses.get(sourceURL);
-      if (!image || media.length >= request.max_media_files || mediaTotal + image.body.length > request.max_media_total_bytes || acceptedBytes + image.body.length > request.max_total_bytes) continue;
-      media.push({ source_url: sourceURL, role: 'reader_image', width: 0, height: 0, mime: image.mime, size: image.body.length });
-      mediaPayloads.push(image.body);
-      mediaTotal += image.body.length;
-      acceptedBytes += image.body.length;
-    }
-
     const response = {
       version: 2,
       token: request.token,
-      engine_version: 'arivu-capture/0.1.0',
+      engine_version: 'arivu-capture/0.2.0',
       metadata: extracted.metadata,
       content: {
         html: { mime: 'text/html', size: html.length },
@@ -160,7 +132,7 @@ export function failedResponse(request, error) {
   return {
     version: 2,
     token: request.token,
-    engine_version: 'arivu-capture/0.1.0',
+    engine_version: 'arivu-capture/0.2.0',
     metadata: { final_url: '', canonical_url: '', title: '', description: '', byline: '', site_name: '', language: '', published_at: '' },
     content: { html: { mime: '', size: 0 }, text: { mime: '', size: 0 }, quality_status: 'failed', quality_score: 0, quality_reasons: [], challenge: false },
     artifacts: [],
@@ -175,6 +147,9 @@ export function extractPage(renderedHTML, finalURL) {
   try {
     const document = dom.window.document;
     const canonical = document.querySelector('link[rel~="canonical"]')?.href ?? '';
+    const publisherDescription = document.querySelector('meta[name="description" i]')?.content?.trim()
+      || document.querySelector('meta[property="og:description" i]')?.content?.trim()
+      || '';
     const clone = document.cloneNode(true);
     for (const element of clone.querySelectorAll('script, noscript, template')) element.remove();
     const projection = new Readability(clone).parse();
@@ -184,7 +159,7 @@ export function extractPage(renderedHTML, finalURL) {
         final_url: finalURL,
         canonical_url: isHTTPURL(canonical) ? canonical : '',
         title: projection?.title ?? document.title ?? '',
-        description: projection?.excerpt ?? document.querySelector('meta[name="description"]')?.content ?? '',
+        description: publisherDescription || projection?.excerpt || '',
         byline: projection?.byline ?? '',
         site_name: projection?.siteName ?? '',
         language: projection?.lang ?? document.documentElement.lang ?? '',
@@ -207,6 +182,42 @@ export function readerImageURLs(readerHTML, baseURL) {
   } finally {
     dom.window.close();
   }
+}
+
+export async function collectReaderMedia(apiRequest, sourceURLs, limits, acceptedBytes) {
+  const media = [];
+  const payloads = [];
+  let total = 0;
+  for (const sourceURL of sourceURLs) {
+    if (media.length >= limits.max_media_files) break;
+    let response;
+    try {
+      response = await apiRequest.get(sourceURL, {
+        failOnStatusCode: false,
+        maxRedirects: 5,
+        headers: { 'Accept-Encoding': 'identity' },
+      });
+      if (!response.ok()) continue;
+      const headers = response.headers();
+      const mime = headers['content-type']?.split(';', 1)[0].trim().toLowerCase();
+      const length = Number(headers['content-length'] ?? 0);
+      if (!imageMIMEs.has(mime) || length > limits.max_media_file_bytes || total + length > limits.max_media_total_bytes || acceptedBytes + total + length > limits.max_total_bytes) continue;
+      const body = await response.body();
+      if (body.length < 1 || body.length > limits.max_media_file_bytes || total + body.length > limits.max_media_total_bytes || acceptedBytes + total + body.length > limits.max_total_bytes) continue;
+      media.push({ source_url: sourceURL, role: 'reader_image', width: 0, height: 0, mime, size: body.length });
+      payloads.push(body);
+      total += body.length;
+    } catch {
+      // A failed reader image must not discard usable article text.
+    } finally {
+      await response?.dispose?.().catch(() => {});
+    }
+  }
+  return { media, payloads, total };
+}
+
+export function browserUserAgent(version) {
+  return `Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${version} Safari/537.36`;
 }
 
 async function boundedScroll(page) {

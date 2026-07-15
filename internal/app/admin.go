@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"runtime"
@@ -16,6 +17,7 @@ import (
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/runtimeconfig"
+	"github.com/glnarayanan/arivu/internal/safefetch"
 )
 
 func (a *App) adminOverview(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -76,7 +78,12 @@ func (a *App) adminSystem(w http.ResponseWriter, r *http.Request, user auth.User
 
 func (a *App) adminUsers(w http.ResponseWriter, r *http.Request, user auth.User) {
 	orderBy := adminUserOrder(r.URL.Query().Get("sort"), r.URL.Query().Get("order"))
-	rows, err := a.db.QueryContext(r.Context(), `SELECT u.id,u.email,u.name,u.created_at,u.banned,u.invite_pending,COUNT(DISTINCT b.id),COUNT(DISTINCT c.id),MAX(b.created_at) FROM users u LEFT JOIN bookmarks b ON b.user_id=u.id LEFT JOIN collections c ON c.user_id=u.id GROUP BY u.id `+orderBy)
+	rows, err := a.db.QueryContext(r.Context(), `SELECT u.id,u.email,u.name,u.created_at,u.banned,u.invite_pending,COUNT(DISTINCT b.id),COUNT(DISTINCT c.id),MAX(b.created_at),COALESCE(failed.failed_job_count,0)
+		FROM users u
+		LEFT JOIN bookmarks b ON b.user_id=u.id
+		LEFT JOIN collections c ON c.user_id=u.id
+		LEFT JOIN (SELECT user_id,COUNT(DISTINCT json_extract(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.bookmark_id')) failed_job_count FROM jobs WHERE type='bookmark.process' AND status='failed' GROUP BY user_id) failed ON failed.user_id=u.id
+		GROUP BY u.id `+orderBy)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load users")
 		return
@@ -86,10 +93,10 @@ func (a *App) adminUsers(w http.ResponseWriter, r *http.Request, user auth.User)
 	for rows.Next() {
 		var id, email, name, created string
 		var banned, invitePending bool
-		var bookmarkCount, collectionCount int
+		var bookmarkCount, collectionCount, failedJobCount int
 		var lastBookmark sql.NullString
-		_ = rows.Scan(&id, &email, &name, &created, &banned, &invitePending, &bookmarkCount, &collectionCount, &lastBookmark)
-		users = append(users, map[string]any{"id": id, "email": email, "name": name, "created_at": created, "banned": banned, "invite_pending": invitePending, "bookmark_count": bookmarkCount, "collection_count": collectionCount, "last_bookmark_at": nullStringMap(lastBookmark), "is_admin": a.cfg.AdminEmails[strings.ToLower(email)]})
+		_ = rows.Scan(&id, &email, &name, &created, &banned, &invitePending, &bookmarkCount, &collectionCount, &lastBookmark, &failedJobCount)
+		users = append(users, map[string]any{"id": id, "email": email, "name": name, "created_at": created, "banned": banned, "invite_pending": invitePending, "bookmark_count": bookmarkCount, "collection_count": collectionCount, "failed_job_count": failedJobCount, "last_bookmark_at": nullStringMap(lastBookmark), "is_admin": a.cfg.AdminEmails[strings.ToLower(email)]})
 	}
 	writeJSON(w, http.StatusOK, users)
 }
@@ -319,6 +326,16 @@ func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.Us
 	aiConfigured := effective.AIModel != "" && effective.AIBaseURL != "" && (effective.AIAPIKey != "" || definition.APIKeyOptional)
 	geminiConfigured := effective.AIProvider == providers.ProviderGemini && effective.AIAPIKey != ""
 	usage := a.usage.Snapshot()
+	failedJobs, err := recentFailedJobs(r.Context(), a.db, 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load failed jobs")
+		return
+	}
+	failedSummaries, err := recentFailedSummaries(r.Context(), a.db, 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load failed summaries")
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"requests_today":          usage["requests_total"],
 		"tokens_today":            0,
@@ -338,7 +355,265 @@ func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.Us
 		"background_jobs_failed":  countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM jobs WHERE status='failed'`),
 		"background_jobs_queued":  countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM jobs WHERE status='queued'`),
 		"background_jobs_running": countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM jobs WHERE status='leased'`),
+		"recent_failed_jobs":      failedJobs,
+		"recent_failed_summaries": failedSummaries,
 	})
+}
+
+func (a *App) adminRetryJob(w http.ResponseWriter, r *http.Request, user auth.User) {
+	newJobID, err := a.retryAdminJob(r.Context(), user.ID, r.PathValue("id"))
+	if err != nil {
+		var retryErr *adminRetryError
+		if errors.As(err, &retryErr) {
+			if retryErr.JobID != "" {
+				writeJSON(w, retryErr.Status, map[string]any{"detail": retryErr.Detail, "job_id": retryErr.JobID})
+			} else {
+				writeError(w, retryErr.Status, retryErr.Detail)
+			}
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Could not retry job")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "queued", "job_id": newJobID, "retry_of_job_id": r.PathValue("id")})
+}
+
+type adminRetryError struct {
+	Status int
+	Detail string
+	JobID  string
+}
+
+func (e *adminRetryError) Error() string { return e.Detail }
+
+func retryError(status int, detail string) error {
+	return &adminRetryError{Status: status, Detail: detail}
+}
+
+func (a *App) retryAdminJob(ctx context.Context, actorUserID, failedJobID string) (string, error) {
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback()
+
+	var userID sql.NullString
+	var jobType, status, payload string
+	var priority, maxAttempts int
+	err = tx.QueryRowContext(ctx, `SELECT user_id,type,status,priority,payload_json,max_attempts FROM jobs WHERE id=?`, failedJobID).Scan(&userID, &jobType, &status, &priority, &payload, &maxAttempts)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", retryError(http.StatusNotFound, "Job not found")
+	}
+	if err != nil {
+		return "", err
+	}
+	if status != "failed" {
+		return "", retryError(http.StatusConflict, "Only failed jobs can be retried")
+	}
+	if jobType != "bookmark.process" {
+		return "", retryError(http.StatusConflict, "This job type cannot be safely retried from Administration")
+	}
+
+	bookmarkID := ""
+	var decoded map[string]any
+	if json.Unmarshal([]byte(payload), &decoded) != nil {
+		return "", retryError(http.StatusConflict, "Job payload is invalid and cannot be retried")
+	}
+	bookmarkID, _ = decoded["bookmark_id"].(string)
+	if bookmarkID == "" {
+		return "", retryError(http.StatusConflict, "Bookmark job has no bookmark ID")
+	}
+	var bookmarkUserID, bookmarkURL string
+	if err := tx.QueryRowContext(ctx, `SELECT user_id,url FROM bookmarks WHERE id=?`, bookmarkID).Scan(&bookmarkUserID, &bookmarkURL); errors.Is(err, sql.ErrNoRows) {
+		return "", retryError(http.StatusConflict, "The bookmark no longer exists")
+	} else if err != nil {
+		return "", err
+	}
+	userID = sql.NullString{String: bookmarkUserID, Valid: true}
+	var activeJobID string
+	err = tx.QueryRowContext(ctx, `SELECT id FROM jobs WHERE type=? AND status IN ('queued','leased') AND json_extract(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.bookmark_id')=? ORDER BY created_at LIMIT 1`, jobType, bookmarkID).Scan(&activeJobID)
+	if err == nil {
+		return "", &adminRetryError{Status: http.StatusConflict, Detail: "This bookmark already has an active job", JobID: activeJobID}
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	var retryOf string
+	_ = tx.QueryRowContext(ctx, `SELECT id FROM capture_attempts WHERE bookmark_id=? AND user_id=? ORDER BY queued_at DESC,id DESC LIMIT 1`, bookmarkID, bookmarkUserID).Scan(&retryOf)
+	attemptID := ids.New()
+	_, err = tx.ExecContext(ctx, `INSERT INTO capture_attempts(id,bookmark_id,user_id,retry_of_id,status,requested_url,engine,engine_version,queued_at) VALUES(?,?,?,NULLIF(?,''),'queued',?,'direct_http',?,?)`, attemptID, bookmarkID, bookmarkUserID, retryOf, bookmarkURL, safefetch.ExtractorVersion, now)
+	if err != nil {
+		return "", err
+	}
+	rawPayload, err := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": bookmarkURL, "capture_attempt_id": attemptID})
+	if err != nil {
+		return "", err
+	}
+	payload = string(rawPayload)
+	newJobID := ids.New()
+	_, err = tx.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,priority,payload_json,max_attempts,run_after,created_at,updated_at) VALUES(?,?,?,'queued',?,?,?,?,?,?)`, newJobID, userID, jobType, priority, payload, maxAttempts, now, now, now)
+	if err != nil {
+		return "", err
+	}
+	if bookmarkID != "" {
+		if _, err := tx.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='pending',updated_at=? WHERE bookmark_id=?`, now, bookmarkID); err != nil {
+			return "", err
+		}
+	}
+	auditMetadata, _ := json.Marshal(sanitizeAuditMetadata(map[string]any{"new_job_id": newJobID, "job_type": jobType, "bookmark_id": bookmarkID}))
+	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), actorUserID, "admin.job.retry", "job", failedJobID, string(auditMetadata), now); err != nil {
+		return "", err
+	}
+	if err := tx.Commit(); err != nil {
+		return "", err
+	}
+	return newJobID, nil
+}
+
+func (a *App) adminRetryJobs(w http.ResponseWriter, r *http.Request, user auth.User) {
+	var body struct {
+		JobIDs []string `json:"job_ids"`
+		UserID string   `json:"user_id"`
+	}
+	if err := decodeJSON(r, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	body.UserID = strings.TrimSpace(body.UserID)
+	if (len(body.JobIDs) == 0) == (body.UserID == "") {
+		writeError(w, http.StatusBadRequest, "Provide either job_ids or user_id")
+		return
+	}
+	jobIDs := cleanAdminJobIDs(body.JobIDs, 51)
+	if len(jobIDs) > 50 {
+		writeError(w, http.StatusBadRequest, "A maximum of 50 jobs can be retried at once")
+		return
+	}
+	if body.UserID != "" {
+		var exists int
+		if err := a.db.QueryRowContext(r.Context(), `SELECT 1 FROM users WHERE id=?`, body.UserID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "User not found")
+			return
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not load user")
+			return
+		}
+		var err error
+		jobIDs, err = recentRetryableJobIDsForUser(r.Context(), a.db, body.UserID, 100)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not load failed jobs")
+			return
+		}
+	}
+	queued := []map[string]string{}
+	failed := []map[string]string{}
+	for _, failedJobID := range jobIDs {
+		newJobID, err := a.retryAdminJob(r.Context(), user.ID, failedJobID)
+		if err != nil {
+			failed = append(failed, map[string]string{"job_id": failedJobID, "error": err.Error()})
+			continue
+		}
+		queued = append(queued, map[string]string{"job_id": newJobID, "retry_of_job_id": failedJobID})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"queued_count": len(queued), "failed_count": len(failed), "queued": queued, "failed": failed})
+}
+
+func cleanAdminJobIDs(values []string, limit int) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, min(len(values), limit))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		result = append(result, value)
+		if len(result) == limit {
+			break
+		}
+	}
+	return result
+}
+
+func recentRetryableJobIDsForUser(ctx context.Context, db *sql.DB, userID string, limit int) ([]string, error) {
+	rows, err := db.QueryContext(ctx, `SELECT id,payload_json FROM jobs WHERE user_id=? AND type='bookmark.process' AND status='failed' ORDER BY updated_at DESC,id DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	idsByBookmark := map[string]bool{}
+	result := []string{}
+	for rows.Next() && len(result) < limit {
+		var id, payload string
+		if err := rows.Scan(&id, &payload); err != nil {
+			return nil, err
+		}
+		var decoded struct {
+			BookmarkID string `json:"bookmark_id"`
+		}
+		if json.Unmarshal([]byte(payload), &decoded) != nil || decoded.BookmarkID == "" || idsByBookmark[decoded.BookmarkID] {
+			continue
+		}
+		idsByBookmark[decoded.BookmarkID] = true
+		result = append(result, id)
+	}
+	return result, rows.Err()
+}
+
+func recentFailedJobs(ctx context.Context, db *sql.DB, limit int) ([]map[string]any, error) {
+	rows, err := db.QueryContext(ctx, `SELECT j.id,j.type,j.attempts,j.max_attempts,COALESCE(j.last_error,''),j.created_at,j.updated_at,
+		COALESCE(j.user_id,''),COALESCE(u.email,''),COALESCE(b.id,''),COALESCE(b.title,''),COALESCE(b.url,'')
+		FROM jobs j
+		LEFT JOIN users u ON u.id=j.user_id
+		LEFT JOIN bookmarks b ON b.id=json_extract(CASE WHEN json_valid(j.payload_json) THEN j.payload_json ELSE '{}' END,'$.bookmark_id')
+		WHERE j.status='failed' ORDER BY j.updated_at DESC,j.id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var id, jobType, lastError, created, updated, userID, email, bookmarkID, title, bookmarkURL string
+		var attempts, maxAttempts int
+		if err := rows.Scan(&id, &jobType, &attempts, &maxAttempts, &lastError, &created, &updated, &userID, &email, &bookmarkID, &title, &bookmarkURL); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{
+			"id": id, "type": jobType, "attempts": attempts, "max_attempts": maxAttempts, "error": lastError,
+			"created_at": created, "failed_at": updated, "user_id": userID, "user_email": email,
+			"bookmark_id": bookmarkID, "bookmark_title": title, "bookmark_url": bookmarkURL, "retryable": jobType == "bookmark.process",
+		})
+	}
+	return items, rows.Err()
+}
+
+func recentFailedSummaries(ctx context.Context, db *sql.DB, limit int) ([]map[string]any, error) {
+	rows, err := db.QueryContext(ctx, `SELECT s.bookmark_id,COALESCE(b.title,''),COALESCE(b.url,''),COALESCE(u.email,''),
+		s.validation_status,s.validation_reasons_json,s.provider,s.model,s.updated_at
+		FROM ai_summaries s JOIN bookmarks b ON b.id=s.bookmark_id LEFT JOIN users u ON u.id=s.user_id
+		WHERE s.processing_status='failed' ORDER BY s.updated_at DESC,s.id DESC LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []map[string]any{}
+	for rows.Next() {
+		var bookmarkID, title, bookmarkURL, email, validationStatus, reasonsRaw, provider, model, failedAt string
+		if err := rows.Scan(&bookmarkID, &title, &bookmarkURL, &email, &validationStatus, &reasonsRaw, &provider, &model, &failedAt); err != nil {
+			return nil, err
+		}
+		reasons := []string{}
+		if err := json.Unmarshal([]byte(reasonsRaw), &reasons); err != nil {
+			return nil, err
+		}
+		items = append(items, map[string]any{
+			"bookmark_id": bookmarkID, "bookmark_title": title, "bookmark_url": bookmarkURL, "user_email": email,
+			"validation_status": validationStatus, "validation_reasons": reasons, "provider": provider, "model": model, "failed_at": failedAt,
+		})
+	}
+	return items, rows.Err()
 }
 
 func (a *App) adminActivity(w http.ResponseWriter, r *http.Request, user auth.User) {

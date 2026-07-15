@@ -44,6 +44,40 @@ func TestValidateSummaryAdaptsToShortSocialEvidence(t *testing.T) {
 	}
 }
 
+func TestInvalidOptionalTagsDoNotDiscardAnOtherwiseValidSummary(t *testing.T) {
+	req := SummaryRequest{
+		ContentKind: ContentKindArticle, PrimaryText: "The guide covers Claude Code workflows and context engineering.", QualityStatus: QualityComplete,
+	}
+	result := SummaryResult{
+		OneSentence: "The guide covers Claude Code workflows and context engineering.", SuggestedTags: []string{"not a valid tag!"},
+	}
+	repaired, err := dropInvalidOptionalTags(req, result, ValidateSummary(req, result))
+	if err != nil || repaired.OneSentence != result.OneSentence || len(repaired.SuggestedTags) != 0 {
+		t.Fatalf("repaired result = %#v, err = %v", repaired, err)
+	}
+}
+
+func TestSalvageSummaryKeepsIndependentlyValidRichFields(t *testing.T) {
+	req := SummaryRequest{
+		ContentKind:   ContentKindArticle,
+		PrimaryText:   strings.Repeat("Claude Code supports sub-agents for focused tasks. Hooks run commands at defined lifecycle points. Skills package reusable instructions for coding agents. ", 8),
+		QualityStatus: QualityComplete,
+	}
+	candidate := SummaryResult{
+		OneSentence:  "Oracle provides an unsupported summary that is deliberately much too long for the concise one sentence field and must be replaced safely.",
+		LongForm:     "Claude Code supports sub-agents for focused tasks. Hooks run commands at defined lifecycle points.",
+		BulletPoints: []string{"Skills package reusable instructions for coding agents."},
+		Highlights:   []string{"Hooks run commands at defined lifecycle points."},
+	}
+	got := SalvageSummary(req, candidate, "Claude Code supports sub-agents for focused tasks.")
+	if got.OneSentence != "Claude Code supports sub-agents for focused tasks." || got.LongForm == "" || len(got.BulletPoints) != 1 || len(got.Highlights) != 1 {
+		t.Fatalf("salvaged summary = %#v", got)
+	}
+	if err := ValidateSummary(req, got); err != nil {
+		t.Fatalf("salvaged summary is invalid: %v", err)
+	}
+}
+
 func TestValidateSummaryRejectsUnsupportedFactsRecommendationsAndDuplicates(t *testing.T) {
 	req := SummaryRequest{
 		ContentKind:   ContentKindXPost,

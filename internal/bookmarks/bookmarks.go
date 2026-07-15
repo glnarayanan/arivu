@@ -30,6 +30,7 @@ type Service struct {
 	jobs          *jobs.Queue
 	fetcher       *safefetch.Client
 	fetchPage     func(context.Context, string) (safefetch.Result, error)
+	fetchMedia    func(context.Context, string, int64) (safefetch.MediaResult, error)
 	ai            func(context.Context) providers.GeminiClient
 	assets        *assets.Store
 	browser       config.BrowserCaptureConfig
@@ -53,6 +54,7 @@ func New(db *sql.DB, jobs *jobs.Queue, fetcher *safefetch.Client, client provide
 	s := &Service{db: db, jobs: jobs, fetcher: fetcher, ai: func(context.Context) providers.GeminiClient { return client }}
 	if fetcher != nil {
 		s.fetchPage = fetcher.Fetch
+		s.fetchMedia = fetcher.FetchMedia
 	}
 	s.enqueueCreate = jobs.EnqueueWithIDTx
 	return s
@@ -2213,11 +2215,8 @@ func readingTime(text string) int {
 	if words == 0 {
 		return 0
 	}
-	minutes := words / 200
-	if minutes < 1 {
-		return 1
-	}
-	return minutes
+	const wordsPerMinute = 238
+	return max(1, (words+wordsPerMinute-1)/wordsPerMinute)
 }
 
 func decodeJSON(r *http.Request, dst any) error {
