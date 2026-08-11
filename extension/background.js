@@ -64,7 +64,7 @@ async function configureInlineAnnotations(enabled) {
 }
 
 async function tokenSenderAllowed(sender) {
-  if (!sender.url) return false;
+  if (sender?.id !== chrome.runtime.id || !sender.tab?.id || sender.frameId !== 0 || !sender.url) return false;
 
   return ArivuExtensionURL.senderOriginAllowed(sender.url, await getApiUrl());
 }
@@ -89,23 +89,45 @@ function installContextMenus() {
   });
 }
 
-async function postExtensionJSON(path, payloadFactory, missingTokenMessage) {
-  const apiUrl = await getApiUrl();
-  const tokenResult = await chrome.storage.session.get(['accessToken']);
+function popupSenderAllowed(sender) {
+  return sender?.id === chrome.runtime.id
+    && !sender.tab
+    && sender.url === chrome.runtime.getURL('popup.html');
+}
 
+function popupRequestAllowed(request) {
+  return (request?.method === undefined || request.method === 'GET') && request?.path === '/extension/collections'
+    || request?.method === 'POST' && request?.path === '/extension/bookmarks';
+}
+
+async function requestExtensionAPI({ path, method = 'GET', body }, missingTokenMessage = 'Missing extension token') {
+  if (typeof path !== 'string' || !path.startsWith('/extension/')) {
+    throw new Error('Unsupported extension API path');
+  }
+  const tokenResult = await chrome.storage.session.get(['accessToken']);
   if (!tokenResult.accessToken) {
     throw new Error(missingTokenMessage);
   }
 
-  const body = payloadFactory();
-  return fetch(`${apiUrl}${path}`, {
-    method: 'POST',
+  const apiUrl = await getApiUrl();
+  const requestBody = typeof body === 'function' ? body() : body;
+  const response = await fetch(ArivuExtensionURL.joinApiUrl(apiUrl, path), {
+    method,
     headers: {
       'Content-Type': 'application/json',
       'Authorization': `Bearer ${tokenResult.accessToken}`,
     },
-    body: JSON.stringify(body),
+    ...(requestBody === undefined ? {} : { body: JSON.stringify(requestBody) }),
   });
+
+  const data = await response.json().catch(() => null);
+  if (response.status === 401) await clearExtensionTokens();
+  return {
+    success: response.ok,
+    status: response.status,
+    data,
+    error: response.ok ? null : (data?.detail || `Request failed: ${response.status}`),
+  };
 }
 
 async function clearExtensionTokens() {
@@ -113,36 +135,28 @@ async function clearExtensionTokens() {
 }
 
 async function saveBookmark(url) {
-  const response = await postExtensionJSON('/extension/bookmarks', () => ({ url }), 'Missing extension token');
-
-  if (response.ok) return response.json().catch(() => ({}));
-
-  if (response.status === 401) {
-    await clearExtensionTokens();
-  }
-
+  const response = await requestExtensionAPI({ path: '/extension/bookmarks', method: 'POST', body: { url } });
+  if (response.success) return response.data || {};
   throw new Error(`Save failed: ${response.status}`);
 }
 
 async function saveAnnotation({ url, title = '', quote, note = '' }) {
   const selectedQuote = String(quote || '').replace(/\s+/g, ' ').trim().slice(0, 4000);
 
-  const response = await postExtensionJSON(
-    '/extension/annotations',
-    () => {
+  const response = await requestExtensionAPI({
+    path: '/extension/annotations',
+    method: 'POST',
+    body: () => {
       if (!url || !selectedQuote) throw new Error('Select a passage to annotate');
       return { url, title, quote: selectedQuote, note: String(note || '').trim() };
     },
-    'Open Arivu to reconnect the extension',
-  );
+  }, 'Open Arivu to reconnect the extension');
 
-  if (response.ok) return response.json();
+  if (response.success) return response.data;
   if (response.status === 401) {
-    await clearExtensionTokens();
     throw new Error('Session expired — open Arivu to reconnect the extension');
   }
-  const body = await response.json().catch(() => ({}));
-  throw new Error(body.detail || `Annotation failed: ${response.status}`);
+  throw new Error(response.error || `Annotation failed: ${response.status}`);
 }
 
 async function showResult(tabId, label) {
@@ -197,26 +211,50 @@ chrome.commands.onCommand.addListener(async (command) => {
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.action === 'saveTokens') {
-    tokenSenderAllowed(sender).then((allowed) => {
+  if (request.action === 'apiRequest') {
+    if (!popupSenderAllowed(sender) || !popupRequestAllowed(request.request)) {
+      sendResponse({ success: false, status: 0, data: null, error: 'Extension request is not allowed' });
+      return false;
+    }
+    requestExtensionAPI(request.request).then(sendResponse).catch((error) => {
+      sendResponse({ success: false, status: 0, data: null, error: error.message || 'Extension request failed' });
+    });
+  } else if (request.action === 'tokenBootstrapContext') {
+    tokenSenderAllowed(sender).then(async (allowed) => {
+      sendResponse(allowed ? { success: true, apiUrl: await getApiUrl() } : { success: false });
+    }).catch(() => {
+      sendResponse({ success: false });
+    });
+  } else if (request.action === 'saveTokens') {
+    tokenSenderAllowed(sender).then(async (allowed) => {
       if (!allowed) {
         sendResponse({ success: false });
         return;
       }
 
-      chrome.storage.session.set({
+      await chrome.storage.session.set({
         accessToken: request.accessToken,
         refreshToken: request.refreshToken,
       });
       sendResponse({ success: true });
+    }).catch(() => {
+      sendResponse({ success: false });
     });
   } else if (request.action === 'configureApiOrigin') {
+    if (!popupSenderAllowed(sender)) {
+      sendResponse({ success: false });
+      return false;
+    }
     registerCustomApiContentScript(request.apiUrl).then(() => {
       sendResponse({ success: true });
     }).catch(() => {
       sendResponse({ success: false });
     });
   } else if (request.action === 'configureInlineAnnotations') {
+    if (!popupSenderAllowed(sender)) {
+      sendResponse({ success: false });
+      return false;
+    }
     configureInlineAnnotations(request.enabled).then((enabled) => {
       sendResponse({ success: enabled });
     }).catch(() => {

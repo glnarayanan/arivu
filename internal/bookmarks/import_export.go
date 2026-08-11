@@ -48,6 +48,7 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 		var body struct {
 			BookmarkID           string `json:"bookmark_id"`
 			URL                  string `json:"url"`
+			URLKey               string `json:"url_key"`
 			ImportJobID          string `json:"import_job_id"`
 			QualityRunID         string `json:"quality_reprocess_run_id"`
 			ExpectedEvidenceHash string `json:"expected_evidence_hash"`
@@ -57,6 +58,31 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 			return err
 		}
 		meta := qualityProcessMeta{RunID: body.QualityRunID, ExpectedEvidenceHash: body.ExpectedEvidenceHash}
+		var source, currentURL string
+		if err := s.db.QueryRowContext(ctx, `SELECT source,url FROM bookmarks WHERE id=?`, body.BookmarkID).Scan(&source, &currentURL); err != nil {
+			return err
+		}
+		if source == "x" {
+			s.sourceMu.Lock()
+			defer s.sourceMu.Unlock()
+			if err := s.db.QueryRowContext(ctx, `SELECT url FROM bookmarks WHERE id=?`, body.BookmarkID).Scan(&currentURL); err != nil {
+				return err
+			}
+		}
+		jobURLKey := body.URLKey
+		if jobURLKey == "" {
+			jobURLKey = normalizeDedupURL(body.URL)
+		}
+		if source == "x" && jobURLKey != "" && normalizeDedupURL(currentURL) != jobURLKey {
+			s.completeQualityProcess(ctx, body.BookmarkID, meta, "skipped", "superseded_url")
+			if body.AttemptID != "" {
+				_, _ = s.db.ExecContext(ctx, `UPDATE capture_attempts SET status='complete',error_code='superseded_url',finished_at=? WHERE id=?`, nowString(), body.AttemptID)
+			}
+			if body.ImportJobID != "" {
+				s.recordImportJobProgress(ctx, body.BookmarkID, body.ImportJobID, 0, 0, 1)
+			}
+			return nil
+		}
 		if !s.startQualityProcess(ctx, body.BookmarkID, meta) {
 			return nil
 		}
@@ -2362,7 +2388,7 @@ func jsonListString(value any) string {
 }
 
 func bookmarkProcessPayload(bookmarkID, rawURL, importJobID string, attemptID ...string) string {
-	payload := map[string]string{"bookmark_id": bookmarkID, "url": rawURL}
+	payload := map[string]string{"bookmark_id": bookmarkID, "url": rawURL, "url_key": normalizeDedupURL(rawURL)}
 	if importJobID != "" {
 		payload["import_job_id"] = importJobID
 	}
@@ -2371,6 +2397,23 @@ func bookmarkProcessPayload(bookmarkID, rawURL, importJobID string, attemptID ..
 	}
 	raw, _ := json.Marshal(payload)
 	return string(raw)
+}
+
+func normalizeDedupURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" {
+		return ""
+	}
+	values := parsed.Query()
+	for key := range values {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "utm_") || lower == "fbclid" || lower == "gclid" {
+			values.Del(key)
+		}
+	}
+	parsed.RawQuery = values.Encode()
+	parsed.Fragment = ""
+	return strings.ToLower(strings.TrimRight(parsed.String(), "/"))
 }
 
 func (s *Service) ensureAttempt(ctx context.Context, bookmarkID, rawURL, retryOf string) string {

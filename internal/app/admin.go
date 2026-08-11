@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/glnarayanan/arivu/internal/auth"
+	"github.com/glnarayanan/arivu/internal/bookmarks"
 	"github.com/glnarayanan/arivu/internal/ids"
 	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/runtimeconfig"
-	"github.com/glnarayanan/arivu/internal/safefetch"
 )
 
 func (a *App) adminOverview(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -186,10 +186,12 @@ func (a *App) adminDeleteUser(w http.ResponseWriter, r *http.Request, user auth.
 		writeError(w, http.StatusBadRequest, "Cannot delete yourself")
 		return
 	}
-	deletedBookmarks := countForUser(r.Context(), a.db, "bookmarks", targetID)
-	res, _ := a.db.ExecContext(r.Context(), `DELETE FROM users WHERE id=?`, targetID)
-	deleted, _ := res.RowsAffected()
-	if deleted == 0 {
+	deletedBookmarks, deleted, err := a.bookmarks.DeleteUserCommand(r.Context(), targetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not delete user")
+		return
+	}
+	if !deleted {
 		writeError(w, http.StatusNotFound, "User not found")
 		return
 	}
@@ -391,85 +393,15 @@ func retryError(status int, detail string) error {
 }
 
 func (a *App) retryAdminJob(ctx context.Context, actorUserID, failedJobID string) (string, error) {
-	tx, err := a.db.BeginTx(ctx, nil)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback()
-
-	var userID sql.NullString
-	var jobType, status, payload string
-	var priority, maxAttempts int
-	err = tx.QueryRowContext(ctx, `SELECT user_id,type,status,priority,payload_json,max_attempts FROM jobs WHERE id=?`, failedJobID).Scan(&userID, &jobType, &status, &priority, &payload, &maxAttempts)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", retryError(http.StatusNotFound, "Job not found")
-	}
-	if err != nil {
-		return "", err
-	}
-	if status != "failed" {
-		return "", retryError(http.StatusConflict, "Only failed jobs can be retried")
-	}
-	if jobType != "bookmark.process" {
-		return "", retryError(http.StatusConflict, "This job type cannot be safely retried from Administration")
-	}
-
-	bookmarkID := ""
-	var decoded map[string]any
-	if json.Unmarshal([]byte(payload), &decoded) != nil {
-		return "", retryError(http.StatusConflict, "Job payload is invalid and cannot be retried")
-	}
-	bookmarkID, _ = decoded["bookmark_id"].(string)
-	if bookmarkID == "" {
-		return "", retryError(http.StatusConflict, "Bookmark job has no bookmark ID")
-	}
-	var bookmarkUserID, bookmarkURL string
-	if err := tx.QueryRowContext(ctx, `SELECT user_id,url FROM bookmarks WHERE id=?`, bookmarkID).Scan(&bookmarkUserID, &bookmarkURL); errors.Is(err, sql.ErrNoRows) {
-		return "", retryError(http.StatusConflict, "The bookmark no longer exists")
-	} else if err != nil {
-		return "", err
-	}
-	userID = sql.NullString{String: bookmarkUserID, Valid: true}
-	var activeJobID string
-	err = tx.QueryRowContext(ctx, `SELECT id FROM jobs WHERE type=? AND status IN ('queued','leased') AND json_extract(CASE WHEN json_valid(payload_json) THEN payload_json ELSE '{}' END,'$.bookmark_id')=? ORDER BY created_at LIMIT 1`, jobType, bookmarkID).Scan(&activeJobID)
+	jobID, err := a.bookmarks.RetryFailedProcess(ctx, actorUserID, failedJobID)
 	if err == nil {
-		return "", &adminRetryError{Status: http.StatusConflict, Detail: "This bookmark already has an active job", JobID: activeJobID}
+		return jobID, nil
 	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return "", err
+	var commandErr *bookmarks.RetryError
+	if errors.As(err, &commandErr) {
+		return "", &adminRetryError{Status: commandErr.Status, Detail: commandErr.Detail, JobID: commandErr.JobID}
 	}
-
-	now := time.Now().UTC().Format(time.RFC3339)
-	var retryOf string
-	_ = tx.QueryRowContext(ctx, `SELECT id FROM capture_attempts WHERE bookmark_id=? AND user_id=? ORDER BY queued_at DESC,id DESC LIMIT 1`, bookmarkID, bookmarkUserID).Scan(&retryOf)
-	attemptID := ids.New()
-	_, err = tx.ExecContext(ctx, `INSERT INTO capture_attempts(id,bookmark_id,user_id,retry_of_id,status,requested_url,engine,engine_version,queued_at) VALUES(?,?,?,NULLIF(?,''),'queued',?,'direct_http',?,?)`, attemptID, bookmarkID, bookmarkUserID, retryOf, bookmarkURL, safefetch.ExtractorVersion, now)
-	if err != nil {
-		return "", err
-	}
-	rawPayload, err := json.Marshal(map[string]string{"bookmark_id": bookmarkID, "url": bookmarkURL, "capture_attempt_id": attemptID})
-	if err != nil {
-		return "", err
-	}
-	payload = string(rawPayload)
-	newJobID := ids.New()
-	_, err = tx.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,priority,payload_json,max_attempts,run_after,created_at,updated_at) VALUES(?,?,?,'queued',?,?,?,?,?,?)`, newJobID, userID, jobType, priority, payload, maxAttempts, now, now, now)
-	if err != nil {
-		return "", err
-	}
-	if bookmarkID != "" {
-		if _, err := tx.ExecContext(ctx, `UPDATE ai_summaries SET processing_status='pending',updated_at=? WHERE bookmark_id=?`, now, bookmarkID); err != nil {
-			return "", err
-		}
-	}
-	auditMetadata, _ := json.Marshal(sanitizeAuditMetadata(map[string]any{"new_job_id": newJobID, "job_type": jobType, "bookmark_id": bookmarkID}))
-	if _, err := tx.ExecContext(ctx, `INSERT INTO audit_events(id,actor_user_id,action,target_type,target_id,metadata_json,created_at) VALUES(?,?,?,?,?,?,?)`, ids.New(), actorUserID, "admin.job.retry", "job", failedJobID, string(auditMetadata), now); err != nil {
-		return "", err
-	}
-	if err := tx.Commit(); err != nil {
-		return "", err
-	}
-	return newJobID, nil
+	return "", err
 }
 
 func (a *App) adminRetryJobs(w http.ResponseWriter, r *http.Request, user auth.User) {

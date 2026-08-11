@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Made bookmark, note, X-source capture, deletion, and administrative retry
+  workflows atomic across their required SQLite rows and durable processing
+  jobs. Search-index rebuilds now prepare replacements before atomically swapping
+  both regular and FTS projections, preserving the previous searchable state on
+  failure instead of exposing an empty or partial index.
+- Added generation-scoped frontend routing so a slow superseded route cannot
+  replace the current page or dispose its listeners. Centralized browser-extension
+  bearer requests in the background worker, including safe URL joining, bounded
+  extension-only paths, normalized errors, and expired-token cleanup.
 - Upgraded the isolated capture runtime to Playwright 1.62.1 and JSDOM 30.0.1,
   removing the vulnerable transitive Undici 7 dependency; raised its documented
   Node.js minimum to 22.22.2. Also upgraded the bundled SQLite driver to 1.14.49

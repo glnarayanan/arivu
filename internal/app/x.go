@@ -264,10 +264,6 @@ func (a *App) syncXBookmarks(r *http.Request, user auth.User, conn xConnectionRo
 	if err != nil {
 		return nil, err
 	}
-	queuedProcessing, err := a.queuedXProcessingBookmarks(r, user.ID)
-	if err != nil {
-		return nil, err
-	}
 	var totalFetched, newBookmarks, repairedBookmarks, duplicatesSkipped int
 	cursor := conn.NextCursor.String
 	for page := 0; page < 10; page++ {
@@ -279,7 +275,7 @@ func (a *App) syncXBookmarks(r *http.Request, user auth.User, conn xConnectionRo
 		for _, tweet := range result.Bookmarks {
 			if bookmarkID := existingTweetIDs[tweet.ID]; bookmarkID != "" {
 				author := result.Users[tweet.AuthorID]
-				repaired, repairErr := a.repairExistingXBookmark(r, user.ID, bookmarkID, tweet, author, bestTweetURL(tweet, author), queuedProcessing)
+				repaired, repairErr := a.repairExistingXBookmark(r, user.ID, bookmarkID, tweet, author, bestTweetURL(tweet, author))
 				if repaired {
 					repairedBookmarks++
 				}
@@ -296,7 +292,7 @@ func (a *App) syncXBookmarks(r *http.Request, user auth.User, conn xConnectionRo
 			normalized := normalizeForDedup(bookmarkURL)
 			if bookmarkID := existingURLs[normalized]; normalized != "" && bookmarkID != "" {
 				if repairableXBookmarks[bookmarkID] {
-					repaired, repairErr := a.repairExistingXBookmark(r, user.ID, bookmarkID, tweet, author, bookmarkURL, queuedProcessing)
+					repaired, repairErr := a.repairExistingXBookmark(r, user.ID, bookmarkID, tweet, author, bookmarkURL)
 					if repaired {
 						repairedBookmarks++
 					}
@@ -346,68 +342,24 @@ func xSyncResult(totalFetched, newBookmarks, repairedBookmarks, duplicatesSkippe
 	}
 }
 
-func (a *App) repairExistingXBookmark(r *http.Request, userID, bookmarkID string, tweet providers.XBookmark, author providers.XUser, bookmarkURL string, queuedProcessing map[string]string) (bool, error) {
-	var currentURL, currentTitle, currentDescription, currentText, summaryVersion, enrichmentVersion string
-	if err := a.db.QueryRowContext(r.Context(), `SELECT url,COALESCE(title,''),COALESCE(description,''),COALESCE(text_content,''),summary_version,enrichment_version FROM bookmarks WHERE user_id=? AND id=?`, userID, bookmarkID).Scan(&currentURL, &currentTitle, &currentDescription, &currentText, &summaryVersion, &enrichmentVersion); err != nil {
+func (a *App) repairExistingXBookmark(r *http.Request, userID, bookmarkID string, tweet providers.XBookmark, author providers.XUser, bookmarkURL string) (bool, error) {
+	var currentTitle, currentDescription string
+	if err := a.db.QueryRowContext(r.Context(), `SELECT COALESCE(title,''),COALESCE(description,'') FROM bookmarks WHERE user_id=? AND id=?`, userID, bookmarkID).Scan(&currentTitle, &currentDescription); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
 		return false, err
 	}
 	projection := buildXBookmarkProjection(tweet, author, bookmarkURL)
-	var currentEvidence int
-	if err := a.db.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM bookmark_evidence WHERE bookmark_id=? AND user_id=? AND evidence_kind='source_post' AND evidence_origin='x_api' AND extractor_version='x-api-v1' AND content_text=? AND quality_status=?`, bookmarkID, userID, projection.SourceText, projection.QualityStatus).Scan(&currentEvidence); err != nil {
-		return false, err
-	}
 	titleNeedsRepair := xProjectionTextNeedsRepair(currentTitle)
 	descriptionNeedsRepair := xProjectionTextNeedsRepair(currentDescription)
-	projectionRotten := currentText != projection.SourceText || titleNeedsRepair || descriptionNeedsRepair
-	versionsStale := summaryVersion != providers.SummaryPromptVersion || enrichmentVersion != providers.SemanticVersion
-	if currentEvidence > 0 && !projectionRotten && !versionsStale && normalizeForDedup(currentURL) == normalizeForDedup(bookmarkURL) {
-		return false, nil
-	}
-	if _, err := a.bookmarks.UpsertEvidence(r.Context(), userID, bookmarkID, bookmarksvc.BookmarkEvidence{
-		Kind: "source_post", Origin: "x_api", Authority: 100, Text: projection.SourceText, CanonicalURL: projection.TweetURL,
-		AuthorID: tweet.AuthorID, PublisherKey: projection.PublisherKey, PublishedAt: tweet.CreatedAt,
-		ExtractionMethod: "x_api", QualityStatus: projection.QualityStatus, QualityReasons: projection.QualityReasons, ExtractorVersion: "x-api-v1", Selected: true,
-	}); err != nil {
-		return false, err
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := a.db.ExecContext(r.Context(), `UPDATE bookmarks SET
-		title=CASE WHEN title='' OR title=url OR ? THEN ? ELSE title END,
-		description=CASE WHEN description='' OR ? THEN ? ELSE description END,
-		url=?,canonical_url=?,domain=?,text_content=?,x_tweet_id=?,x_author_username=?,x_author_name=?,x_tweet_url=?,x_metrics_json=?,content_kind=?,source_published_at=?,source_author_id=?,source_publisher_key=?,fetch_version='x-api-v1',summary_version='',enrichment_version='',updated_at=?
-		WHERE id=? AND user_id=?`, titleNeedsRepair, projection.Title, descriptionNeedsRepair, projection.SourceText, bookmarkURL, bookmarkURL, projection.Domain, projection.SourceText, tweet.ID, author.Username, author.Name, projection.TweetURL, projection.MetricsJSON, projection.ContentKind, nullableString(tweet.CreatedAt), nullableString(tweet.AuthorID), projection.PublisherKey, now, bookmarkID, userID)
-	if err != nil {
-		return false, err
-	}
-	if normalizeForDedup(queuedProcessing[bookmarkID]) != normalizeForDedup(bookmarkURL) {
-		if err := a.jobs.Enqueue(r.Context(), userID, "bookmark.process", bookmarksvc.ProcessPayload(bookmarkID, bookmarkURL, "")); err != nil {
-			return true, err
-		}
-		queuedProcessing[bookmarkID] = bookmarkURL
-	}
-	return true, nil
+	input := xSourceCaptureInput(userID, tweet, author, bookmarkURL, projection, nil)
+	return a.bookmarks.RepairSourceCapture(r.Context(), bookmarkID, input, titleNeedsRepair, descriptionNeedsRepair)
 }
 
 func (a *App) insertXBookmark(r *http.Request, userID string, tweet providers.XBookmark, author providers.XUser, bookmarkURL string, page providers.XBookmarkPage) (string, error) {
-	now := time.Now().UTC().Format(time.RFC3339)
 	projection := buildXBookmarkProjection(tweet, author, bookmarkURL)
-	bookmarkID := ids.New()
-	_, err := a.db.ExecContext(r.Context(), `INSERT INTO bookmarks(id,user_id,url,title,description,domain,text_content,read_status,source,x_tweet_id,x_author_username,x_author_name,x_tweet_url,x_metrics_json,canonical_url,content_kind,source_published_at,source_author_id,source_publisher_key,fetch_version,created_at,updated_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, bookmarkURL, projection.Title, projection.SourceText, projection.Domain, projection.SourceText, false, "x", tweet.ID, author.Username, author.Name, projection.TweetURL, projection.MetricsJSON, bookmarkURL, projection.ContentKind, nullableString(tweet.CreatedAt), nullableString(tweet.AuthorID), projection.PublisherKey, "x-api-v1", now, now)
-	if err != nil {
-		return "", err
-	}
-	if _, err := a.bookmarks.UpsertEvidence(r.Context(), userID, bookmarkID, bookmarksvc.BookmarkEvidence{
-		Kind: "source_post", Origin: "x_api", Authority: 100, Text: projection.SourceText, CanonicalURL: projection.TweetURL,
-		AuthorID: tweet.AuthorID, PublisherKey: projection.PublisherKey, PublishedAt: tweet.CreatedAt,
-		ExtractionMethod: "x_api", QualityStatus: projection.QualityStatus, QualityReasons: projection.QualityReasons, ExtractorVersion: "x-api-v1", Selected: !projection.HasExternalArticle,
-	}); err != nil {
-		_, _ = a.db.ExecContext(r.Context(), `DELETE FROM bookmarks WHERE id=? AND user_id=?`, bookmarkID, userID)
-		return "", err
-	}
+	var supporting []bookmarksvc.BookmarkEvidence
 	for _, reference := range tweet.References {
 		referenced, ok := page.Tweets[reference.ID]
 		if !ok || referenced.EvidenceText() == "" {
@@ -415,7 +367,7 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, bookma
 		}
 		referenceAuthor := page.Users[referenced.AuthorID]
 		referencePublisher := "x:" + fallbackString(referenced.AuthorID, referenceAuthor.Username)
-		_, _ = a.bookmarks.UpsertEvidence(r.Context(), userID, bookmarkID, bookmarksvc.BookmarkEvidence{
+		supporting = append(supporting, bookmarksvc.BookmarkEvidence{
 			Kind: "referenced_x_post_" + fallbackString(reference.Type, "related"), Origin: "x_api", Authority: 90,
 			Text: referenced.EvidenceText(), CanonicalURL: "https://x.com/" + fallbackString(referenceAuthor.Username, "i") + "/status/" + referenced.ID,
 			AuthorID: referenced.AuthorID, PublisherKey: referencePublisher, PublishedAt: referenced.CreatedAt,
@@ -431,19 +383,19 @@ VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, bookmarkID, userID, bookma
 		if strings.TrimSpace(media.AltText) == "" {
 			mediaStatus, mediaReasons = "metadata_only", []string{"media_without_transcript"}
 		}
-		_, _ = a.bookmarks.UpsertEvidence(r.Context(), userID, bookmarkID, bookmarksvc.BookmarkEvidence{
+		supporting = append(supporting, bookmarksvc.BookmarkEvidence{
 			Kind: "x_media_" + fallbackString(media.Type, "attachment"), Origin: "x_api", Authority: 60,
 			Text: strings.TrimSpace(media.AltText), CanonicalURL: fallbackString(media.URL, media.PreviewImageURL),
 			AuthorID: tweet.AuthorID, PublisherKey: projection.PublisherKey, PublishedAt: tweet.CreatedAt,
 			ExtractionMethod: "x_media_metadata", QualityStatus: mediaStatus, QualityReasons: mediaReasons, ExtractorVersion: "x-api-v1",
 		})
 	}
-	_, _ = a.db.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, userID, "pending", now, now)
-	if err := a.jobs.Enqueue(r.Context(), userID, "bookmark.process", bookmarksvc.ProcessPayload(bookmarkID, bookmarkURL, "")); err != nil {
-		_, _ = a.db.ExecContext(r.Context(), `DELETE FROM bookmarks WHERE id=? AND user_id=?`, bookmarkID, userID)
-		return "", err
-	}
-	return bookmarkID, nil
+	return a.bookmarks.InsertSourceCapture(r.Context(), xSourceCaptureInput(userID, tweet, author, bookmarkURL, projection, supporting))
+}
+
+func xSourceCaptureInput(userID string, tweet providers.XBookmark, author providers.XUser, bookmarkURL string, p xBookmarkProjection, supporting []bookmarksvc.BookmarkEvidence) bookmarksvc.SourceCaptureInput {
+	primary := bookmarksvc.BookmarkEvidence{Kind: "source_post", Origin: "x_api", Authority: 100, Text: p.SourceText, CanonicalURL: p.TweetURL, AuthorID: tweet.AuthorID, PublisherKey: p.PublisherKey, PublishedAt: tweet.CreatedAt, ExtractionMethod: "x_api", QualityStatus: p.QualityStatus, QualityReasons: p.QualityReasons, ExtractorVersion: "x-api-v1", Selected: !p.HasExternalArticle}
+	return bookmarksvc.SourceCaptureInput{UserID: userID, URL: bookmarkURL, URLKey: normalizeForDedup(bookmarkURL), Title: p.Title, Description: p.SourceText, Domain: p.Domain, Source: "x", SourceID: tweet.ID, AuthorUsername: author.Username, AuthorName: author.Name, SourceURL: p.TweetURL, MetricsJSON: p.MetricsJSON, ContentKind: p.ContentKind, PublishedAt: tweet.CreatedAt, AuthorID: tweet.AuthorID, PublisherKey: p.PublisherKey, FetchVersion: "x-api-v1", Primary: primary, Supporting: supporting}
 }
 
 type xBookmarkProjection struct {

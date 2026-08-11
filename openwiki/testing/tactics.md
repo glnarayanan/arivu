@@ -37,6 +37,17 @@ destinations, query-preserving compatibility aliases, additive endpoint usage,
 raw-JSON removal from normal object creation, global Capture/Search, the
 light-only theme contract, and the accessible graph list.
 
+`internal/bookmarks/integrity_test.go` uses SQLite constraints and triggers to
+prove required aggregate writes roll back together, polymorphic item state is
+removed with its owner, source capture does not survive a failed companion
+write, and a failed search rebuild preserves the previous projection.
+
+`internal/app/webtest/route-lifecycle.test.mjs` exercises route generations and
+cleanup ownership directly: stale routes cannot commit after a newer route or
+dispose the newer route's listeners. `extension/background.test.mjs` covers the
+background request message contract, bearer transport, extension-only path
+restriction, and 401 token cleanup.
+
 ### 5. Data-quality evaluation and operator safety
 
 `internal/bookmarks/testdata/quality/evaluation.json` contains at least 30

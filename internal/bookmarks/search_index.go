@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"net/http"
 	"net/url"
 	"sort"
@@ -39,25 +40,30 @@ func (s *Service) RebuildSearch(w http.ResponseWriter, r *http.Request, user aut
 }
 
 func (s *Service) refreshSearchIndex(ctx context.Context, userID string) {
-	_, _ = s.rebuildSearchIndex(ctx, userID)
+	if _, err := s.rebuildSearchIndex(ctx, userID); err != nil {
+		log.Printf("search projection rebuild failed for user %s: %v", userID, err)
+	}
 }
 
 func (s *Service) rebuildSearchIndex(ctx context.Context, userID string) (int, error) {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM search_index WHERE user_id=?`, userID); err != nil {
-		return 0, err
-	}
-	ftsEnabled := true
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM search_fts WHERE user_id=?`, userID); err != nil {
-		ftsEnabled = false
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,text_content,source,updated_at FROM bookmarks WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
+	return s.rebuildSearchIndexLocked(ctx, userID)
+}
+
+func (s *Service) rebuildSearchIndexLocked(ctx context.Context, userID string) (int, error) {
+	// Build the replacement before touching the currently searchable projection.
+	rows, err := s.db.QueryContext(ctx, `SELECT id,url,COALESCE(title,''),COALESCE(description,''),COALESCE(domain,''),COALESCE(text_content,''),COALESCE(source,''),updated_at FROM bookmarks WHERE user_id=? ORDER BY updated_at DESC`, userID)
 	if err != nil {
 		return 0, err
 	}
 	var bookmarks []map[string]string
 	for rows.Next() {
 		var id, rawURL, title, description, domain, text, source, updated string
-		_ = rows.Scan(&id, &rawURL, &title, &description, &domain, &text, &source, &updated)
+		if err := rows.Scan(&id, &rawURL, &title, &description, &domain, &text, &source, &updated); err != nil {
+			rows.Close()
+			return 0, err
+		}
 		bookmarks = append(bookmarks, map[string]string{"id": id, "url": rawURL, "title": title, "description": description, "domain": domain, "text": text, "source": source, "updated": updated})
 	}
 	if err := rows.Err(); err != nil {
@@ -65,32 +71,53 @@ func (s *Service) rebuildSearchIndex(ctx context.Context, userID string) (int, e
 		return 0, err
 	}
 	rows.Close()
+	type projectionRow struct{ itemType, itemID, title, body, tags, links, source, updated string }
+	var projection []projectionRow
 	count := 0
 	for _, bookmark := range bookmarks {
-		tags := strings.Join(tagNames(s.bookmarkTags(ctx, userID, bookmark["id"])), " ")
+		tags, err := s.searchBookmarkTags(ctx, userID, bookmark["id"])
+		if err != nil {
+			return 0, err
+		}
+		summary, err := s.searchBookmarkSummary(ctx, userID, bookmark["id"])
+		if err != nil {
+			return 0, err
+		}
+		annotations, err := s.searchBookmarkAnnotations(ctx, userID, bookmark["id"])
+		if err != nil {
+			return 0, err
+		}
+		notes, err := s.searchBookmarkNotes(ctx, userID, bookmark["id"])
+		if err != nil {
+			return 0, err
+		}
 		body := strings.Join([]string{
 			bookmark["url"],
 			bookmark["domain"],
 			bookmark["description"],
 			bookmark["text"],
-			searchMapText(s.summary(ctx, userID, bookmark["id"])),
-			searchMapListText(s.bookmarkAnnotations(ctx, userID, bookmark["id"])),
-			searchMapListText(s.bookmarkNotes(ctx, userID, bookmark["id"])),
+			summary,
+			annotations,
+			notes,
 		}, " ")
-		links := searchLinksText(s.itemLinks(ctx, userID, "bookmark", bookmark["id"]))
-		if err := s.insertSearchRow(ctx, ftsEnabled, userID, "bookmark", bookmark["id"], bookmark["title"], body, tags, links, bookmark["source"], bookmark["updated"]); err != nil {
+		links, err := s.searchItemLinks(ctx, userID, "bookmark", bookmark["id"])
+		if err != nil {
 			return 0, err
 		}
+		projection = append(projection, projectionRow{"bookmark", bookmark["id"], bookmark["title"], body, tags, links, bookmark["source"], bookmark["updated"]})
 		count++
 	}
-	noteRows, err := s.db.QueryContext(ctx, `SELECT id,title,body,source,updated_at FROM notes WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	noteRows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(title,''),COALESCE(body,''),COALESCE(source,''),updated_at FROM notes WHERE user_id=? ORDER BY updated_at DESC`, userID)
 	if err != nil {
 		return 0, err
 	}
 	var notes []map[string]string
 	for noteRows.Next() {
 		var id, title, body, source, updated string
-		_ = noteRows.Scan(&id, &title, &body, &source, &updated)
+		if err := noteRows.Scan(&id, &title, &body, &source, &updated); err != nil {
+			noteRows.Close()
+			return 0, err
+		}
 		notes = append(notes, map[string]string{"id": id, "title": title, "body": body, "source": source, "updated": updated})
 	}
 	if err := noteRows.Err(); err != nil {
@@ -99,13 +126,100 @@ func (s *Service) rebuildSearchIndex(ctx context.Context, userID string) (int, e
 	}
 	noteRows.Close()
 	for _, note := range notes {
-		links := searchLinksText(s.itemLinks(ctx, userID, "note", note["id"]))
-		if err := s.insertSearchRow(ctx, ftsEnabled, userID, "note", note["id"], note["title"], note["body"], "", links, note["source"], note["updated"]); err != nil {
+		links, err := s.searchItemLinks(ctx, userID, "note", note["id"])
+		if err != nil {
 			return 0, err
 		}
+		projection = append(projection, projectionRow{"note", note["id"], note["title"], note["body"], "", links, note["source"], note["updated"]})
 		count++
 	}
+	var ftsTableCount int
+	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='search_fts'`).Scan(&ftsTableCount); err != nil {
+		return 0, err
+	}
+	ftsEnabled := ftsTableCount > 0
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	if _, err = tx.ExecContext(ctx, `DELETE FROM search_index WHERE user_id=?`, userID); err != nil {
+		return 0, err
+	}
+	if ftsEnabled {
+		if _, err = tx.ExecContext(ctx, `DELETE FROM search_fts WHERE user_id=?`, userID); err != nil {
+			return 0, err
+		}
+	}
+	for _, row := range projection {
+		if _, err = tx.ExecContext(ctx, `INSERT INTO search_index(user_id,item_type,item_id,title,body,tags,links,source,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, userID, row.itemType, row.itemID, row.title, row.body, row.tags, row.links, row.source, row.updated); err != nil {
+			return 0, err
+		}
+		if ftsEnabled {
+			if _, err = tx.ExecContext(ctx, `INSERT INTO search_fts(user_id,item_type,item_id,title,body,tags,links,source,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, userID, row.itemType, row.itemID, row.title, row.body, row.tags, row.links, row.source, row.updated); err != nil {
+				return 0, err
+			}
+		}
+	}
+	if err = tx.Commit(); err != nil {
+		return 0, err
+	}
 	return count, nil
+}
+
+func (s *Service) searchBookmarkTags(ctx context.Context, userID, bookmarkID string) (string, error) {
+	return querySearchStrings(ctx, s.db, `SELECT t.name FROM tags t JOIN bookmark_tags bt ON bt.tag_id=t.id AND bt.user_id=t.user_id WHERE bt.user_id=? AND bt.bookmark_id=? ORDER BY t.name COLLATE NOCASE`, userID, bookmarkID)
+}
+
+func (s *Service) searchBookmarkSummary(ctx context.Context, userID, bookmarkID string) (string, error) {
+	var one, bullets, long, highlights, tags string
+	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(one_sentence,''),COALESCE(bullet_points_json,''),COALESCE(long_form,''),COALESCE(highlights_json,''),COALESCE(suggested_tags_json,'') FROM ai_summaries WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID).Scan(&one, &bullets, &long, &highlights, &tags)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return strings.Join([]string{one, bullets, long, highlights, tags}, " "), nil
+}
+
+func (s *Service) searchBookmarkAnnotations(ctx context.Context, userID, bookmarkID string) (string, error) {
+	return querySearchStrings(ctx, s.db, `SELECT quote || ' ' || note || ' ' || selector_json || ' ' || tags_json FROM annotations WHERE user_id=? AND bookmark_id=? ORDER BY created_at DESC LIMIT 100`, userID, bookmarkID)
+}
+
+func (s *Service) searchBookmarkNotes(ctx context.Context, userID, bookmarkID string) (string, error) {
+	return querySearchStrings(ctx, s.db, `SELECT n.title || ' ' || n.body || ' ' || n.source FROM notes n JOIN bookmark_notes bn ON bn.note_id=n.id AND bn.user_id=n.user_id WHERE bn.user_id=? AND bn.bookmark_id=? ORDER BY n.updated_at DESC LIMIT 100`, userID, bookmarkID)
+}
+
+func (s *Service) searchItemLinks(ctx context.Context, userID, itemType, itemID string) (string, error) {
+	return querySearchStrings(ctx, s.db, `SELECT from_type || ' ' || from_id || ' ' || to_type || ' ' || to_id || ' ' || label || ' ' || source || ' ' ||
+		CASE from_type WHEN 'bookmark' THEN COALESCE((SELECT NULLIF(title,'') FROM bookmarks WHERE id=from_id AND user_id=item_links.user_id),(SELECT url FROM bookmarks WHERE id=from_id AND user_id=item_links.user_id),'') WHEN 'note' THEN COALESCE((SELECT NULLIF(title,'') FROM notes WHERE id=from_id AND user_id=item_links.user_id),'Untitled note') ELSE '' END || ' ' ||
+		CASE to_type WHEN 'bookmark' THEN COALESCE((SELECT NULLIF(title,'') FROM bookmarks WHERE id=to_id AND user_id=item_links.user_id),(SELECT url FROM bookmarks WHERE id=to_id AND user_id=item_links.user_id),'') WHEN 'note' THEN COALESCE((SELECT NULLIF(title,'') FROM notes WHERE id=to_id AND user_id=item_links.user_id),'Untitled note') ELSE '' END
+		FROM item_links WHERE user_id=? AND ((from_type=? AND from_id=?) OR (to_type=? AND to_id=?)) ORDER BY created_at DESC LIMIT 200`, userID, itemType, itemID, itemType, itemID)
+}
+
+type searchStringQuerier interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func querySearchStrings(ctx context.Context, db searchStringQuerier, query string, args ...any) (string, error) {
+	rows, err := db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	var values []string
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			return "", err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+	return strings.Join(values, " "), nil
 }
 
 func (s *Service) insertSearchRow(ctx context.Context, ftsEnabled bool, userID, itemType, itemID, title, body, tags, links, source, updated string) error {

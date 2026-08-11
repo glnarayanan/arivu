@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"math"
 	"net/http"
 	"net/url"
@@ -36,6 +37,8 @@ type Service struct {
 	browser       config.BrowserCaptureConfig
 	artifactQuota int64
 	artifactMu    sync.Mutex
+	searchMu      sync.Mutex
+	sourceMu      sync.Mutex
 	enqueueCreate func(context.Context, *sql.Tx, string, string, string) (string, error)
 }
 
@@ -92,55 +95,24 @@ func (s *Service) Create(w http.ResponseWriter, r *http.Request, user auth.User)
 		return
 	}
 	parsed, _ := url.Parse(body.URL)
-	if body.CollectionID != "" && !s.ownsCollection(r.Context(), user.ID, body.CollectionID) {
+	title := fallback(strings.TrimSpace(body.Title), parsed.Hostname())
+	quote := fallback(body.Quote, body.Annotation)
+	result, err := s.CreateBookmark(r.Context(), CreateBookmarkInput{UserID: user.ID, URL: body.URL, Title: title, Domain: parsed.Hostname(), CollectionID: body.CollectionID, Note: body.Note, Quote: quote, Tags: body.Tags})
+	if errors.Is(err, ErrCollectionNotFound) {
 		writeError(w, http.StatusNotFound, "Collection not found")
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	bookmarkID := ids.New()
-	title := fallback(strings.TrimSpace(body.Title), parsed.Hostname())
-	tx, err := s.db.BeginTx(r.Context(), nil)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "unique") {
+		writeError(w, http.StatusConflict, "Bookmark already exists")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Bookmark could not be saved")
 		return
 	}
-	defer tx.Rollback()
-	_, err = tx.ExecContext(r.Context(), `INSERT INTO bookmarks(id,user_id,url,title,domain,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, bookmarkID, user.ID, body.URL, title, parsed.Hostname(), now, now)
-	if err != nil {
-		writeError(w, http.StatusConflict, "Bookmark already exists")
-		return
-	}
-	attemptID := ids.New()
-	if _, err = tx.ExecContext(r.Context(), `INSERT INTO capture_attempts(id,bookmark_id,user_id,status,requested_url,engine,engine_version,queued_at) VALUES(?,?,?,'queued',?,'direct_http',?,?)`, attemptID, bookmarkID, user.ID, body.URL, safefetch.ExtractorVersion, now); err == nil {
-		var jobID string
-		jobID, err = s.enqueueCreate(r.Context(), tx, user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, "", attemptID))
-		if err == nil {
-			err = tx.Commit()
-		}
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "Bookmark could not be saved")
-			return
-		}
-		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,?,?,?)`, ids.New(), bookmarkID, user.ID, "pending", now, now)
-		_ = s.upsertItemState(r.Context(), user.ID, "bookmark", bookmarkID, "inbox", 0, strings.TrimSpace(body.Note), now)
-		if body.CollectionID != "" {
-			_, _ = s.db.ExecContext(r.Context(), `INSERT OR IGNORE INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, body.CollectionID, bookmarkID, user.ID, now)
-		}
-		for _, tag := range cleanStringList(body.Tags, 20) {
-			_ = s.attachTag(r.Context(), user.ID, bookmarkID, tag, "manual")
-		}
-		quote := fallback(body.Quote, body.Annotation)
-		if strings.TrimSpace(body.Note) != "" || strings.TrimSpace(quote) != "" {
-			selector, _ := jsonObject(nil)
-			tagJSON, _ := json.Marshal(cleanStringList(body.Tags, 20))
-			_, _ = s.db.ExecContext(r.Context(), `INSERT INTO annotations(id,user_id,bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, ids.New(), user.ID, bookmarkID, strings.TrimSpace(quote), strings.TrimSpace(body.Note), selector, string(tagJSON), now, now)
-		}
-		bm, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
-		s.refreshSearchIndex(r.Context(), user.ID)
-		writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": jobID, "connections": []any{}, "connections_count": 0})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "Bookmark could not be saved")
+	bm, _ := s.getBookmark(r.Context(), user.ID, result.BookmarkID)
+	s.refreshSearchIndex(r.Context(), user.ID)
+	writeJSON(w, http.StatusOK, map[string]any{"bookmark": bm, "job_id": result.JobID, "connections": []any{}, "connections_count": 0})
 }
 
 func (s *Service) Reprocess(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -272,15 +244,19 @@ func (s *Service) CreateExtensionAnnotation(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "Could not save annotation")
 		return
 	}
+	jobID := ""
+	if createdBookmark {
+		jobID, err = s.enqueueCreate(r.Context(), tx, user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, ""))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not queue bookmark")
+			return
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not save annotation")
 		return
 	}
 
-	jobID := ""
-	if createdBookmark {
-		jobID, _ = s.jobs.EnqueueWithID(r.Context(), user.ID, "bookmark.process", bookmarkProcessPayload(bookmarkID, body.URL, ""))
-	}
 	bookmark, _ := s.getBookmark(r.Context(), user.ID, bookmarkID)
 	annotation, _ := s.annotation(r.Context(), user.ID, annotationID)
 	s.refreshSearchIndex(r.Context(), user.ID)
@@ -440,13 +416,15 @@ func (s *Service) ReadingProgress(w http.ResponseWriter, r *http.Request, user a
 }
 
 func (s *Service) Delete(w http.ResponseWriter, r *http.Request, user auth.User) {
-	res, _ := s.db.ExecContext(r.Context(), `DELETE FROM bookmarks WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID)
-	if n, _ := res.RowsAffected(); n == 0 {
+	deleted, err := s.DeleteItemCommand(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	if err != nil {
+		writeError(w, 500, "Could not delete bookmark")
+		return
+	}
+	if !deleted {
 		writeError(w, http.StatusNotFound, "Bookmark not found")
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE user_id=? AND item_type='bookmark' AND item_id=?`, user.ID, r.PathValue("id"))
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM reminders WHERE user_id=? AND item_type='bookmark' AND item_id=?`, user.ID, r.PathValue("id"))
 	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmark deleted"})
 }
@@ -1060,6 +1038,8 @@ func (s *Service) Merge(w http.ResponseWriter, r *http.Request, user auth.User) 
 		writeError(w, http.StatusBadRequest, "Need at least 2 bookmarks to merge")
 		return
 	}
+	s.searchMu.Lock()
+	defer s.searchMu.Unlock()
 	tx, err := s.db.BeginTx(r.Context(), nil)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not merge bookmarks")
@@ -1077,7 +1057,12 @@ func (s *Service) Merge(w http.ResponseWriter, r *http.Request, user auth.User) 
 	}
 	keepID := owned[0]
 	deleteIDs := owned[1:]
-	if err := mergeBookmarkRows(r.Context(), tx, user.ID, keepID, deleteIDs); err != nil {
+	var ftsTableCount int
+	if err := tx.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='search_fts'`).Scan(&ftsTableCount); err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not merge bookmarks")
+		return
+	}
+	if err := mergeBookmarkRows(r.Context(), tx, user.ID, keepID, deleteIDs, ftsTableCount > 0); err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not merge bookmarks")
 		return
 	}
@@ -1086,7 +1071,9 @@ func (s *Service) Merge(w http.ResponseWriter, r *http.Request, user auth.User) 
 		return
 	}
 	kept, _ := s.getBookmark(r.Context(), user.ID, keepID)
-	s.refreshSearchIndex(r.Context(), user.ID)
+	if _, err := s.rebuildSearchIndexLocked(r.Context(), user.ID); err != nil {
+		log.Printf("search projection rebuild failed after bookmark merge for user %s: %v", user.ID, err)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Bookmarks merged", "kept_bookmark": kept, "merged_count": len(deleteIDs)})
 }
 func (s *Service) BulkDelete(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -1097,12 +1084,10 @@ func (s *Service) BulkDelete(w http.ResponseWriter, r *http.Request, user auth.U
 		writeError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	deleted := 0
-	for _, id := range body.BookmarkIDs {
-		res, _ := s.db.ExecContext(r.Context(), `DELETE FROM bookmarks WHERE id=? AND user_id=?`, id, user.ID)
-		if n, _ := res.RowsAffected(); n > 0 {
-			deleted++
-		}
+	deleted, err := s.DeleteItemsCommand(r.Context(), user.ID, "bookmark", body.BookmarkIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not delete bookmarks")
+		return
 	}
 	if deleted > 0 {
 		s.refreshSearchIndex(r.Context(), user.ID)
@@ -1777,16 +1762,16 @@ func ownedBookmarkIDs(ctx context.Context, tx *sql.Tx, userID string, requested 
 	return owned, nil
 }
 
-func mergeBookmarkRows(ctx context.Context, tx *sql.Tx, userID, keepID string, deleteIDs []string) error {
+func mergeBookmarkRows(ctx context.Context, tx *sql.Tx, userID, keepID string, deleteIDs []string, ftsEnabled bool) error {
 	for _, deleteID := range deleteIDs {
-		if err := mergeOneBookmark(ctx, tx, userID, keepID, deleteID); err != nil {
+		if err := mergeOneBookmark(ctx, tx, userID, keepID, deleteID, ftsEnabled); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID string) error {
+func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID string, ftsEnabled bool) error {
 	var keepTitle, keepDescription, keepFavicon, keepThumbnail, keepHTML, keepText, keepLast sql.NullString
 	var keepRead sql.NullBool
 	var keepReading, keepViews sql.NullInt64
@@ -1829,6 +1814,9 @@ func mergeOneBookmark(ctx context.Context, tx *sql.Tx, userID, keepID, deleteID 
 		return err
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM ai_summaries WHERE bookmark_id=? AND user_id=?`, deleteID, userID); err != nil {
+		return err
+	}
+	if err := cleanupDeletedItemTx(ctx, tx, userID, "bookmark", deleteID, ftsEnabled); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `DELETE FROM bookmarks WHERE id=? AND user_id=?`, deleteID, userID)

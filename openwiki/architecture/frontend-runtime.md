@@ -9,6 +9,13 @@ Routes declare public or protected access before rendering. Same-origin links
 use history navigation; route changes update the document title, announce the
 active surface, expose loading progress, and restore focus to main content.
 
+Every navigation receives a generation-scoped lifecycle with an abort signal and
+owned cleanup stack. Beginning a newer navigation invalidates the previous
+scope. DOM replacement is guarded at the shared commit seam, so a slower stale
+route cannot replace the current page, bind against its DOM, or dispose the
+current route's listeners. The pending-route count controls progress presentation
+only; it does not determine which route may commit.
+
 The primary shell contains Home, Library, Notes, Graph, and Insights. Desktop
 uses a left rail, tablet a compact rail, and mobile a fixed five-item bottom
 bar. Capture and Search / Ask remain visible globally. More opens the existing

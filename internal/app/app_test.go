@@ -2942,7 +2942,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
 	}
-	for _, expected := range []string{`prefix: "/today"`, `async function todayPage()`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `id="calendar-import-form"`, `function bindCalendarImportPanel`, `/calendar/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `prefix: "/objects"`, `async function openObjectComposer()`, `id="object-composer-form"`, `/objects`, `prefix: "/evolution"`, `async function evolutionPage()`, `/evolution?q=`, `prefix: "/board"`, `async function boardPage()`, `/today-board`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `Model Provider`, `ai_provider`, `!user.is_admin`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage()`, `/action-items?status=all`, `/reminders?status=all`, `/today?view=focus&amp;focus=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls()`, `function bindNoteBookmarkLinkForms()`, `function bindNoteLinkForms()`, `function bindLinkDeleteControls()`} {
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage(scope)`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `id="calendar-import-form"`, `function bindCalendarImportPanel`, `/calendar/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `prefix: "/objects"`, `async function openObjectComposer()`, `id="object-composer-form"`, `/objects`, `prefix: "/evolution"`, `async function evolutionPage(scope)`, `/evolution?q=`, `prefix: "/board"`, `async function boardPage(scope)`, `/today-board`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `Model Provider`, `ai_provider`, `!user.is_admin`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage(scope, id)`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage(scope)`, `/action-items?status=all`, `/reminders?status=all`, `/today?view=focus&amp;focus=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls(scope)`, `function bindNoteBookmarkLinkForms(scope)`, `function bindNoteLinkForms(scope)`, `function bindLinkDeleteControls(scope)`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
@@ -3052,7 +3052,7 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 		t.Fatalf("service worker cache-control = %q", got)
 	}
 	workerBody := readBody(serviceWorker)
-	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v4"`) || !strings.Contains(workerBody, `"/notes"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, `"/fonts/geist-variable.woff2"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, `cache: "no-cache"`) || !strings.Contains(workerBody, "/api/") {
+	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v5"`) || !strings.Contains(workerBody, `"/notes"`) || !strings.Contains(workerBody, `"/route-lifecycle.mjs"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, `"/fonts/geist-variable.woff2"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, `cache: "no-cache"`) || !strings.Contains(workerBody, "/api/") {
 		t.Fatalf("service worker missing shell cache/API bypass: %q", workerBody)
 	}
 }
@@ -3344,12 +3344,25 @@ func TestAdminUserMutations(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
+	if _, err := a.db.ExecContext(context.Background(), `
+		CREATE TABLE IF NOT EXISTS search_fts(user_id TEXT,item_type TEXT,item_id TEXT,title TEXT,body TEXT,tags TEXT,links TEXT,source TEXT,updated_at TEXT);
+		INSERT INTO search_index(user_id,item_type,item_id,title,body,updated_at) VALUES(?, 'bookmark', 'private-item', 'Private title', 'Private body', '2026-01-01T00:00:00Z');
+		INSERT INTO search_fts(user_id,item_type,item_id,title,body,updated_at) VALUES(?, 'bookmark', 'private-item', 'Private title', 'Private body', '2026-01-01T00:00:00Z');
+	`, userID, userID); err != nil {
+		t.Fatalf("seed user search projections: %v", err)
+	}
 
 	deleted := adminRequest(t, handler, http.MethodDelete, "/api/admin/users/"+userID, "", accessCookie, csrfCookie)
 	if deleted.StatusCode != http.StatusOK {
 		t.Fatalf("delete status = %d body=%s", deleted.StatusCode, readBody(deleted))
 	}
 	deleted.Body.Close()
+	for _, table := range []string{"search_index", "search_fts"} {
+		var count int
+		if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM `+table+` WHERE user_id=?`, userID).Scan(&count); err != nil || count != 0 {
+			t.Fatalf("%s retained deleted user projection: count=%d err=%v", table, count, err)
+		}
+	}
 	for _, action := range []string{"admin.user.invite", "admin.user.reset_password", "admin.user.ban", "admin.user.unban", "admin.user.delete"} {
 		assertAuditAction(t, a, action, "user", userID)
 	}
@@ -3439,7 +3452,7 @@ func TestAdminAPIUsageExplainsAndRetriesFailedJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	newAttemptID := decodedPayload["capture_attempt_id"]
-	if status != "queued" || decodedPayload["url"] != "https://example.com/failed" || newAttemptID == "" || len(decodedPayload) != 3 {
+	if status != "queued" || decodedPayload["url"] != "https://example.com/failed" || decodedPayload["url_key"] != "https://example.com/failed" || newAttemptID == "" || len(decodedPayload) != 4 {
 		t.Fatalf("retried job status=%q payload=%s", status, retryPayload)
 	}
 	var retryOf, attemptStatus string

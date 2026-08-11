@@ -8,12 +8,12 @@ function storageGet(values, keys) {
   return { ...values };
 }
 
-function runBackground({ fetchStatus = 200, permissionGranted = true } = {}) {
+function runBackground({ fetchStatus = 200, permissionGranted = true, sessionSet, apiUrl = 'https://arivu.example/api' } = {}) {
   const fetches = [];
   const removedSessionKeys = [];
   const registeredScripts = [];
   const unregisteredScriptIDs = [];
-  const local = { apiUrl: 'https://arivu.example/api' };
+  const local = { apiUrl };
   const session = { accessToken: 'extension-token' };
   const handlers = {};
   const context = {
@@ -25,6 +25,9 @@ function runBackground({ fetchStatus = 200, permissionGranted = true } = {}) {
         },
         session: {
           get: async (keys) => storageGet(session, keys),
+          set: sessionSet
+            ? (values) => sessionSet(values, session)
+            : async (values) => Object.assign(session, values),
           remove: async (keys) => {
             removedSessionKeys.push(...keys);
             keys.forEach((key) => delete session[key]);
@@ -38,7 +41,13 @@ function runBackground({ fetchStatus = 200, permissionGranted = true } = {}) {
       permissions: { contains: async () => permissionGranted },
       contextMenus: { removeAll: () => {}, create: () => {}, onClicked: { addListener: (handler) => { handlers.contextMenu = handler; } } },
       action: { setBadgeBackgroundColor: async () => {}, setBadgeText: async () => {} },
-      runtime: { onInstalled: { addListener: () => {} }, onStartup: { addListener: () => {} }, onMessage: { addListener: () => {} } },
+      runtime: {
+        id: 'extension-id',
+        getURL: (path) => `chrome-extension://extension-id/${path}`,
+        onInstalled: { addListener: () => {} },
+        onStartup: { addListener: () => {} },
+        onMessage: { addListener: (handler) => { handlers.message = handler; } },
+      },
       commands: { onCommand: { addListener: () => {} } },
     },
     fetch: async (url, options) => {
@@ -50,7 +59,10 @@ function runBackground({ fetchStatus = 200, permissionGranted = true } = {}) {
         text: async () => JSON.stringify({ detail: 'Session expired' }),
       };
     },
-    importScripts: () => {},
+    URL,
+    importScripts: () => {
+      vm.runInContext(readFileSync(new URL('./url-utils.js', import.meta.url), 'utf8'), context);
+    },
     setTimeout: () => 0,
     console,
   };
@@ -80,6 +92,105 @@ const pageSave = runBackground();
 assert.deepEqual(await pageSave.context.saveBookmark('https://example.com/page'), { annotation: { id: 'annotation-1' } });
 assert.equal(pageSave.fetches[0].url, 'https://arivu.example/api/extension/bookmarks');
 assert.deepEqual(JSON.parse(pageSave.fetches[0].options.body), { url: 'https://example.com/page' });
+
+const localhostRegistration = runBackground({ apiUrl: 'http://localhost:8080/api' });
+await localhostRegistration.context.registerCustomApiContentScript('http://localhost:8080/api');
+assert.deepEqual(localhostRegistration.registeredScripts, []);
+
+const messageRequest = runBackground();
+const messageResponse = await new Promise((resolve) => {
+  assert.equal(messageRequest.handlers.message({
+    action: 'apiRequest',
+    request: { path: '/extension/collections' },
+  }, { id: 'extension-id', url: 'chrome-extension://extension-id/popup.html' }, resolve), true);
+});
+assert.equal(messageResponse.success, true);
+assert.equal(messageResponse.status, 200);
+assert.equal(messageRequest.fetches[0].url, 'https://arivu.example/api/extension/collections');
+assert.equal(messageRequest.fetches[0].options.headers.Authorization, 'Bearer extension-token');
+
+const expiredMessage = runBackground({ fetchStatus: 401 });
+const expiredResponse = await new Promise((resolve) => {
+  expiredMessage.handlers.message({ action: 'apiRequest', request: { path: '/extension/collections' } }, { id: 'extension-id', url: 'chrome-extension://extension-id/popup.html' }, resolve);
+});
+assert.equal(expiredResponse.success, false);
+assert.equal(expiredResponse.status, 401);
+assert.deepEqual(expiredMessage.removedSessionKeys, ['accessToken', 'refreshToken']);
+
+const rejectedPath = runBackground();
+const rejectedResponse = await new Promise((resolve) => {
+  rejectedPath.handlers.message({ action: 'apiRequest', request: { path: '/admin/users' } }, { id: 'extension-id', url: 'chrome-extension://extension-id/popup.html' }, resolve);
+});
+assert.equal(rejectedResponse.success, false);
+assert.match(rejectedResponse.error, /not allowed/);
+assert.equal(rejectedPath.fetches.length, 0);
+
+const rejectedSender = runBackground();
+const rejectedSenderResponse = await new Promise((resolve) => {
+  rejectedSender.handlers.message({ action: 'apiRequest', request: { path: '/extension/collections' } }, { id: 'extension-id', url: 'https://example.com', tab: { id: 1 } }, resolve);
+});
+assert.equal(rejectedSenderResponse.success, false);
+assert.equal(rejectedSender.fetches.length, 0);
+
+async function sendTokenMessage(instance, request, sender) {
+  return new Promise((resolve) => instance.handlers.message(request, sender, resolve));
+}
+
+const exactOriginSender = { id: 'extension-id', tab: { id: 7 }, frameId: 0, url: 'https://arivu.example/auth' };
+const bootstrap = runBackground();
+const bootstrapResponse = await sendTokenMessage(bootstrap, { action: 'tokenBootstrapContext' }, exactOriginSender);
+assert.equal(bootstrapResponse.success, true);
+assert.equal(bootstrapResponse.apiUrl, 'https://arivu.example/api');
+const saveTokenResponse = await sendTokenMessage(bootstrap, {
+  action: 'saveTokens', accessToken: 'new-access', refreshToken: 'new-refresh',
+}, exactOriginSender);
+assert.equal(saveTokenResponse.success, true);
+assert.equal(bootstrap.session.accessToken, 'new-access');
+
+let completeDelayedStorage;
+const delayedStorage = runBackground({
+  sessionSet: (values, session) => new Promise((resolve) => {
+    completeDelayedStorage = () => {
+      Object.assign(session, values);
+      resolve();
+    };
+  }),
+});
+let delayedResponse;
+assert.equal(delayedStorage.handlers.message({
+  action: 'saveTokens', accessToken: 'delayed-access', refreshToken: 'delayed-refresh',
+}, exactOriginSender, (response) => { delayedResponse = response; }), true);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(delayedResponse, undefined);
+assert.equal(delayedStorage.session.accessToken, 'extension-token');
+completeDelayedStorage();
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(delayedResponse.success, true);
+assert.equal(delayedStorage.session.accessToken, 'delayed-access');
+
+const rejectedStorage = runBackground({
+  sessionSet: async () => { throw new Error('session storage unavailable'); },
+});
+const rejectedStorageResponse = await sendTokenMessage(rejectedStorage, {
+  action: 'saveTokens', accessToken: 'unsaved-access', refreshToken: 'unsaved-refresh',
+}, exactOriginSender);
+assert.equal(rejectedStorageResponse.success, false);
+assert.equal(rejectedStorage.session.accessToken, 'extension-token');
+
+for (const sender of [
+  { ...exactOriginSender, id: 'spoofed-extension' },
+  { ...exactOriginSender, tab: undefined },
+  { ...exactOriginSender, frameId: 2 },
+  { ...exactOriginSender, url: 'https://unrelated.example/auth' },
+  { ...exactOriginSender, url: 'https://arivu.example:8443/auth' },
+]) {
+  const rejected = runBackground();
+  assert.equal((await sendTokenMessage(rejected, { action: 'tokenBootstrapContext' }, sender)).success, false);
+  assert.equal((await sendTokenMessage(rejected, {
+    action: 'saveTokens', accessToken: 'spoofed', refreshToken: 'spoofed',
+  }, sender)).success, false);
+  assert.equal(rejected.session.accessToken, 'extension-token');
+}
 
 const selectionMenu = runBackground();
 await selectionMenu.context.saveFromTab({ id: 1, url: 'https://example.com/menu', title: 'Menu capture' }, 'Selected from the menu');

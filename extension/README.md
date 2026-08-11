@@ -27,7 +27,7 @@ Save bookmarks directly into Arivu from Chrome or Firefox.
 ## Default Endpoints
 
 - Default API URL in popup: `https://arivu.app/api`
-- Built-in host permissions: `https://arivu.app/*` and `http://localhost/*`
+- Built-in host permission: `https://arivu.app/*`
 - Self-hosted origins are requested from the browser when the API URL is saved
 
 ## Self-Hosted Setup

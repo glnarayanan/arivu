@@ -2,12 +2,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 
-async function runContentScript(cookie) {
+async function runContentScript(cookie, bootstrap = { success: true, apiUrl: 'https://notes.example.com:8443/api' }) {
   const fetches = [];
   const messages = [];
   const listeners = {};
   const context = {
-    chrome: { runtime: { sendMessage: (message) => messages.push(message) } },
+    chrome: { runtime: { sendMessage: async (message) => {
+      messages.push(message);
+      return message.action === 'tokenBootstrapContext' ? bootstrap : { success: true };
+    } } },
     document: { cookie },
     fetch: async (url, options) => {
       fetches.push({ url, options });
@@ -20,7 +23,7 @@ async function runContentScript(cookie) {
       addEventListener: (name, handler) => {
         listeners[name] = handler;
       },
-      location: { origin: 'https://notes.example.com' },
+      location: { origin: 'https://unrelated.example' },
     },
   };
   context.window.window = context.window;
@@ -33,13 +36,20 @@ async function runContentScript(cookie) {
 }
 
 const withCSRF = await runContentScript('theme=dark; csrf_token=csrf-123; session=ok');
-assert.equal(withCSRF.fetches[0].url, 'https://notes.example.com/api/auth/extension-token');
+assert.equal(withCSRF.messages[0].action, 'tokenBootstrapContext');
+assert.equal(withCSRF.fetches[0].url, 'https://notes.example.com:8443/api/auth/extension-token');
 assert.equal(withCSRF.fetches[0].options.method, 'POST');
 assert.equal(withCSRF.fetches[0].options.credentials, 'include');
 assert.equal(withCSRF.fetches[0].options.headers['X-CSRF-Token'], 'csrf-123');
-assert.equal(withCSRF.messages[0].action, 'saveTokens');
-assert.equal(withCSRF.messages[0].accessToken, 'access');
-assert.equal(withCSRF.messages[0].refreshToken, 'refresh');
+assert.equal(withCSRF.messages[1].action, 'saveTokens');
+assert.equal(withCSRF.messages[1].accessToken, 'access');
+assert.equal(withCSRF.messages[1].refreshToken, 'refresh');
 
 const withoutCSRF = await runContentScript('theme=dark; session=ok');
 assert.equal(Object.keys(withoutCSRF.fetches[0].options.headers).length, 0);
+
+const rejectedBootstrap = await runContentScript('csrf_token=spoofed', { success: false });
+assert.equal(rejectedBootstrap.fetches.length, 0);
+assert.equal(rejectedBootstrap.messages.length, 1);
+assert.equal(rejectedBootstrap.messages[0].action, 'tokenBootstrapContext');
+assert.equal(rejectedBootstrap.listeners.message, undefined);

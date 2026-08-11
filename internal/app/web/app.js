@@ -1,12 +1,13 @@
 import { registerServiceWorker } from "/service-worker-register.mjs";
+import { createRouteLifecycle } from "/route-lifecycle.mjs";
 
 const state = {
   user: null,
-  cleanup: [],
   pendingRoutes: 0,
   focusMainAfterRender: false,
   pendingFocusSelector: "",
 };
+const routeLifecycle = createRouteLifecycle();
 const offlineQueueKey = "arivu.offline.bookmarks";
 const offlineSnapshotKey = "arivu.offline.snapshots";
 const modelProviderPresets = [
@@ -126,10 +127,11 @@ function escapeHTML(value) {
   return String(value).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch]);
 }
 
-function setRoot(markup) {
-  disposeRoute();
-  const root = document.querySelector("#app");
-  root.innerHTML = markup;
+function setRoot(scope, markup) {
+  scope.commit(() => {
+    const root = document.querySelector("#app");
+    root.innerHTML = markup;
+  });
 }
 
 function syncRouteAccessibility() {
@@ -347,7 +349,7 @@ function bindVoiceCapture() {
 const ui = {
   on(target, type, handler, options) {
     target.addEventListener(type, handler, options);
-    state.cleanup.push(() => target.removeEventListener(type, handler, options));
+    routeLifecycle.addCleanup(() => target.removeEventListener(type, handler, options));
   },
   toast,
   dialog({ title, body, actions = [] }) {
@@ -480,10 +482,6 @@ const ui = {
   },
 };
 
-function disposeRoute() {
-  while (state.cleanup.length) state.cleanup.pop()();
-}
-
 function textNode(value) {
   return document.createTextNode(value);
 }
@@ -595,8 +593,8 @@ function shell(title, content, { wide = false } = {}) {
   `;
 }
 
-async function authPage() {
-  setRoot(`
+async function authPage(scope) {
+  setRoot(scope, `
     <main class="auth">
       <section class="panel">
         <h1>Arivu</h1>
@@ -617,40 +615,46 @@ async function authPage() {
   const passwordInput = form.querySelector("#password");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    scope.assertCurrent();
     const done = setButtonBusy(event.submitter, "Signing in");
     const body = JSON.stringify({ email: emailInput.value, password: passwordInput.value });
     setFormMessage(form);
     try {
       await api("/auth/login", { method: "POST", body });
+      scope.assertCurrent();
       ui.toast("Signed in", "success");
       navigate("/today", true);
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   document.querySelector("#signup").addEventListener("click", async (event) => {
+    scope.assertCurrent();
     if (!form.reportValidity()) return;
     const done = setButtonBusy(event.currentTarget, "Creating account");
     setFormMessage(form);
     try {
       await api("/auth/signup", { method: "POST", body: JSON.stringify({ email: emailInput.value, password: passwordInput.value }) });
+      scope.assertCurrent();
       ui.toast("Account created", "success");
       navigate("/today", true);
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
 
-async function resetPasswordPage() {
+async function resetPasswordPage(scope) {
   const token = new URLSearchParams(location.search).get("token") || "";
-  setRoot(`
+  setRoot(scope, `
     <main class="auth">
       <section class="panel">
         <p class="meta">Account recovery</p>
@@ -662,6 +666,7 @@ async function resetPasswordPage() {
   const form = document.querySelector("#reset-form");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (!scope.isCurrent()) return;
     const done = setButtonBusy(event.submitter, token ? "Resetting password" : "Sending link");
     setFormMessage(form);
     try {
@@ -670,14 +675,16 @@ async function resetPasswordPage() {
         ? JSON.stringify({ token, new_password: document.querySelector("#new-password").value })
         : JSON.stringify({ email: document.querySelector("#reset-email").value });
       const result = await api(path, { method: "POST", body });
+      scope.assertCurrent();
       setFormMessage(form, result.message || "Request received", "success");
       ui.toast(result.message || "Request received", "success");
       if (token) form.querySelector("button[type='submit']").hidden = true;
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
@@ -707,8 +714,8 @@ function resetPasswordForm() {
   `;
 }
 
-async function acceptInvitePage() {
-  setRoot(`
+async function acceptInvitePage(scope) {
+  setRoot(scope, `
     <main class="auth">
       <section class="panel">
         <p class="meta">Invited account</p>
@@ -727,6 +734,7 @@ async function acceptInvitePage() {
   const form = document.querySelector("#invite-form");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    scope.assertCurrent();
     const done = setButtonBusy(event.submitter, "Signing in");
     setFormMessage(form);
     try {
@@ -737,23 +745,25 @@ async function acceptInvitePage() {
           password: document.querySelector("#invite-password").value,
         }),
       });
+      scope.assertCurrent();
       ui.toast("Invite accepted", "success");
       navigate("/today", true);
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
 
-async function todayPage() {
+async function todayPage(scope) {
   await requireUser();
   const view = new URLSearchParams(location.search).get("view");
-  if (view === "focus") return focusPage();
-  if (view === "review") return reviewPage();
-  if (view === "board") return boardPage();
+  if (view === "focus") return focusPage(scope);
+  if (view === "review") return reviewPage(scope);
+  if (view === "board") return boardPage(scope);
   const date = localDateKey();
   const [daily, inbox, actions, reminders, review, memory, notes] = await Promise.all([
     api(`/daily-notes/${date}`),
@@ -767,7 +777,7 @@ async function todayPage() {
   const openActions = (actions.action_items || []).filter((item) => item.status !== "completed").slice(0, 6);
   const dueReminders = (reminders.reminders || []).filter((item) => item.status !== "completed" && ["overdue", "today"].includes(item.due_state)).slice(0, 6);
   const note = daily.daily_note || { body: "" };
-  setRoot(shell("Home", `<div class="home-view home-pulse">
+  setRoot(scope, shell("Home", `<div class="home-view home-pulse">
     ${homeViewTabs("pulse")}
     <section class="home-pulse-columns">
       <div class="home-pulse-primary stack">
@@ -816,17 +826,20 @@ async function todayPage() {
   bindVoiceCapture();
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    scope.assertCurrent();
     const done = setButtonBusy(event.submitter, "Saving");
     setFormMessage(form);
     try {
       await api(`/daily-notes/${date}`, { method: "PUT", body: JSON.stringify({ body: document.querySelector("#daily-note-body").value }) });
+      scope.assertCurrent();
       setFormMessage(form, "Daily note saved.", "success");
       ui.toast("Daily note saved", "success");
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
@@ -902,12 +915,12 @@ function currentItemRef() {
   return null;
 }
 
-async function libraryPage() {
+async function libraryPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
-  if (params.get("management") === "duplicates") return duplicatesPage();
-  if (params.get("view") === "capture") return dashboardPage();
-  if (params.get("view") === "inbox") return inboxPage();
+  if (params.get("management") === "duplicates") return duplicatesPage(scope);
+  if (params.get("view") === "capture") return dashboardPage(scope);
+  if (params.get("view") === "inbox") return inboxPage(scope);
   const request = new URLSearchParams(params);
   request.delete("view");
   request.delete("management");
@@ -920,10 +933,10 @@ async function libraryPage() {
   const [result, collections] = await Promise.all([api(`/library/items?${request}`), api("/collections")]);
   const sort = params.get("sort") || (params.get("q") ? "relevance" : "newest");
   const density = params.get("density") || localStorage.getItem("arivu-library-density") || "comfortable";
-  const scope = params.get("scope") === "derived" ? "derived" : "content";
-  const typeOptions = scope === "derived" ? ["entity", "concept"] : ["bookmark", "note", "daily_note", "annotation", "knowledge_object"];
+  const contentScope = params.get("scope") === "derived" ? "derived" : "content";
+  const typeOptions = contentScope === "derived" ? ["entity", "concept"] : ["bookmark", "note", "daily_note", "annotation", "knowledge_object"];
   const items = [...(result.items || [])].sort((a, b) => sort === "oldest" ? String(a.updated_at).localeCompare(String(b.updated_at)) : sort === "title" ? String(a.title).localeCompare(String(b.title)) : sort === "domain" ? String(a.source).localeCompare(String(b.source)) : sort === "newest" ? String(b.updated_at).localeCompare(String(a.updated_at)) : 0);
-  setRoot(shell("Library", `
+  setRoot(scope, shell("Library", `
     <section class="library-heading">
       <div>
         <p class="lede">Everything you have captured, connected, or developed lives here.</p>
@@ -935,13 +948,13 @@ async function libraryPage() {
       </div>
     </section>
     <nav class="library-views" aria-label="Library view">
-      <a href="/library"${scope === "content" ? ' aria-current="page"' : ""}>Saved items</a>
-      <a href="/library?scope=derived"${scope === "derived" ? ' aria-current="page"' : ""}>Concepts &amp; entities</a>
+      <a href="/library"${contentScope === "content" ? ' aria-current="page"' : ""}>Saved items</a>
+      <a href="/library?scope=derived"${contentScope === "derived" ? ' aria-current="page"' : ""}>Concepts &amp; entities</a>
     </nav>
-    ${scope === "derived" ? '<p class="library-view-help">Concepts and entities are generated from your saved material. Explore them here, or use Graph to see how they connect.</p>' : ""}
+    ${contentScope === "derived" ? '<p class="library-view-help">Concepts and entities are generated from your saved material. Explore them here, or use Graph to see how they connect.</p>' : ""}
     ${collectionBrowser(collections, params.get("collection_id") || params.get("collection"))}
     <form class="library-filters" role="search" id="library-filter-form">
-      <input type="hidden" name="scope" value="${escapeHTML(scope)}">
+      <input type="hidden" name="scope" value="${escapeHTML(contentScope)}">
       <div class="field library-query"><label for="library-query">Search library</label><input id="library-query" name="q" type="search" value="${escapeHTML(params.get("q") || "")}" placeholder="Title, text, or topic"></div>
       <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(typeOptions, params.get("type"), "All types")}</select></div>
       <div class="field"><label for="library-stage">Stage</label><select id="library-stage" name="stage">${libraryFilterOptions(["inbox", "processing", "processed", "archived"], params.get("stage"), "Any stage")}</select></div>
@@ -1064,16 +1077,16 @@ function libraryNextParams(params, cursor) {
   return next.toString();
 }
 
-async function searchPage() {
+async function searchPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
-  if (params.get("review") === "actions") return assistantPage();
+  if (params.get("review") === "actions") return assistantPage(scope);
   const query = params.get("q") || params.get("search") || "";
   const ask = params.get("mode") === "ask" || params.get("answer") === "1";
   let result = { results: [] };
   if (query) result = await api(`${ask ? "/search/answer" : "/search/items"}?q=${encodeURIComponent(query)}`);
   const results = result.results || result.items || result.citations || [];
-  setRoot(shell("Search / Ask", `
+  setRoot(scope, shell("Search / Ask", `
     <form class="search-workspace" role="search" id="knowledge-search-form">
       <label for="knowledge-search">Search your knowledge</label>
       <div class="search-line">
@@ -1344,7 +1357,7 @@ async function commandRun(button, busyLabel, action) {
   }
 }
 
-async function dashboardPage() {
+async function dashboardPage(scope) {
   await requireUser();
   const [bookmarks, savedSearches] = await Promise.all([
     api(`/bookmarks${location.search}`),
@@ -1353,7 +1366,7 @@ async function dashboardPage() {
   const bookmarkList = bookmarks || [];
   const params = new URLSearchParams(location.search);
   const shared = sharedCaptureParams();
-  setRoot(shell("Capture", `
+  setRoot(scope, shell("Capture", `
     <section class="split">
       <form class="panel form" id="save-form">
         <span class="meta">Capture</span>
@@ -1424,6 +1437,7 @@ async function dashboardPage() {
   saveForm.insertAdjacentHTML("beforeend", `<p class="form-message" id="save-message" data-form-message hidden></p>`);
   saveForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    scope.assertCurrent();
     const done = setButtonBusy(event.submitter, "Saving bookmark");
     const payload = {
       url: document.querySelector("#url").value,
@@ -1433,10 +1447,13 @@ async function dashboardPage() {
     setFormMessage(saveForm);
     try {
       const result = await api("/bookmarks", { method: "POST", body: JSON.stringify(payload) });
+      scope.assertCurrent();
       ui.toast("Bookmark saved", "success");
-      await showJobStatus(result.job_id);
+      await showJobStatus(scope, result.job_id);
+      scope.assertCurrent();
       navigate(`/bookmark/${result.bookmark.id}`, true);
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       if (!navigator.onLine || err.message.includes("couldn't reach Arivu")) {
         queueOfflineBookmark(payload);
         setFormMessage(saveForm, "Saved offline. Arivu will sync it when this browser is online.", "success");
@@ -1447,7 +1464,7 @@ async function dashboardPage() {
       setFormMessage(saveForm, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   document.querySelector("#search-form").addEventListener("submit", (event) => {
@@ -1455,6 +1472,7 @@ async function dashboardPage() {
     navigate(`/dashboard${dashboardQueryString()}`);
   });
   document.querySelector("#answer-button").addEventListener("click", async (event) => {
+    scope.assertCurrent();
     const query = document.querySelector("#search").value.trim();
     if (!query) {
       ui.toast("Enter a search query first", "error");
@@ -1464,13 +1482,15 @@ async function dashboardPage() {
     const panel = document.querySelector("#answer-panel");
     try {
       const answer = await api(`/search/answer${dashboardQueryString("q")}`);
+      scope.assertCurrent();
       panel.hidden = false;
       panel.innerHTML = answerPanel(answer);
-      bindFeedbackControls();
+      bindFeedbackControls(scope);
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   if (params.get("answer") === "1" && document.querySelector("#search").value.trim()) {
@@ -1479,6 +1499,7 @@ async function dashboardPage() {
   const savedSearchForm = document.querySelector("#saved-search-form");
   savedSearchForm.addEventListener("submit", async (event) => {
     event.preventDefault();
+    scope.assertCurrent();
     const done = setButtonBusy(event.submitter, "Saving search");
     setFormMessage(savedSearchForm);
     try {
@@ -1491,13 +1512,15 @@ async function dashboardPage() {
           filters: dashboardFilters(),
         }),
       });
+      scope.assertCurrent();
       ui.toast("Search saved", "success");
       render();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(savedSearchForm, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
@@ -1621,14 +1644,14 @@ function focusViewLabel(view) {
   }[view] || view;
 }
 
-async function inboxPage() {
+async function inboxPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
   const stage = params.get("stage") || "inbox";
   const result = await api(`/inbox?stage=${encodeURIComponent(stage)}&limit=100`);
   const items = result.items || [];
   const counts = result.counts || {};
-  setRoot(shell("Inbox", `
+  setRoot(scope, shell("Inbox", `
     <section class="split">
       <section class="panel">
         <span class="meta">Triage loop</span>
@@ -1658,17 +1681,17 @@ async function inboxPage() {
     checkbox.addEventListener("change", updateBulkSelectionCount);
   });
   document.querySelectorAll("[data-bulk-stage]").forEach((button) => {
-    button.addEventListener("click", () => bulkUpdateInbox(button.dataset.bulkStage, button));
+    button.addEventListener("click", () => bulkUpdateInbox(scope, button.dataset.bulkStage, button));
   });
   document.querySelectorAll("[data-inbox-stage]").forEach((button) => {
-    button.addEventListener("click", () => updateInboxItem(button, button.dataset.inboxStage));
+    button.addEventListener("click", () => updateInboxItem(scope, button, button.dataset.inboxStage));
   });
   document.querySelectorAll("[data-inbox-save]").forEach((button) => {
-    button.addEventListener("click", () => updateInboxItem(button, button.closest("[data-inbox-item]").querySelector("[data-next-stage]").value));
+    button.addEventListener("click", () => updateInboxItem(scope, button, button.closest("[data-inbox-item]").querySelector("[data-next-stage]").value));
   });
-  bindActionItemControls();
+  bindActionItemControls(scope);
   bindPriorityButtons();
-  ui.on(document, "keydown", inboxKeyboardTriage);
+  ui.on(document, "keydown", (event) => inboxKeyboardTriage(scope, event));
   updateBulkSelectionCount();
 }
 
@@ -1716,7 +1739,7 @@ function updateBulkSelectionCount() {
   if (target) target.textContent = String(selectedInboxItems().length);
 }
 
-async function bulkUpdateInbox(stage, button) {
+async function bulkUpdateInbox(scope, stage, button) {
   const items = selectedInboxItems();
   if (!items.length) {
     ui.toast("Select inbox items first.", "error");
@@ -1725,16 +1748,18 @@ async function bulkUpdateInbox(stage, button) {
   const done = setButtonBusy(button, "Saving");
   try {
     const result = await api("/inbox/bulk", { method: "POST", body: JSON.stringify({ items, stage }) });
+    scope.assertCurrent();
     ui.toast(`${result.updated_count || 0} item${result.updated_count === 1 ? "" : "s"} updated`, result.failed_count ? "error" : "success");
     render();
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-function inboxKeyboardTriage(event) {
+function inboxKeyboardTriage(scope, event) {
   if (event.metaKey || event.ctrlKey || event.altKey || event.target.matches("input, textarea, select")) return;
   const card = event.target.closest?.("[data-inbox-item]");
   if (!card) return;
@@ -1743,20 +1768,22 @@ function inboxKeyboardTriage(event) {
   if (!stage) return;
   event.preventDefault();
   const button = card.querySelector(`[data-inbox-stage="${stage}"]`) || card.querySelector("[data-inbox-save]");
-  updateInboxItem(button, stage);
+  updateInboxItem(scope, button, stage);
 }
 
-async function updateInboxItem(button, stage) {
+async function updateInboxItem(scope, button, stage) {
   const card = button.closest("[data-inbox-item]");
   const done = setButtonBusy(button, "Saving");
   try {
     await saveItemState(card.dataset.inboxItem, stage, Number(card.querySelector("[data-importance]").value || 0), card.querySelector("[data-next-action]").value);
+    scope.assertCurrent();
     ui.toast("Inbox updated", "success");
     render();
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
@@ -1787,7 +1814,7 @@ function saveItemState(itemID, stage, importance, nextAction) {
   });
 }
 
-async function focusPage() {
+async function focusPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
   const view = params.get("focus") || (location.pathname === "/focus" ? params.get("view") : "") || "pending";
@@ -1797,7 +1824,7 @@ async function focusPage() {
   ]);
   const actionItems = focusActionFilter(actions.action_items || [], view);
   const reminderItems = focusReminderFilter(reminders.reminders || [], view);
-  setRoot(shell("Focus", `<div class="home-view focus-view">
+  setRoot(scope, shell("Focus", `<div class="home-view focus-view">
     ${homeViewTabs("focus")}
     <section class="focus-overview">
       <section class="panel">
@@ -1828,8 +1855,8 @@ async function focusPage() {
       </section>
     </section>
   </div>`));
-  bindActionItemControls();
-  bindReminderControls();
+  bindActionItemControls(scope);
+  bindReminderControls(scope);
 }
 
 function focusActionFilter(items, view) {
@@ -1892,13 +1919,13 @@ function itemHref(item) {
   return item.item_type === "note" ? `/notes/${id}` : `/bookmark/${id}`;
 }
 
-async function assistantPage() {
+async function assistantPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
   const status = params.get("status") || "pending";
   const result = await api(`/assistant/actions?status=${encodeURIComponent(status)}`);
   const actions = result.actions || [];
-  setRoot(shell("Assistant", `
+  setRoot(scope, shell("Assistant", `
     <section class="split">
       <form class="panel form" id="assistant-suggest-form">
         <span class="meta">Planner</span>
@@ -1960,15 +1987,18 @@ async function assistantPage() {
       ${actions.map(assistantActionCard).join("") || emptyState({ eyebrow: "No proposals", title: "Nothing waiting", body: "Queued assistant proposals appear here for review." })}
     </section>
   `));
-  document.querySelector("#assistant-suggest-form").addEventListener("submit", submitAssistantSuggestions);
+  document.querySelector("#assistant-suggest-form").addEventListener("submit", (event) => submitAssistantSuggestions(scope, event));
   const form = document.querySelector("#assistant-action-form");
-  form.addEventListener("submit", submitAssistantAction);
-  document.querySelector("#assistant-action-type").addEventListener("change", updateAssistantPayloadTemplate);
+  form.addEventListener("submit", (event) => submitAssistantAction(scope, event));
+  document.querySelector("#assistant-action-type").addEventListener("change", (event) => {
+    scope.assertCurrent();
+    updateAssistantPayloadTemplate(event);
+  });
   document.querySelectorAll("[data-assistant-approve]").forEach((button) => {
-    button.addEventListener("click", () => decideAssistantAction(button, "approve"));
+    button.addEventListener("click", () => decideAssistantAction(scope, button, "approve"));
   });
   document.querySelectorAll("[data-assistant-reject]").forEach((button) => {
-    button.addEventListener("click", () => decideAssistantAction(button, "reject"));
+    button.addEventListener("click", () => decideAssistantAction(scope, button, "reject"));
   });
 }
 
@@ -2005,8 +2035,9 @@ function assistantActionTitle(action) {
   return action.action_type || "Assistant action";
 }
 
-async function submitAssistantSuggestions(event) {
+async function submitAssistantSuggestions(scope, event) {
   event.preventDefault();
+  scope.assertCurrent();
   const form = event.currentTarget;
   const done = setButtonBusy(event.submitter, "Generating");
   setFormMessage(form);
@@ -2014,20 +2045,23 @@ async function submitAssistantSuggestions(event) {
     const payload = Object.fromEntries(new FormData(form).entries());
     payload.limit = Number(payload.limit || 6);
     const result = await api("/assistant/suggestions", { method: "POST", body: JSON.stringify(payload) });
-    renderAssistantDrafts(result.suggestions || []);
+    scope.assertCurrent();
+    renderAssistantDrafts(scope, result.suggestions || []);
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     setFormMessage(form, err.message);
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-function renderAssistantDrafts(drafts) {
+function renderAssistantDrafts(scope, drafts) {
+  scope.assertCurrent();
   const target = document.querySelector("#assistant-drafts");
   target.innerHTML = drafts.map(assistantDraftCard).join("") || emptyState({ eyebrow: "No drafts", title: "No reviewable draft found", body: "Try a different source or create a manual proposal." });
   target.querySelectorAll("[data-assistant-draft]").forEach((button) => {
-    button.addEventListener("click", () => queueAssistantDraft(button));
+    button.addEventListener("click", () => queueAssistantDraft(scope, button));
   });
 }
 
@@ -2050,22 +2084,26 @@ function assistantDraftCard(draft) {
   </article>`;
 }
 
-async function queueAssistantDraft(button) {
+async function queueAssistantDraft(scope, button) {
+  scope.assertCurrent();
   const draft = JSON.parse(button.dataset.assistantDraft || "{}");
   const done = setButtonBusy(button, "Queueing");
   try {
     await api("/assistant/actions", { method: "POST", body: JSON.stringify(draft) });
+    scope.assertCurrent();
     ui.toast("Assistant proposal queued", "success");
     navigate("/assistant?status=pending", true);
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-async function submitAssistantAction(event) {
+async function submitAssistantAction(scope, event) {
   event.preventDefault();
+  scope.assertCurrent();
   const form = event.currentTarget;
   const done = setButtonBusy(event.submitter, "Adding");
   setFormMessage(form);
@@ -2075,13 +2113,15 @@ async function submitAssistantAction(event) {
       method: "POST",
       body: JSON.stringify({ action_type: document.querySelector("#assistant-action-type").value, payload }),
     });
+    scope.assertCurrent();
     ui.toast("Assistant action queued", "success");
     navigate("/assistant?status=pending", true);
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     setFormMessage(form, err.message);
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
@@ -2120,17 +2160,20 @@ function updateAssistantPayloadTemplate(event) {
   document.querySelector("#assistant-payload").value = JSON.stringify(templates[event.currentTarget.value], null, 2);
 }
 
-async function decideAssistantAction(button, decision) {
+async function decideAssistantAction(scope, button, decision) {
+  scope.assertCurrent();
   const id = button.dataset.assistantApprove || button.dataset.assistantReject;
   const done = setButtonBusy(button, decision === "approve" ? "Executing" : "Rejecting");
   try {
     await api(`/assistant/actions/${id}/${decision}`, { method: "POST", body: "{}" });
+    scope.assertCurrent();
     ui.toast(decision === "approve" ? "Assistant action executed" : "Assistant action rejected", "success");
     render();
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
@@ -2165,7 +2208,7 @@ function readerQuoteSelector(quote) {
   };
 }
 
-function bindReaderAnnotationComposer(bookmarkID) {
+function bindReaderAnnotationComposer(scope, bookmarkID) {
   const reader = document.querySelector(".reader-content");
   if (!reader) return;
   let composer = null;
@@ -2177,6 +2220,7 @@ function bindReaderAnnotationComposer(bookmarkID) {
     if (restoreFocus) reader.focus({ preventScroll: true });
   };
   const openComposer = () => {
+    if (!scope.isCurrent()) return;
     const selection = selectedReaderSelection();
     if (!selection) {
       closeComposer();
@@ -2211,6 +2255,7 @@ function bindReaderAnnotationComposer(bookmarkID) {
     composer.querySelector("[data-reader-annotation-cancel]").addEventListener("click", () => closeComposer(true));
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
+      scope.assertCurrent();
       const save = form.querySelector("button[type=submit]");
       const done = setButtonBusy(save, "Saving annotation");
       message.hidden = true;
@@ -2219,20 +2264,24 @@ function bindReaderAnnotationComposer(bookmarkID) {
           method: "POST",
           body: JSON.stringify({ quote: selection.quote, note: note.value, tags: [], selector: readerQuoteSelector(selection.quote) }),
         });
+        scope.assertCurrent();
         ui.toast("Annotation saved", "success");
         closeComposer();
         render();
       } catch (err) {
+        if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
         message.textContent = err.message;
         message.hidden = false;
         ui.toast(err.message, "error");
       } finally {
-        done();
+        if (scope.isCurrent()) done();
       }
     });
     requestAnimationFrame(() => note.focus());
   };
-  const scheduleComposer = () => requestAnimationFrame(openComposer);
+  const scheduleComposer = () => requestAnimationFrame(() => {
+    if (scope.isCurrent()) openComposer();
+  });
 
   ui.on(reader, "pointerup", scheduleComposer);
   ui.on(reader, "keyup", (event) => {
@@ -2247,7 +2296,7 @@ function bindReaderAnnotationComposer(bookmarkID) {
       closeComposer(true);
     }
   });
-  state.cleanup.push(() => closeComposer());
+  routeLifecycle.addCleanup(() => closeComposer());
 }
 
 function findReaderTextRange(reader, quote) {
@@ -2289,14 +2338,20 @@ function jumpToReaderQuote(quote) {
   }
 }
 
-async function showJobStatus(jobID) {
+async function showJobStatus(scope, jobID) {
   const status = document.querySelector("#job-status");
   if (!jobID || !status) return;
   status.hidden = false;
   status.textContent = "Queued for archiving";
   for (let i = 0; i < 60; i += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await new Promise((resolve) => {
+      const timer = setTimeout(resolve, 1000);
+      const stop = () => { clearTimeout(timer); resolve(); };
+      scope.signal.addEventListener("abort", stop, { once: true });
+    });
+    scope.assertCurrent();
     const job = await api(`/jobs/${jobID}`).catch(() => null);
+    scope.assertCurrent();
     if (!job) return;
     status.innerHTML = jobStatusMarkup(job.status);
     if (job.status === "completed" || job.status === "failed") {
@@ -2381,7 +2436,7 @@ function relatedList(items) {
   </a>`).join("")}</div>`;
 }
 
-async function notesPage() {
+async function notesPage(scope) {
   await requireUser();
   const focusedID = new URLSearchParams(location.search).get("note");
   if (focusedID) {
@@ -2390,12 +2445,12 @@ async function notesPage() {
   }
   const detailMatch = location.pathname.match(/^\/notes\/([^/]+)$/);
   if (detailMatch) {
-    await noteDetailPage(decodeURIComponent(detailMatch[1]));
+    await noteDetailPage(scope, decodeURIComponent(detailMatch[1]));
     return;
   }
   const result = await api("/notes");
   const notes = result.notes || [];
-  setRoot(shell("Notes", `
+  setRoot(scope, shell("Notes", `
     <section class="split">
       <form class="panel form" id="standalone-note-form">
         <h2>New note</h2>
@@ -2428,13 +2483,15 @@ async function notesPage() {
           body: document.querySelector("#standalone-note-body").value,
         }),
       });
+      scope.assertCurrent();
       ui.toast("Note saved", "success");
       render();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
@@ -2448,26 +2505,26 @@ function noteListItem(note) {
   </a>`;
 }
 
-async function noteDetailPage(id) {
+async function noteDetailPage(scope, id) {
   const [note, noteTargets, bookmarkTargets] = await Promise.all([
     api(`/notes/${encodeURIComponent(id)}`),
     api("/link-targets?type=note&limit=100").catch(() => ({ targets: [] })),
     api("/link-targets?type=bookmark&limit=100").catch(() => ({ targets: [] })),
   ]);
-  setRoot(shell(note.title || "Note", `
+  setRoot(scope, shell(note.title || "Note", `
     ${standaloneNoteCard(note, noteTargets.targets || [], bookmarkTargets.targets || [])}
   `));
   document.querySelectorAll("[data-note-save]").forEach((button) => {
-    button.addEventListener("click", () => updateStandaloneNote(button));
+    button.addEventListener("click", () => updateStandaloneNote(scope, button));
   });
   document.querySelectorAll("[data-note-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteStandaloneNote(button));
+    button.addEventListener("click", () => deleteStandaloneNote(scope, button));
   });
-  bindNoteLinkForms();
-  bindNoteBookmarkLinkForms();
-  bindLinkDeleteControls();
-  bindActionItemControls();
-  bindReminderControls();
+  bindNoteLinkForms(scope);
+  bindNoteBookmarkLinkForms(scope);
+  bindLinkDeleteControls(scope);
+  bindActionItemControls(scope);
+  bindReminderControls(scope);
   bindVoiceCapture();
 }
 
@@ -2500,7 +2557,7 @@ function standaloneNoteCard(note, notes, bookmarks = []) {
   </article>`;
 }
 
-async function updateStandaloneNote(button) {
+async function updateStandaloneNote(scope, button) {
   const card = button.closest("[data-note]");
   const done = setButtonBusy(button, "Saving");
   try {
@@ -2511,27 +2568,32 @@ async function updateStandaloneNote(button) {
         body: card.querySelector("[data-note-body]").value,
       }),
     });
+    scope.assertCurrent();
     ui.toast("Note updated", "success");
     render();
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-async function deleteStandaloneNote(button) {
+async function deleteStandaloneNote(scope, button) {
   const confirmed = await ui.confirmDestructive({ title: "Delete note", body: "This removes the note and any bookmark link to it.", confirm: "Delete", cancel: "Keep note" });
   if (!confirmed) return;
+  scope.assertCurrent();
   const done = setButtonBusy(button, "Deleting");
   try {
     await api(`/notes/${button.dataset.noteDelete}`, { method: "DELETE" });
+    scope.assertCurrent();
     ui.toast("Note deleted", "success");
     navigate("/notes", true);
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
@@ -2589,11 +2651,11 @@ function objectTypeOptions(types, selected) {
   return types.map((type) => `<option value="${escapeHTML(type)}"${type === selected ? " selected" : ""}>${escapeHTML(type.replaceAll("_", " "))}</option>`).join("");
 }
 
-async function evolutionPage() {
+async function evolutionPage(scope) {
   await requireUser();
   const query = new URLSearchParams(location.search).get("q") || "";
   const result = query ? await api(`/evolution?q=${encodeURIComponent(query)}`) : { timeline: [] };
-  setRoot(shell("Evolution", `
+  setRoot(scope, shell("Evolution", `
     <form class="panel form" id="evolution-form">
       <h2>Topic evolution</h2>
       <div class="field"><label for="evolution-query">Topic or phrase</label><input id="evolution-query" type="search" value="${escapeHTML(query)}" placeholder="Roadmap, pricing, local-first"></div>
@@ -2618,10 +2680,10 @@ function evolutionItem(item) {
   </article>`;
 }
 
-async function boardPage() {
+async function boardPage(scope) {
   await requireUser();
   const board = await api("/today-board");
-  setRoot(shell("Board", `<div class="home-view board-view">
+  setRoot(scope, shell("Board", `<div class="home-view board-view">
     ${homeViewTabs("board")}
     <div class="board-scroller" role="region" aria-label="Knowledge workflow board" tabindex="0">
       <section class="board-grid">
@@ -2649,7 +2711,7 @@ function boardItem(item) {
   </article>`;
 }
 
-async function bookmarkPage() {
+async function bookmarkPage(scope) {
   await requireUser();
   const id = location.pathname.split("/").pop();
   const [bookmark, related, noteTargets] = await Promise.all([
@@ -2660,7 +2722,7 @@ async function bookmarkPage() {
   const summary = bookmark.ai_summary || {};
   const itemState = bookmark.item_state || { stage: "inbox", importance: 0, next_action: "" };
   const artifacts = bookmark.artifacts || [];
-  setRoot(shell(bookmark.title || "Bookmark", `
+  setRoot(scope, shell(bookmark.title || "Bookmark", `
     <article class="panel reader primary-reader">
       <p class="meta">${bookmark.domain || ""} · ${bookmark.reading_time || 0} min</p>
       <p class="meta" role="status">Capture: ${escapeHTML((bookmark.capture_status || "saved").replaceAll("_", " "))}</p>
@@ -2786,52 +2848,72 @@ async function bookmarkPage() {
     try {
       const expiry = document.querySelector("#share-expiry").value;
       const result = await api("/shares", { method: "POST", body: JSON.stringify({ title: document.querySelector("#share-title").value, item_ids: [id], expires_at: expiry ? new Date(expiry).toISOString() : null }) });
+      scope.assertCurrent();
       const box = document.querySelector("#share-created"); box.hidden = false; box.innerHTML = `<p><strong>Copy this link now.</strong> The token is shown only once.</p><p class="button-row"><input readonly value="${escapeHTML(new URL(result.url, location.origin).href)}"><button type="button" class="secondary" id="copy-share">Copy</button></p>`;
-      box.querySelector("#copy-share").addEventListener("click", () => navigator.clipboard.writeText(box.querySelector("input").value).then(() => ui.toast("Share link copied", "success")));
-    } catch (err) { setFormMessage(shareForm, err.message); } finally { done(); }
+      box.querySelector("#copy-share").addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(box.querySelector("input").value);
+          scope.assertCurrent();
+          ui.toast("Share link copied", "success");
+        } catch (err) {
+          if (!scope.signal.aborted && !routeLifecycle.isStale(err)) ui.toast(err.message, "error");
+        }
+      });
+    } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) setFormMessage(shareForm, err.message); } finally { if (scope.isCurrent()) done(); }
   });
   document.querySelector("#toggle-read").addEventListener("click", async (event) => {
+    scope.assertCurrent();
     const done = setButtonBusy(event.currentTarget, bookmark.read_status ? "Marking unread" : "Marking read");
     try {
       await api(`/bookmarks/${id}/read-status`, { method: "PATCH", body: JSON.stringify({ read_status: !bookmark.read_status }) });
+      scope.assertCurrent();
       ui.toast("Read status updated", "success");
       render();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   document.querySelector("#reprocess-bookmark").addEventListener("click", async (event) => {
+    scope.assertCurrent();
     const done = setButtonBusy(event.currentTarget, "Queueing");
     try {
       const result = await api(`/bookmarks/${id}/reprocess`, { method: "POST", body: "{}" });
+      scope.assertCurrent();
       ui.toast("Bookmark queued for reprocessing", "success");
-      showJobStatus(result.job_id);
+      showJobStatus(scope, result.job_id).catch((err) => {
+        if (scope.isCurrent() && !routeLifecycle.isStale(err)) ui.toast(err.message, "error");
+      });
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   document.querySelector("#review-complete").addEventListener("click", async (event) => {
+    scope.assertCurrent();
     const done = setButtonBusy(event.currentTarget, "Completing review");
     try {
       await api(`/review/bookmark:${id}/complete`, { method: "POST", body: "{}" });
+      scope.assertCurrent();
       ui.toast("Review completed", "success");
       render();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   document.querySelectorAll("[data-reader-stage]").forEach((button) => {
-    button.addEventListener("click", () => updateReaderState(button, button.dataset.readerStage));
+    button.addEventListener("click", () => updateReaderState(scope, button, button.dataset.readerStage));
   });
-  document.querySelector("#processing-save").addEventListener("click", (event) => updateReaderState(event.currentTarget, document.querySelector("#processing-stage").value));
+  document.querySelector("#processing-save").addEventListener("click", (event) => updateReaderState(scope, event.currentTarget, document.querySelector("#processing-stage").value));
   bindPriorityButtons();
-  bindReaderAnnotationComposer(id);
+  bindReaderAnnotationComposer(scope, id);
   const annotationForm = document.querySelector("#annotation-form");
   document.querySelector("#use-selection").addEventListener("click", () => {
     const quote = selectedReaderText();
@@ -2856,9 +2938,11 @@ async function bookmarkPage() {
           selector: readerQuoteSelector(document.querySelector("#annotation-quote").value),
         }),
       });
+      scope.assertCurrent();
       ui.toast("Annotation saved", "success");
       render();
     } catch (err) {
+      if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
       setFormMessage(annotationForm, err.message);
       ui.toast(err.message, "error");
     } finally {
@@ -2879,9 +2963,11 @@ async function bookmarkPage() {
           body: document.querySelector("#note-body").value,
         }),
       });
+      scope.assertCurrent();
       ui.toast("Note saved", "success");
       render();
     } catch (err) {
+      if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
       setFormMessage(noteForm, err.message);
       ui.toast(err.message, "error");
     } finally {
@@ -2909,38 +2995,43 @@ async function bookmarkPage() {
           label: document.querySelector("#link-label").value,
         }),
       });
+      scope.assertCurrent();
       ui.toast("Link created", "success");
       render();
     } catch (err) {
+      if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
       setFormMessage(linkForm, err.message);
       ui.toast(err.message, "error");
     } finally {
       done();
     }
   });
-  bindLinkDeleteControls();
-  bindActionItemControls();
-  bindReminderControls();
+  bindLinkDeleteControls(scope);
+  bindActionItemControls(scope);
+  bindReminderControls(scope);
   bindVoiceCapture();
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;
+    scope.assertCurrent();
     try {
       await api(`/bookmarks/${id}`, { method: "DELETE" });
+      scope.assertCurrent();
       ui.toast("Bookmark deleted", "success");
       navigate("/dashboard", true);
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
     }
   });
   document.querySelectorAll("[data-annotation-save]").forEach((button) => {
-    button.addEventListener("click", () => updateAnnotation(button));
+    button.addEventListener("click", () => updateAnnotation(scope, button));
   });
   document.querySelectorAll("[data-annotation-jump]").forEach((button) => {
     button.addEventListener("click", () => jumpToReaderQuote(button.closest("[data-annotation]")?.querySelector("[data-annotation-quote]")?.value || ""));
   });
   document.querySelectorAll("[data-annotation-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteAnnotation(button));
+    button.addEventListener("click", () => deleteAnnotation(scope, button));
   });
 }
 
@@ -3038,37 +3129,37 @@ function actionItemsList(items) {
   </article>`).join("")}</div>`;
 }
 
-function bindActionItemControls() {
+function bindActionItemControls(scope) {
   document.querySelectorAll("[data-action-item-form]").forEach((form) => {
-    form.addEventListener("submit", submitActionItem);
+    form.addEventListener("submit", (event) => submitActionItem(scope, event));
   });
   document.querySelectorAll("[data-action-item-complete]").forEach((button) => {
-    button.addEventListener("click", () => completeActionItem(button));
+    button.addEventListener("click", () => completeActionItem(scope, button));
   });
   document.querySelectorAll("[data-action-item-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteActionItem(button));
+    button.addEventListener("click", () => deleteActionItem(scope, button));
   });
 }
 
-function bindReminderControls() {
+function bindReminderControls(scope) {
   document.querySelectorAll("[data-reminder-form]").forEach((form) => {
-    form.addEventListener("submit", submitReminder);
+    form.addEventListener("submit", (event) => submitReminder(scope, event));
   });
   document.querySelectorAll("[data-reminder-edit]").forEach((form) => {
-    form.addEventListener("submit", submitReminderEdit);
+    form.addEventListener("submit", (event) => submitReminderEdit(scope, event));
   });
   document.querySelectorAll("[data-reminder-snooze]").forEach((button) => {
-    button.addEventListener("click", () => snoozeReminder(button));
+    button.addEventListener("click", () => snoozeReminder(scope, button));
   });
   document.querySelectorAll("[data-reminder-complete]").forEach((button) => {
-    button.addEventListener("click", () => completeReminder(button));
+    button.addEventListener("click", () => completeReminder(scope, button));
   });
   document.querySelectorAll("[data-reminder-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteReminder(button));
+    button.addEventListener("click", () => deleteReminder(scope, button));
   });
 }
 
-async function submitActionItem(event) {
+async function submitActionItem(scope, event) {
   event.preventDefault();
   const form = event.currentTarget;
   const done = setButtonBusy(event.submitter, "Adding");
@@ -3082,17 +3173,19 @@ async function submitActionItem(event) {
         title: form.querySelector("[data-action-item-title]").value,
       }),
     });
+    scope.assertCurrent();
     ui.toast("Action item added", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     setFormMessage(form, err.message);
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-async function submitReminder(event) {
+async function submitReminder(scope, event) {
   event.preventDefault();
   const form = event.currentTarget;
   const dueAt = localDateTimeToRFC3339(form.querySelector("[data-reminder-due]").value);
@@ -3111,17 +3204,19 @@ async function submitReminder(event) {
         due_at: dueAt,
       })),
     });
+    scope.assertCurrent();
     ui.toast("Reminder set", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     setFormMessage(form, err.message);
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-async function submitReminderEdit(event) {
+async function submitReminderEdit(scope, event) {
   event.preventDefault();
   const form = event.currentTarget;
   const dueAt = localDateTimeToRFC3339(form.querySelector("[data-reminder-due]").value);
@@ -3136,13 +3231,15 @@ async function submitReminderEdit(event) {
       method: "PATCH",
       body: JSON.stringify(reminderPayload(form, { due_at: dueAt })),
     });
+    scope.assertCurrent();
     ui.toast("Reminder updated", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     setFormMessage(form, err.message);
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
@@ -3161,31 +3258,36 @@ function reminderPayload(form, base) {
   };
 }
 
-async function completeActionItem(button) {
+async function completeActionItem(scope, button) {
   const done = setButtonBusy(button, "Completing");
   try {
     await api(`/action-items/${button.dataset.actionItemComplete}/complete`, { method: "POST", body: "{}" });
+    scope.assertCurrent();
     ui.toast("Action item completed", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-async function deleteActionItem(button) {
+async function deleteActionItem(scope, button) {
   const confirmed = await ui.confirmDestructive({ title: "Delete action item", body: "This removes only the task.", confirm: "Delete task", cancel: "Keep task" });
   if (!confirmed) return;
+  scope.assertCurrent();
   const done = setButtonBusy(button, "Deleting");
   try {
     await api(`/action-items/${button.dataset.actionItemDelete}`, { method: "DELETE" });
+    scope.assertCurrent();
     ui.toast("Action item deleted", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
@@ -3208,47 +3310,54 @@ function browserTimezone() {
   return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
 }
 
-async function snoozeReminder(button) {
+async function snoozeReminder(scope, button) {
   const body = {};
   if (button.dataset.minutes) body.minutes = Number(button.dataset.minutes);
   if (button.dataset.days) body.days = Number(button.dataset.days);
   const done = setButtonBusy(button, "Snoozing");
   try {
     await api(`/reminders/${button.dataset.reminderSnooze}/snooze`, { method: "POST", body: JSON.stringify(body) });
+    scope.assertCurrent();
     ui.toast("Reminder snoozed", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-async function completeReminder(button) {
+async function completeReminder(scope, button) {
   const done = setButtonBusy(button, "Completing");
   try {
     await api(`/reminders/${button.dataset.reminderComplete}/complete`, { method: "POST", body: "{}" });
+    scope.assertCurrent();
     ui.toast("Reminder completed", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-async function deleteReminder(button) {
+async function deleteReminder(scope, button) {
   const confirmed = await ui.confirmDestructive({ title: "Delete reminder", body: "This removes the reminder only.", confirm: "Delete reminder", cancel: "Keep reminder" });
   if (!confirmed) return;
+  scope.assertCurrent();
   const done = setButtonBusy(button, "Deleting");
   try {
     await api(`/reminders/${button.dataset.reminderDelete}`, { method: "DELETE" });
+    scope.assertCurrent();
     ui.toast("Reminder deleted", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
@@ -3301,40 +3410,43 @@ function linkCard(link, prefix) {
   </article>`;
 }
 
-async function deleteLink(button) {
+async function deleteLink(scope, button) {
   const confirmed = await ui.confirmDestructive({ title: "Delete link", body: "This removes only the explicit relationship, not either item.", confirm: "Delete link", cancel: "Keep link" });
   if (!confirmed) return;
+  scope.assertCurrent();
   const done = setButtonBusy(button, "Deleting");
   try {
     await api(`/links/${button.dataset.linkDelete}`, { method: "DELETE" });
+    scope.assertCurrent();
     ui.toast("Link deleted", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
     done();
   }
 }
 
-function bindLinkDeleteControls() {
+function bindLinkDeleteControls(scope) {
   document.querySelectorAll("[data-link-delete]").forEach((button) => {
-    button.addEventListener("click", () => deleteLink(button));
+    button.addEventListener("click", () => deleteLink(scope, button));
   });
 }
 
-function bindNoteLinkForms() {
+function bindNoteLinkForms(scope) {
   document.querySelectorAll("[data-note-link-form]").forEach((form) => {
-    form.addEventListener("submit", submitNoteLink);
+    form.addEventListener("submit", (event) => submitNoteLink(scope, event));
   });
 }
 
-function bindNoteBookmarkLinkForms() {
+function bindNoteBookmarkLinkForms(scope) {
   document.querySelectorAll("[data-note-bookmark-link-form]").forEach((form) => {
-    form.addEventListener("submit", submitNoteBookmarkLink);
+    form.addEventListener("submit", (event) => submitNoteBookmarkLink(scope, event));
   });
 }
 
-async function submitNoteLink(event) {
+async function submitNoteLink(scope, event) {
   event.preventDefault();
   const form = event.currentTarget;
   const targetID = form.querySelector("[data-link-target]").value;
@@ -3355,9 +3467,11 @@ async function submitNoteLink(event) {
         label: form.querySelector("[data-link-label]").value,
       }),
     });
+    scope.assertCurrent();
     ui.toast("Link created", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     setFormMessage(form, err.message);
     ui.toast(err.message, "error");
   } finally {
@@ -3382,7 +3496,7 @@ function noteBookmarkLinkForm(note, bookmarks) {
   </form>`;
 }
 
-async function submitNoteBookmarkLink(event) {
+async function submitNoteBookmarkLink(scope, event) {
   event.preventDefault();
   const form = event.currentTarget;
   const targetID = form.querySelector("[data-link-target]").value;
@@ -3403,9 +3517,11 @@ async function submitNoteBookmarkLink(event) {
         label: form.querySelector("[data-link-label]").value,
       }),
     });
+    scope.assertCurrent();
     ui.toast("Bookmark linked", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     setFormMessage(form, err.message);
     ui.toast(err.message, "error");
   } finally {
@@ -3445,21 +3561,23 @@ function readerStageLabel(stage) {
   return escapeHTML(({ inbox: "Inbox", processing: "Working", processed: "Kept", archived: "Archived" })[stage] || stage || "Inbox");
 }
 
-async function updateReaderState(button, stage) {
+async function updateReaderState(scope, button, stage) {
   const card = button.closest("[data-reader-item]");
   const done = setButtonBusy(button, "Saving");
   try {
     await saveItemState(card.dataset.readerItem, stage, Number(card.querySelector("[data-importance]").value || 0), card.querySelector("[data-next-action]").value);
+    scope.assertCurrent();
     ui.toast("Processing state updated", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
     done();
   }
 }
 
-async function updateAnnotation(button) {
+async function updateAnnotation(scope, button) {
   const card = button.closest("[data-annotation]");
   const done = setButtonBusy(button, "Saving");
   try {
@@ -3472,31 +3590,36 @@ async function updateAnnotation(button) {
         selector: readerQuoteSelector(card.querySelector("[data-annotation-quote]").value),
       }),
     });
+    scope.assertCurrent();
     ui.toast("Annotation updated", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
     done();
   }
 }
 
-async function deleteAnnotation(button) {
+async function deleteAnnotation(scope, button) {
   const confirmed = await ui.confirmDestructive({ title: "Delete annotation", body: "This removes the saved quote and note from this bookmark.", confirm: "Delete annotation", cancel: "Keep annotation" });
   if (!confirmed) return;
+  scope.assertCurrent();
   const done = setButtonBusy(button, "Deleting");
   try {
     await api(`/annotations/${button.dataset.annotationDelete}`, { method: "DELETE" });
+    scope.assertCurrent();
     ui.toast("Annotation deleted", "success");
     render();
   } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
     done();
   }
 }
 
-async function settingsPage() {
+async function settingsPage(scope) {
   const user = await requireUser();
   const requestedSection = new URLSearchParams(location.search).get("section") || "profile";
   const tabs = [
@@ -3511,21 +3634,23 @@ async function settingsPage() {
   if (user.is_admin) tabs.push(["api-keys", "Provider settings", "Configure optional AI, email, and X connections."]);
   if (requestedSection === "api-keys" && !user.is_admin) history.replaceState({}, "", "/settings?section=profile");
   const active = tabs.some(([id]) => id === requestedSection) ? requestedSection : "profile";
-  setRoot(shell("Settings", `<section class="tabs" id="settings-tabs">
+  setRoot(scope, shell("Settings", `<section class="tabs" id="settings-tabs">
     <div class="tab-list" role="tablist" aria-label="Settings sections">
       ${tabs.map(([id, label]) => `<button type="button" role="tab" id="tab-${id}" aria-controls="panel-${id}" aria-selected="${id === active}">${label}</button>`).join("")}
     </div>
     ${tabs.map(([id, label, copy]) => `<div role="tabpanel" id="panel-${id}" aria-labelledby="tab-${id}"><h2>${label}</h2><p>${copy}</p>${settingsPanel(id)}</div>`).join("")}
   </section>`));
   ui.tabs(document.querySelector("#settings-tabs"));
-  bindProfilePanel();
-  bindImportPanel();
-  bindCollectionSettingsPanel();
-  bindTagSettingsPanel();
-  bindConnectionsPanel();
-  bindAutomationPanel();
-  bindSharingPanel();
-  if (user.is_admin) bindAPIKeysPanel();
+  await Promise.all([
+    bindProfilePanel(scope),
+    bindImportPanel(scope),
+    bindCollectionSettingsPanel(scope),
+    bindTagSettingsPanel(scope),
+    bindConnectionsPanel(scope),
+    bindAutomationPanel(scope),
+    bindSharingPanel(scope),
+    user.is_admin ? bindAPIKeysPanel(scope) : Promise.resolve(),
+  ]);
 }
 
 function settingsPanel(id) {
@@ -3540,15 +3665,15 @@ function settingsPanel(id) {
   return "";
 }
 
-async function bindAutomationPanel() {
+async function bindAutomationPanel(scope) {
   const mode = document.querySelector("#ai-tagging-mode"), form = document.querySelector("#ai-tagging-form"), feedForm = document.querySelector("#feed-form"); if (!form) return;
-  try { mode.value = (await api("/ai-tagging")).mode; } catch (err) { setFormMessage(form, err.message); }
-  form.addEventListener("submit", async (event) => { event.preventDefault(); const done = setButtonBusy(event.submitter, "Saving"); setFormMessage(form); try { await api("/ai-tagging", { method: "PUT", body: JSON.stringify({ mode: mode.value }) }); setFormMessage(form, "AI tagging mode saved.", "success"); } catch (err) { setFormMessage(form, err.message); } finally { done(); } });
-  const refresh = async (focusID = "", focusHeading = false) => { const message = document.querySelector("#feed-list-message"); try { const feeds = await api("/subscriptions"); message.hidden = true; document.querySelector("#feed-list").innerHTML = feeds.map(f => `<article class="annotation"><p><strong>${escapeHTML(f.name || f.url)}</strong> <span class="meta">${escapeHTML(f.status)}${f.last_poll_at ? ` · checked ${escapeHTML(f.last_poll_at)}` : ""}</span></p>${f.error ? `<p>${escapeHTML(f.error)}</p>` : ""}<p class="button-row"><button class="secondary" data-feed-toggle="${escapeHTML(f.id)}" data-enabled="${f.enabled}">${f.enabled ? "Pause" : "Resume"}</button><button class="danger" data-feed-delete="${escapeHTML(f.id)}">Delete</button></p></article>`).join("") || `<p class="meta">No subscriptions yet.</p>`; document.querySelectorAll("[data-feed-toggle]").forEach(b => b.onclick = async () => { const id = b.dataset.feedToggle; const done = setButtonBusy(b, b.dataset.enabled === "true" ? "Pausing" : "Resuming"); try { await api(`/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: b.dataset.enabled !== "true" }) }); await refresh(id); } catch (err) { message.textContent = err.message; message.hidden = false; } finally { done(); } }); document.querySelectorAll("[data-feed-delete]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Delete subscription", body: "Captured bookmarks remain in your library.", confirm: "Delete", cancel: "Keep" })) { const done = setButtonBusy(b, "Deleting"); try { await api(`/subscriptions/${b.dataset.feedDelete}`, { method: "DELETE" }); await refresh("", true); } catch (err) { message.textContent = err.message; message.hidden = false; } finally { done(); } } }); if (focusID) [...document.querySelectorAll("[data-feed-toggle]")].find((button) => button.dataset.feedToggle === focusID)?.focus(); else if (focusHeading) document.querySelector("#feed-list-heading")?.focus(); } catch (err) { message.textContent = err.message; message.hidden = false; } };
-  feedForm.addEventListener("submit", async event => { event.preventDefault(); const done = setButtonBusy(event.submitter, "Adding"); setFormMessage(feedForm); try { await api("/subscriptions", { method: "POST", body: JSON.stringify({ url: document.querySelector("#feed-url").value, name: document.querySelector("#feed-name").value, tags: splitTags(document.querySelector("#feed-tags").value) }) }); feedForm.reset(); await refresh(); setFormMessage(feedForm, "Subscription added.", "success"); } catch (err) { setFormMessage(feedForm, err.message); } finally { done(); } }); await refresh();
+  try { const tagging = await api("/ai-tagging"); scope.commit(() => { mode.value = tagging.mode; }); } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) setFormMessage(form, err.message); }
+  form.addEventListener("submit", async (event) => { event.preventDefault(); scope.assertCurrent(); const done = setButtonBusy(event.submitter, "Saving"); setFormMessage(form); try { await api("/ai-tagging", { method: "PUT", body: JSON.stringify({ mode: mode.value }) }); scope.assertCurrent(); setFormMessage(form, "AI tagging mode saved.", "success"); } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) setFormMessage(form, err.message); } finally { if (scope.isCurrent()) done(); } });
+  const refresh = async (focusID = "", focusHeading = false) => { const message = document.querySelector("#feed-list-message"); try { const feeds = await api("/subscriptions"); scope.assertCurrent(); message.hidden = true; document.querySelector("#feed-list").innerHTML = feeds.map(f => `<article class="annotation"><p><strong>${escapeHTML(f.name || f.url)}</strong> <span class="meta">${escapeHTML(f.status)}${f.last_poll_at ? ` · checked ${escapeHTML(f.last_poll_at)}` : ""}</span></p>${f.error ? `<p>${escapeHTML(f.error)}</p>` : ""}<p class="button-row"><button class="secondary" data-feed-toggle="${escapeHTML(f.id)}" data-enabled="${f.enabled}">${f.enabled ? "Pause" : "Resume"}</button><button class="danger" data-feed-delete="${escapeHTML(f.id)}">Delete</button></p></article>`).join("") || `<p class="meta">No subscriptions yet.</p>`; document.querySelectorAll("[data-feed-toggle]").forEach(b => b.onclick = async () => { scope.assertCurrent(); const id = b.dataset.feedToggle; const done = setButtonBusy(b, b.dataset.enabled === "true" ? "Pausing" : "Resuming"); try { await api(`/subscriptions/${id}`, { method: "PATCH", body: JSON.stringify({ enabled: b.dataset.enabled !== "true" }) }); scope.assertCurrent(); await refresh(id); } catch (err) { if (!scope.isCurrent() || routeLifecycle.isStale(err)) return; message.textContent = err.message; message.hidden = false; } finally { if (scope.isCurrent()) done(); } }); document.querySelectorAll("[data-feed-delete]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Delete subscription", body: "Captured bookmarks remain in your library.", confirm: "Delete", cancel: "Keep" })) { scope.assertCurrent(); const done = setButtonBusy(b, "Deleting"); try { await api(`/subscriptions/${b.dataset.feedDelete}`, { method: "DELETE" }); scope.assertCurrent(); await refresh("", true); } catch (err) { if (!scope.isCurrent() || routeLifecycle.isStale(err)) return; message.textContent = err.message; message.hidden = false; } finally { if (scope.isCurrent()) done(); } } }); if (focusID) [...document.querySelectorAll("[data-feed-toggle]")].find((button) => button.dataset.feedToggle === focusID)?.focus(); else if (focusHeading) document.querySelector("#feed-list-heading")?.focus(); } catch (err) { if (!scope.isCurrent() || routeLifecycle.isStale(err)) return; message.textContent = err.message; message.hidden = false; } };
+  feedForm.addEventListener("submit", async event => { event.preventDefault(); scope.assertCurrent(); const done = setButtonBusy(event.submitter, "Adding"); setFormMessage(feedForm); try { await api("/subscriptions", { method: "POST", body: JSON.stringify({ url: document.querySelector("#feed-url").value, name: document.querySelector("#feed-name").value, tags: splitTags(document.querySelector("#feed-tags").value) }) }); scope.assertCurrent(); feedForm.reset(); await refresh(); scope.assertCurrent(); setFormMessage(feedForm, "Subscription added.", "success"); } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) setFormMessage(feedForm, err.message); } finally { if (scope.isCurrent()) done(); } }); await refresh();
 }
 
-async function bindSharingPanel() { const list = document.querySelector("#share-list"), message = document.querySelector("#share-list-message"); if (!list) return; const refresh = async (focusHeading = false) => { try { const shares = await api("/shares"); message.hidden = true; list.innerHTML = shares.map(s => `<article class="annotation"><p><strong>${escapeHTML(s.title)}</strong> <span class="meta">${s.revoked_at ? "Revoked" : s.expires_at ? `Expires ${escapeHTML(s.expires_at)}` : "Active"}</span></p>${!s.revoked_at ? `<button class="danger" data-revoke-share="${escapeHTML(s.id)}">Revoke</button>` : ""}</article>`).join("") || `<p class="meta">No public links.</p>`; document.querySelectorAll("[data-revoke-share]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Revoke public link", body: "Anyone using this link will immediately lose access.", confirm: "Revoke", cancel: "Keep active" })) { const done = setButtonBusy(b, "Revoking"); try { await api(`/shares/${b.dataset.revokeShare}/revoke`, { method: "POST", body: "{}" }); await refresh(true); } catch (err) { message.textContent = err.message; message.hidden = false; } finally { done(); } } }); if (focusHeading) document.querySelector("#share-list-heading")?.focus(); } catch (err) { message.textContent = err.message; message.hidden = false; } }; await refresh(); }
+async function bindSharingPanel(scope) { const list = document.querySelector("#share-list"), message = document.querySelector("#share-list-message"); if (!list) return; const refresh = async (focusHeading = false) => { try { const shares = await api("/shares"); scope.assertCurrent(); message.hidden = true; list.innerHTML = shares.map(s => `<article class="annotation"><p><strong>${escapeHTML(s.title)}</strong> <span class="meta">${s.revoked_at ? "Revoked" : s.expires_at ? `Expires ${escapeHTML(s.expires_at)}` : "Active"}</span></p>${!s.revoked_at ? `<button class="danger" data-revoke-share="${escapeHTML(s.id)}">Revoke</button>` : ""}</article>`).join("") || `<p class="meta">No public links.</p>`; document.querySelectorAll("[data-revoke-share]").forEach(b => b.onclick = async () => { if (await ui.confirmDestructive({ title: "Revoke public link", body: "Anyone using this link will immediately lose access.", confirm: "Revoke", cancel: "Keep active" })) { scope.assertCurrent(); const done = setButtonBusy(b, "Revoking"); try { await api(`/shares/${b.dataset.revokeShare}/revoke`, { method: "POST", body: "{}" }); scope.assertCurrent(); await refresh(true); } catch (err) { if (!scope.isCurrent() || routeLifecycle.isStale(err)) return; message.textContent = err.message; message.hidden = false; } finally { if (scope.isCurrent()) done(); } } }); if (focusHeading) document.querySelector("#share-list-heading")?.focus(); } catch (err) { if (!scope.isCurrent() || routeLifecycle.isStale(err)) return; message.textContent = err.message; message.hidden = false; } }; await refresh(); }
 
 function profilePanel() {
   return `<section class="split">
@@ -3569,15 +3694,17 @@ function profilePanel() {
   </section>`;
 }
 
-async function bindProfilePanel() {
+async function bindProfilePanel(scope) {
   const profileForm = document.querySelector("#profile-form");
   const passwordForm = document.querySelector("#password-form");
   if (!profileForm || !passwordForm) return;
   try {
     const profile = await api("/user/profile");
+    scope.assertCurrent();
     document.querySelector("#profile-email").value = profile.email || "";
     document.querySelector("#profile-name").value = profile.name || "";
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     setFormMessage(profileForm, err.message);
   }
   profileForm.addEventListener("submit", async (event) => {
@@ -3585,13 +3712,16 @@ async function bindProfilePanel() {
     const done = setButtonBusy(event.submitter, "Saving");
     setFormMessage(profileForm);
     try {
-      state.user = await api("/user/profile", { method: "PUT", body: JSON.stringify({ name: document.querySelector("#profile-name").value }) });
+      const user = await api("/user/profile", { method: "PUT", body: JSON.stringify({ name: document.querySelector("#profile-name").value }) });
+      scope.assertCurrent();
+      state.user = user;
       ui.toast("Profile saved", "success");
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(profileForm, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   passwordForm.addEventListener("submit", async (event) => {
@@ -3606,13 +3736,15 @@ async function bindProfilePanel() {
           new_password: document.querySelector("#new-password").value,
         }),
       });
+      scope.assertCurrent();
       passwordForm.reset();
       ui.toast("Password changed", "success");
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(passwordForm, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
@@ -3634,7 +3766,7 @@ function collectionSettingsPanel() {
   </section>`;
 }
 
-async function bindCollectionSettingsPanel() {
+async function bindCollectionSettingsPanel(scope) {
   const form = document.querySelector("#collection-form");
   const list = document.querySelector("#collection-list");
   const parent = document.querySelector("#collection-parent");
@@ -3643,6 +3775,7 @@ async function bindCollectionSettingsPanel() {
   const refresh = async (focusID = "", focusHeading = false) => {
     try {
       const collections = await api("/collections");
+      scope.assertCurrent();
       listMessage.hidden = true;
       parent.innerHTML = `<option value="">No parent</option>${collections.map((item) => `<option value="${escapeHTML(item.id)}">${escapeHTML(item.name)}</option>`).join("")}`;
       list.innerHTML = collections.map((item) => { const descendants = collectionDescendantIDs(collections, item.id); return `<form class="collection-editor annotation" data-collection-id="${escapeHTML(item.id)}">
@@ -3658,20 +3791,23 @@ async function bindCollectionSettingsPanel() {
           setFormMessage(editor);
           try {
             await api(`/collections/${encodeURIComponent(editor.dataset.collectionId)}`, { method: "PATCH", body: JSON.stringify({ name: editor.querySelector("[data-collection-name]").value, parent_id: editor.querySelector("[data-collection-parent]").value }) });
+            scope.assertCurrent();
             await refresh(editor.dataset.collectionId);
-          } catch (err) { setFormMessage(editor, err.message); } finally { done(); }
+          } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) setFormMessage(editor, err.message); } finally { if (scope.isCurrent()) done(); }
         });
         editor.querySelector("[data-collection-delete]").addEventListener("click", async (event) => {
           const confirmed = await ui.confirmDestructive({ title: "Delete collection", body: "Bookmarks stay in your Library. Child collections must be moved or deleted first.", confirm: "Delete collection", cancel: "Keep collection" });
           if (!confirmed) return;
+          scope.assertCurrent();
           const done = setButtonBusy(event.currentTarget, "Deleting");
           setFormMessage(editor);
-          try { await api(`/collections/${encodeURIComponent(editor.dataset.collectionId)}`, { method: "DELETE" }); await refresh("", true); } catch (err) { setFormMessage(editor, err.message); } finally { done(); }
+          try { await api(`/collections/${encodeURIComponent(editor.dataset.collectionId)}`, { method: "DELETE" }); scope.assertCurrent(); await refresh("", true); } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) setFormMessage(editor, err.message); } finally { if (scope.isCurrent()) done(); }
         });
       });
       if (focusID) [...list.querySelectorAll(".collection-editor")].find((editor) => editor.dataset.collectionId === focusID)?.querySelector("[data-collection-name]")?.focus();
       else if (focusHeading) document.querySelector("#collection-list-heading")?.focus();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       listMessage.textContent = err.message;
       listMessage.hidden = false;
     }
@@ -3682,10 +3818,11 @@ async function bindCollectionSettingsPanel() {
     setFormMessage(form);
     try {
       await api("/collections", { method: "POST", body: JSON.stringify({ name: document.querySelector("#collection-name").value, parent_id: parent.value }) });
+      scope.assertCurrent();
       form.reset();
       await refresh();
       setFormMessage(form, "Collection created.", "success");
-    } catch (err) { setFormMessage(form, err.message); } finally { done(); }
+    } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) setFormMessage(form, err.message); } finally { if (scope.isCurrent()) done(); }
   });
   await refresh();
 }
@@ -3727,25 +3864,28 @@ function tagSettingsPanel() {
   </section>`;
 }
 
-async function bindTagSettingsPanel() {
+async function bindTagSettingsPanel(scope) {
   const tagForm = document.querySelector("#tag-form");
   const aliasForm = document.querySelector("#tag-alias-form");
   if (!tagForm || !aliasForm) return;
-  await refreshTagSettings();
+  await refreshTagSettings(scope);
+  scope.assertCurrent();
   tagForm.addEventListener("submit", async (event) => {
     event.preventDefault();
     const done = setButtonBusy(event.submitter, "Creating");
     setFormMessage(tagForm);
     try {
       await api("/tags", { method: "POST", body: JSON.stringify({ name: document.querySelector("#tag-name").value }) });
+      scope.assertCurrent();
       document.querySelector("#tag-name").value = "";
-      await refreshTagSettings();
+      await refreshTagSettings(scope);
       ui.toast("Tag saved", "success");
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(tagForm, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   aliasForm.addEventListener("submit", async (event) => {
@@ -3760,19 +3900,22 @@ async function bindTagSettingsPanel() {
           alias: document.querySelector("#alias-name").value,
         }),
       });
+      scope.assertCurrent();
       document.querySelector("#alias-name").value = "";
       ui.toast("Alias saved", "success");
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(aliasForm, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
 
-async function refreshTagSettings() {
+async function refreshTagSettings(scope) {
   const result = await api("/tags").catch(() => ({ tags: [] }));
+  scope.assertCurrent();
   const tags = result.tags || [];
   const list = document.querySelector("#tag-list");
   const select = document.querySelector("#alias-tag");
@@ -3800,7 +3943,7 @@ function connectionsPanel() {
   </section>`;
 }
 
-async function bindConnectionsPanel() {
+async function bindConnectionsPanel(scope) {
   const status = document.querySelector("#x-status");
   if (!status) return;
   const connect = document.querySelector("#x-connect");
@@ -3810,6 +3953,7 @@ async function bindConnectionsPanel() {
   const refresh = async () => {
     try {
       const enabled = await api("/auth/x/enabled");
+      scope.assertCurrent();
       if (!enabled.enabled) {
         status.innerHTML = `<p class="meta">X is disabled. Ask an admin to configure X client keys and enable X integration.</p>`;
         connect.disabled = true;
@@ -3818,11 +3962,13 @@ async function bindConnectionsPanel() {
         return;
       }
       const current = await api("/auth/x/status");
+      scope.assertCurrent();
       status.innerHTML = xConnectionStatus(current);
       connect.hidden = current.connected;
       sync.disabled = !current.connected;
       disconnect.disabled = !current.connected;
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       status.innerHTML = `<p class="meta">${escapeHTML(err.message)}</p>`;
     }
   };
@@ -3836,56 +3982,68 @@ async function bindConnectionsPanel() {
         method: "POST",
         body: JSON.stringify({ code, state: oauthState }),
       });
+      scope.assertCurrent();
       ui.toast(`Connected X${current.x_username ? ` as @${current.x_username}` : ""}`, "success");
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       callbackError = err.message || "X authorization failed.";
       ui.toast(callbackError, "error");
     } finally {
-      const clean = new URL(location.href);
-      clean.search = "?section=connections";
-      history.replaceState({}, "", clean);
+      if (scope.isCurrent()) {
+        const clean = new URL(location.href);
+        clean.search = "?section=connections";
+        history.replaceState({}, "", clean);
+      }
     }
   }
   connect.addEventListener("click", async (event) => {
     const done = setButtonBusy(event.currentTarget, "Opening");
     try {
       const result = await api("/auth/x/connect");
+      scope.assertCurrent();
       if (result.auth_url) window.location.href = result.auth_url;
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   sync.addEventListener("click", async (event) => {
     const done = setButtonBusy(event.currentTarget, "Syncing");
     try {
       const result = await api("/auth/x/sync", { method: "POST", body: "{}" });
+      scope.assertCurrent();
       const created = Number(result.new_bookmarks || 0);
       const repaired = Number(result.repaired_bookmarks || 0);
       ui.toast(`Synced ${created} new and repaired ${repaired} bookmarks`, "success");
       await refresh();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   disconnect.addEventListener("click", async (event) => {
     const confirmed = await ui.confirmDestructive({ title: "Disconnect X", body: "This removes Arivu's stored X tokens. Saved bookmarks stay in Arivu.", confirm: "Disconnect", cancel: "Keep connected" });
     if (!confirmed) return;
+    scope.assertCurrent();
     const done = setButtonBusy(event.currentTarget, "Disconnecting");
     try {
       await api("/auth/x/disconnect", { method: "POST", body: "{}" });
+      scope.assertCurrent();
       ui.toast("X disconnected", "success");
       await refresh();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
   await refresh();
+  scope.assertCurrent();
   if (callbackError) {
     status.insertAdjacentHTML("afterbegin", `<p class="meta">${escapeHTML(callbackError)} Authorize X again. If this repeats, check the callback URL in Settings.</p>`);
   }
@@ -3970,7 +4128,7 @@ function apiKeysPanel() {
   </section>`;
 }
 
-async function bindAPIKeysPanel() {
+async function bindAPIKeysPanel(scope) {
   const form = document.querySelector("#api-keys-form");
   const status = document.querySelector("#api-key-status");
   if (!form || !status) return;
@@ -3978,18 +4136,21 @@ async function bindAPIKeysPanel() {
   const refresh = async () => {
     try {
       const keys = await api("/admin/api-keys");
+      scope.assertCurrent();
       status.innerHTML = apiKeyStatus(keys);
       status.querySelectorAll("[data-api-key-revert]").forEach((button) => {
         button.addEventListener("click", async () => {
           const done = setButtonBusy(button, "Reverting");
           try {
             await api(`/admin/api-keys/${button.dataset.apiKeyRevert}`, { method: "DELETE" });
+            scope.assertCurrent();
             await refresh();
             ui.toast("Override removed", "success");
           } catch (err) {
+            if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
             ui.toast(err.message, "error");
           } finally {
-            done();
+            if (scope.isCurrent()) done();
           }
         });
       });
@@ -3998,6 +4159,7 @@ async function bindAPIKeysPanel() {
       setModelProviderFields(form, "", keys);
       document.querySelector("#resend-from-email").value = keys.resend_from_email?.value || "";
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       status.innerHTML = `<p class="meta">${escapeHTML(err.status === 403 ? "Admin access required." : err.message)}</p>`;
     }
   };
@@ -4025,14 +4187,16 @@ async function bindAPIKeysPanel() {
     body.x_integration_enabled = document.querySelector("#x-integration-enabled").checked;
     try {
       await api("/admin/api-keys", { method: "PUT", body: JSON.stringify(body) });
+      scope.assertCurrent();
       form.reset();
       await refresh();
       ui.toast("API keys saved", "success");
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
@@ -4124,7 +4288,7 @@ function settingsStatus(settings) {
   return settingsStatusRows(settings, labels, "admin-setting-revert");
 }
 
-function bindAdminSettingsPanel() {
+function bindAdminSettingsPanel(scope) {
   const form = document.querySelector("#admin-settings-form");
   const status = document.querySelector("#admin-settings-status");
   if (!form || !status) return;
@@ -4133,7 +4297,7 @@ function bindAdminSettingsPanel() {
   bindModelProviderDefaults(form, "admin-");
   const refresh = async () => {
     const settings = await api("/admin/settings");
-    if (!form.isConnected || !status.isConnected) return;
+    scope.assertCurrent();
     status.innerHTML = settingsStatus(settings);
     field("#admin-app-url").value = settings.app_url?.value || "";
     field("#admin-signups-enabled").checked = Boolean(settings.signups_enabled?.value);
@@ -4149,13 +4313,18 @@ function bindAdminSettingsPanel() {
         const done = setButtonBusy(button, "Reverting");
         try {
           await api(`/admin/settings/${button.dataset.adminSettingRevert}`, { method: "DELETE" });
+          scope.assertCurrent();
           await refresh();
+          scope.assertCurrent();
           ui.toast("Override removed", "success");
         } catch (err) {
+          if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
           ui.toast(err.message, "error");
         } finally {
-          done();
-          mutationBusy = false;
+          if (scope.isCurrent()) {
+            done();
+            mutationBusy = false;
+          }
         }
       });
     });
@@ -4188,15 +4357,20 @@ function bindAdminSettingsPanel() {
     }
     try {
       await api("/admin/settings", { method: "PUT", body: JSON.stringify(body) });
+      scope.assertCurrent();
       form.querySelectorAll("input[type=password]").forEach((input) => { input.value = ""; });
       await refresh();
+      scope.assertCurrent();
       ui.toast("Settings saved", "success");
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
-      mutationBusy = false;
+      if (scope.isCurrent()) {
+        done();
+        mutationBusy = false;
+      }
     }
   });
 }
@@ -4242,10 +4416,11 @@ function importPanel() {
   </section>`;
 }
 
-async function bindImportPanel() {
+async function bindImportPanel(scope) {
   const form = document.querySelector("#import-form");
   if (!form) return;
   const jobs = await api("/import-jobs").catch(() => []);
+  scope.assertCurrent();
   renderImportJobs(jobs);
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -4257,11 +4432,14 @@ async function bindImportPanel() {
         headers: { "Content-Type": "text/plain" },
         body: document.querySelector("#import-content").value,
       });
+      scope.assertCurrent();
       setFormMessage(form, `${result.count || 0} bookmarks queued.`, "success");
       ui.toast(`${result.count || 0} bookmarks queued`, "success");
       const latest = await api("/import-jobs").catch(() => []);
+      scope.assertCurrent();
       if (result.import_job_id) {
         const detail = await api(`/import-jobs/${result.import_job_id}`).catch(() => null);
+        scope.assertCurrent();
         if (detail) {
           const index = latest.findIndex((job) => job.id === result.import_job_id);
           if (index >= 0) latest[index] = detail;
@@ -4269,17 +4447,18 @@ async function bindImportPanel() {
       }
       renderImportJobs(latest);
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
-  bindMediaImportPanel();
-  bindCalendarImportPanel();
+  bindMediaImportPanel(scope);
+  bindCalendarImportPanel(scope);
 }
 
-function bindMediaImportPanel() {
+function bindMediaImportPanel(scope) {
   const form = document.querySelector("#media-import-form");
   if (!form) return;
   form.addEventListener("submit", async (event) => {
@@ -4289,20 +4468,22 @@ function bindMediaImportPanel() {
     try {
       const formData = new FormData(form);
       const result = await api("/media/import", { method: "POST", body: formData });
+      scope.assertCurrent();
       const title = result.note?.title || "Imported media";
       setFormMessage(form, `Saved "${title}" as a searchable note.`, "success");
       ui.toast("Media imported as a note", "success");
       form.reset();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
 
-function bindCalendarImportPanel() {
+function bindCalendarImportPanel(scope) {
   const form = document.querySelector("#calendar-import-form");
   if (!form) return;
   form.addEventListener("submit", async (event) => {
@@ -4317,14 +4498,16 @@ function bindCalendarImportPanel() {
           ics: document.querySelector("#calendar-import-ics").value,
         }),
       });
+      scope.assertCurrent();
       setFormMessage(form, `${Number(result.count || 0)} meeting objects imported.`, "success");
       ui.toast(`${Number(result.count || 0)} meetings imported`, "success");
       form.reset();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(form, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
 }
@@ -4364,7 +4547,7 @@ function importSourceItems(items) {
   return `<div class="stack">${items.slice(0, 5).map((item) => `<p class="meta">${escapeHTML(item.source || "import")} · ${escapeHTML(item.title || item.url || "Imported item")}</p>`).join("")}</div>`;
 }
 
-async function reviewPage() {
+async function reviewPage(scope) {
   await requireUser();
   const [queue, memory] = await Promise.all([
     api("/review?limit=12"),
@@ -4375,7 +4558,7 @@ async function reviewPage() {
   const reviewEmpty = memoryID
     ? { eyebrow: "Caught up", title: "No additional review items due", body: "Finish the daily memory above and your review queue is clear." }
     : { eyebrow: "Clear", title: "No review items due", body: "Arivu will bring older or high-signal saves back when they are ready." };
-  setRoot(shell("Review", `<div class="home-view review-view">
+  setRoot(scope, shell("Review", `<div class="home-view review-view">
     ${homeViewTabs("review")}
     <section class="review-overview">
       ${memoryCard(memory)}
@@ -4390,17 +4573,17 @@ async function reviewPage() {
     </section>
   </div>`));
   document.querySelectorAll("[data-review-complete]").forEach((button) => {
-    button.addEventListener("click", () => reviewAction(button, "complete"));
+    button.addEventListener("click", () => reviewAction(scope, button, "complete"));
   });
   document.querySelectorAll("[data-review-snooze]").forEach((button) => {
-    button.addEventListener("click", () => reviewAction(button, "snooze"));
+    button.addEventListener("click", () => reviewAction(scope, button, "snooze"));
   });
   document.querySelectorAll("[data-review-archive]").forEach((button) => {
-    button.addEventListener("click", () => reviewAction(button, "archive"));
+    button.addEventListener("click", () => reviewAction(scope, button, "archive"));
   });
-  bindFeedbackControls();
-  bindActionItemControls();
-  bindReminderControls();
+  bindFeedbackControls(scope);
+  bindActionItemControls(scope);
+  bindReminderControls(scope);
 }
 
 function memoryCard(memory) {
@@ -4472,9 +4655,10 @@ function feedbackControls(itemType, itemID, surface, stateValue = "") {
   return `<div class="chips feedback-controls" aria-label="Feedback">${options.map(([value, label]) => `<button type="button" class="secondary ${stateValue === value ? "active" : ""}" data-feedback="${value}" data-feedback-type="${escapeHTML(itemType)}" data-feedback-id="${escapeHTML(itemID)}" data-feedback-surface="${escapeHTML(surface)}" aria-pressed="${stateValue === value}">${label}</button>`).join("")}</div>`;
 }
 
-function bindFeedbackControls() {
+function bindFeedbackControls(scope) {
   document.querySelectorAll("[data-feedback]").forEach((button) => {
     button.addEventListener("click", async () => {
+      scope.assertCurrent();
       const done = setButtonBusy(button, "Saving");
       try {
         await api("/feedback", {
@@ -4486,6 +4670,7 @@ function bindFeedbackControls() {
             feedback: button.dataset.feedback,
           }),
         });
+        scope.assertCurrent();
         button.closest(".feedback-controls")?.querySelectorAll("[data-feedback]").forEach((item) => {
           const active = item === button;
           item.classList.toggle("active", active);
@@ -4493,15 +4678,17 @@ function bindFeedbackControls() {
         });
         ui.toast("Feedback saved", "success");
       } catch (err) {
+        if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
         ui.toast(err.message, "error");
       } finally {
-        done();
+        if (scope.isCurrent()) done();
       }
     });
   });
 }
 
-async function reviewAction(button, action) {
+async function reviewAction(scope, button, action) {
+  scope.assertCurrent();
   const item = button.dataset.reviewComplete || button.dataset.reviewSnooze;
   const archiveItem = button.dataset.reviewArchive;
   const target = item || archiveItem;
@@ -4513,20 +4700,22 @@ async function reviewAction(button, action) {
     } else {
       await api(`/review/${target}/${action}`, { method: "POST", body: action === "snooze" ? JSON.stringify({ days: 7 }) : "{}" });
     }
+    scope.assertCurrent();
     ui.toast(action === "complete" ? "Review completed" : action === "archive" ? "Archived from review" : "Review snoozed", "success");
     render();
   } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
-    done();
+    if (scope.isCurrent()) done();
   }
 }
 
-async function duplicatesPage() {
+async function duplicatesPage(scope) {
   await requireUser();
   const result = await api("/bookmarks/duplicates/detect");
   const groups = result.duplicates || [];
-  setRoot(shell("Duplicates", `
+  setRoot(scope, shell("Duplicates", `
     <section class="panel">
       <span class="meta">Library hygiene</span>
       <h2>${groups.length} duplicate groups</h2>
@@ -4541,13 +4730,15 @@ async function duplicatesPage() {
       const ids = button.dataset.merge.split(",");
       const confirmed = await ui.confirmDestructive({ title: "Merge duplicates", body: "Merge this group into the top bookmark shown. Arivu keeps its URL and moves summaries, links, tags, notes, and reading history from the duplicates.", confirm: "Merge into top bookmark", cancel: "Keep separate" });
       if (!confirmed) return;
+      scope.assertCurrent();
       const done = setButtonBusy(button, "Merging");
       try {
         await api("/bookmarks/merge", { method: "POST", body: JSON.stringify(ids) });
+        scope.assertCurrent();
         ui.toast("Bookmarks merged", "success");
         render();
       } catch (err) {
-        ui.toast(err.message, "error");
+        if (!scope.signal.aborted && !routeLifecycle.isStale(err)) ui.toast(err.message, "error");
       } finally {
         done();
       }
@@ -4565,7 +4756,7 @@ function duplicateGroup(group) {
   </article>`;
 }
 
-async function graphPage() {
+async function graphPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
   const focus = params.get("focus") || "";
@@ -4573,7 +4764,7 @@ async function graphPage() {
   const nodes = (graph.nodes || []).slice(0, 48);
   const edges = (graph.edges || []).filter((edge) => nodes.some((node) => node.id === edge.from) && nodes.some((node) => node.id === edge.to)).slice(0, 160);
   const positions = graphPositions(nodes);
-  setRoot(shell("Graph", `
+  setRoot(scope, shell("Graph", `
     <section class="graph-intro">
       <div><p class="lede">Explore how sources, notes, people, concepts, and highlights relate.</p><p class="meta">A focused, bounded view · ${nodes.length} nodes · ${edges.length} relationships${graph.truncated ? " · expand intentionally" : ""}</p></div>
       <form class="graph-focus" id="graph-focus-form">
@@ -4609,7 +4800,7 @@ async function graphPage() {
     const value = document.querySelector("#graph-focus").value;
     navigate(`/graph${value ? `?focus=${encodeURIComponent(value)}` : ""}`);
   });
-  bindRelationshipFeedback();
+  bindRelationshipFeedback(scope);
   bindGraphViewport();
 }
 
@@ -4674,27 +4865,29 @@ function graphInspector(node, edges, nodes) {
     }).join("") || `<p class="meta">No visible relationships in this focused view.</p>`}</div>`;
 }
 
-function bindRelationshipFeedback() {
+function bindRelationshipFeedback(scope) {
   document.querySelectorAll("[data-relationship-feedback]").forEach((button) => button.addEventListener("click", async () => {
+    scope.assertCurrent();
     const done = setButtonBusy(button, "Saving");
     try {
       await api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "relationship", target_id: button.dataset.edgeId, feedback: button.dataset.relationshipFeedback, from: button.dataset.from || "", to: button.dataset.to || "" }) });
+      scope.assertCurrent();
       ui.toast(button.dataset.relationshipFeedback === "confirm" ? "Connection confirmed" : "Suggestion dismissed", "success");
       if (button.dataset.relationshipFeedback === "dismiss") button.closest("article")?.remove();
-    } catch (err) { ui.toast(err.message, "error"); } finally { done(); }
+    } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) ui.toast(err.message, "error"); } finally { if (scope.isCurrent()) done(); }
   }));
 }
 
-async function insightsPage() {
+async function insightsPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
-  if (params.get("legacy") === "evolution") return evolutionPage();
+  if (params.get("legacy") === "evolution") return evolutionPage(scope);
   const family = params.get("family") || "";
   const insightQuery = new URLSearchParams({ limit: "40" });
   if (family) insightQuery.set("family", family);
   const result = await api(`/insights?${insightQuery}`);
   const insights = result.insights || [];
-  setRoot(shell("Insights", `
+  setRoot(scope, shell("Insights", `
     <section class="insights-heading">
       <div><p class="lede">Patterns grounded in your own sources, with the evidence kept close.</p><p class="meta">Local detectors work without a model provider. Feedback shapes what returns.</p></div>
       <label for="insight-family">Pattern family<select id="insight-family">
@@ -4707,7 +4900,7 @@ async function insightsPage() {
     ${result.next_cursor ? `<button type="button" class="secondary" data-insight-more data-cursor="${escapeHTML(result.next_cursor)}">Load more</button>` : ""}
   `));
   document.querySelector("#insight-family")?.addEventListener("change", (event) => navigate(`/insights${event.currentTarget.value ? `?family=${encodeURIComponent(event.currentTarget.value)}` : ""}`));
-  bindInsightActions();
+  bindInsightActions(scope);
   recordInsightImpressions(insights);
 }
 
@@ -4747,24 +4940,32 @@ function insightNextAction(action, evidence) {
   return evidence ? `<a class="button" href="${knowledgeItemHref(evidence.type, evidence.id, evidence.title)}">Review evidence</a>` : "";
 }
 
-function bindInsightActions() {
+function bindInsightActions(scope) {
   document.querySelectorAll("[data-insight-feedback]:not([data-bound])").forEach((button) => {
     button.dataset.bound = "true";
     button.addEventListener("click", async () => {
+    if (!scope.isCurrent()) return;
     const card = button.closest("[data-insight-id]");
     const done = setButtonBusy(button, "Saving");
     try {
       const reason = button.dataset.insightFeedback === "not_useful" ? card.querySelector("[data-insight-reason]")?.value || "" : "";
       await api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "insight", target_id: card.dataset.insightId, feedback: button.dataset.insightFeedback, reason }) });
+      scope.assertCurrent();
       ui.toast("Insight feedback saved", "success");
       if (button.dataset.insightFeedback === "dismiss" || button.dataset.insightFeedback === "snooze") card.remove();
-    } catch (err) { ui.toast(err.message, "error"); } finally { done(); }
+    } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+      ui.toast(err.message, "error");
+    } finally {
+      if (scope.isCurrent()) done();
+    }
     });
   });
   document.querySelectorAll("[data-insight-next='capture-note']:not([data-bound])").forEach((button) => { button.dataset.bound = "true"; button.addEventListener("click", openCaptureComposer); });
   const moreButton = document.querySelector("[data-insight-more]:not([data-bound])");
   if (moreButton) moreButton.dataset.bound = "true";
   moreButton?.addEventListener("click", async (event) => {
+    if (!scope.isCurrent()) return;
     const button = event.currentTarget;
     const family = new URLSearchParams(location.search).get("family") || "";
     const query = new URLSearchParams({ limit: "40", cursor: button.dataset.cursor });
@@ -4772,13 +4973,23 @@ function bindInsightActions() {
     const done = setButtonBusy(button, "Loading");
     try {
       const result = await api(`/insights?${query}`);
-      if (result.restart_required) { ui.toast("Your library changed. Refreshing insights.", "info"); return insightsPage(); }
+      scope.assertCurrent();
+      if (result.restart_required) {
+        ui.toast("Your library changed. Refreshing insights.", "info");
+        render();
+        return;
+      }
       const items = result.insights || [];
       document.querySelector(".insight-list")?.insertAdjacentHTML("beforeend", items.map(insightCard).join(""));
       recordInsightImpressions(items);
       button.dataset.cursor = result.next_cursor || "";
-      if (!result.next_cursor) button.remove(); else { done(); bindInsightActions(); }
-    } catch (err) { ui.toast(err.message, "error"); done(); }
+      if (!result.next_cursor) button.remove(); else bindInsightActions(scope);
+    } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+      ui.toast(err.message, "error");
+    } finally {
+      if (scope.isCurrent()) done();
+    }
   });
 }
 
@@ -4788,7 +4999,7 @@ function recordInsightImpressions(insights) {
   queueMicrotask(() => api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "insight_impression", target_ids }) }).catch(() => {}));
 }
 
-async function adminPage() {
+async function adminPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
   const active = params.get("section") || "overview";
@@ -4815,7 +5026,7 @@ async function adminPage() {
     ["audit", "Audit"],
   ];
   const selected = tabs.some(([id]) => id === active) ? active : "overview";
-  setRoot(shell("Admin", `<section class="panel tabs" id="admin-tabs">
+  setRoot(scope, shell("Admin", `<section class="panel tabs" id="admin-tabs">
     <div class="tab-list" role="tablist" aria-label="Admin sections">
       ${tabs.map(([id, label]) => `<button type="button" role="tab" id="tab-${id}" aria-controls="panel-${id}" aria-selected="${id === selected}">${label}</button>`).join("")}
     </div>
@@ -4829,9 +5040,9 @@ async function adminPage() {
     <div role="tabpanel" id="panel-audit" aria-labelledby="tab-audit"><section class="stack">${auditEvents(audit.events || [])}</section></div>
   </section>`, { wide: true }));
   ui.tabs(document.querySelector("#admin-tabs"));
-  bindAdminUsagePanel();
-  bindAdminUsersPanel();
-  bindAdminSettingsPanel();
+  bindAdminUsagePanel(scope);
+  bindAdminUsersPanel(scope);
+  bindAdminSettingsPanel(scope);
 }
 
 function adminOverviewPanel(data) {
@@ -4914,17 +5125,19 @@ function adminFailedSummaries(summaries) {
   </table></div>`;
 }
 
-function bindAdminUsagePanel() {
+function bindAdminUsagePanel(scope) {
   document.querySelectorAll("[data-admin-retry-job]").forEach((button) => button.addEventListener("click", async () => {
     const jobID = button.dataset.adminRetryJob;
     const done = setButtonBusy(button, "Queueing");
     try {
       const result = await api(`/admin/jobs/${encodeURIComponent(jobID)}/retry`, { method: "POST", body: "{}" });
+      scope.assertCurrent();
       ui.toast(`Retry queued (${result.job_id})`, "success");
       render();
     } catch (err) {
-      ui.toast(err.message, "error");
-      done();
+      if (!scope.signal.aborted && !routeLifecycle.isStale(err)) ui.toast(err.message, "error");
+    } finally {
+      if (!scope.signal.aborted) done();
     }
   }));
   const selectedJobs = () => [...document.querySelectorAll("[data-admin-select-job]:checked")].map((input) => input.value);
@@ -4946,22 +5159,24 @@ function bindAdminUsagePanel() {
     document.querySelectorAll("[data-admin-select-job]").forEach((input) => { input.checked = event.currentTarget.checked; });
     updateSelection();
   });
-  document.querySelector("[data-admin-retry-selected]")?.addEventListener("click", (event) => runAdminBulkRetry(event.currentTarget, { job_ids: selectedJobs() }));
-  document.querySelectorAll("#panel-api [data-admin-retry-user]").forEach((button) => button.addEventListener("click", () => runAdminBulkRetry(button, { user_id: button.dataset.adminRetryUser })));
+  document.querySelector("[data-admin-retry-selected]")?.addEventListener("click", (event) => runAdminBulkRetry(scope, event.currentTarget, { job_ids: selectedJobs() }));
+  document.querySelectorAll("#panel-api [data-admin-retry-user]").forEach((button) => button.addEventListener("click", () => runAdminBulkRetry(scope, button, { user_id: button.dataset.adminRetryUser })));
   updateSelection();
 }
 
-async function runAdminBulkRetry(button, payload) {
+async function runAdminBulkRetry(scope, button, payload) {
   const done = setButtonBusy(button, "Queueing");
   try {
     const result = await api("/admin/jobs/retry", { method: "POST", body: JSON.stringify(payload) });
+    scope.assertCurrent();
     const queued = Number(result.queued_count || 0);
     const skipped = Number(result.failed_count || 0);
     ui.toast(`${queued} ${queued === 1 ? "job" : "jobs"} queued${skipped ? ` · ${skipped} skipped` : ""}`, queued ? "success" : "error");
     render();
   } catch (err) {
-    ui.toast(err.message, "error");
-    done();
+    if (!scope.signal.aborted && !routeLifecycle.isStale(err)) ui.toast(err.message, "error");
+  } finally {
+    if (!scope.signal.aborted) done();
   }
 }
 
@@ -5040,7 +5255,7 @@ function adminStat(label, value, meta) {
   return `<article class="panel"><span class="meta">${escapeHTML(label)}</span><h2>${escapeHTML(value === undefined || value === null || value === "" ? "0" : String(value))}</h2>${meta ? `<p class="meta">${escapeHTML(meta)}</p>` : ""}</article>`;
 }
 
-function bindAdminUsersPanel() {
+function bindAdminUsersPanel(scope) {
   const sortForm = document.querySelector("#admin-user-sort");
   sortForm?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -5053,45 +5268,51 @@ function bindAdminUsersPanel() {
     setFormMessage(inviteForm);
     try {
       await api("/admin/users/invite", { method: "POST", body: JSON.stringify({ email: document.querySelector("#admin-invite-email").value, name: document.querySelector("#admin-invite-name").value }) });
+      scope.assertCurrent();
       ui.toast("Invite created", "success");
       render();
     } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       setFormMessage(inviteForm, err.message);
       ui.toast(err.message, "error");
     } finally {
-      done();
+      if (scope.isCurrent()) done();
     }
   });
-  document.querySelectorAll("[data-admin-user-detail]").forEach((button) => button.addEventListener("click", () => showAdminUser(button.dataset.adminUserDetail)));
-  document.querySelectorAll("#panel-users [data-admin-retry-user]").forEach((button) => button.addEventListener("click", () => runAdminBulkRetry(button, { user_id: button.dataset.adminRetryUser })));
-  document.querySelectorAll("[data-admin-user-action]").forEach((button) => button.addEventListener("click", () => runAdminUserAction(button)));
+  document.querySelectorAll("[data-admin-user-detail]").forEach((button) => button.addEventListener("click", () => showAdminUser(scope, button.dataset.adminUserDetail)));
+  document.querySelectorAll("#panel-users [data-admin-retry-user]").forEach((button) => button.addEventListener("click", () => runAdminBulkRetry(scope, button, { user_id: button.dataset.adminRetryUser })));
+  document.querySelectorAll("[data-admin-user-action]").forEach((button) => button.addEventListener("click", () => runAdminUserAction(scope, button)));
 }
 
-async function showAdminUser(userID) {
+async function showAdminUser(scope, userID) {
   try {
     const user = await api(`/admin/users/${userID}`);
+    scope.assertCurrent();
     const body = document.createElement("div");
     body.className = "stack";
     body.innerHTML = `<p><strong>${escapeHTML(user.email || "")}</strong> <span class="meta">${escapeHTML(user.name || "")}</span></p>
       <p class="meta">${formatCount(user.bookmark_count)} bookmarks · ${formatCount(user.collection_count)} collections · ${user.banned ? "Banned" : "Active"}</p>
       ${(user.recent_bookmarks || []).map((item) => `<p class="meta">${formatDate(item.created_at)} · ${escapeHTML(item.title || item.url || "Untitled")}</p>`).join("")}`;
     await ui.dialog({ title: "User detail", body, actions: [{ label: "Close", value: true, kind: "secondary" }] });
+    scope.assertCurrent();
   } catch (err) {
-    ui.toast(err.message, "error");
+    if (!scope.signal.aborted && !routeLifecycle.isStale(err)) ui.toast(err.message, "error");
   }
 }
 
-async function runAdminUserAction(button) {
+async function runAdminUserAction(scope, button) {
   const action = button.dataset.adminUserAction;
   const userID = button.dataset.userId;
   if (action === "delete") {
     const ok = await ui.confirmDestructive({ title: "Delete user", body: "Delete this user and all of their bookmarks, notes, collections, sessions, and account data? This cannot be undone.", confirm: "Delete user permanently", cancel: "Keep user" });
     if (!ok) return;
+    scope.assertCurrent();
   }
   let body = "{}";
   if (action === "reset-password") {
     const password = await requestAdminResetPassword();
     if (!password) return;
+    scope.assertCurrent();
     body = JSON.stringify({ new_password: password });
   }
   const done = setButtonBusy(button, "Working");
@@ -5099,10 +5320,11 @@ async function runAdminUserAction(button) {
     const method = action === "delete" ? "DELETE" : "POST";
     const path = action === "delete" ? `/admin/users/${userID}` : `/admin/users/${userID}/${action}`;
     await api(path, { method, body: method === "DELETE" ? undefined : body });
+    scope.assertCurrent();
     ui.toast("User updated", "success");
     render();
   } catch (err) {
-    ui.toast(err.message, "error");
+    if (!scope.signal.aborted && !routeLifecycle.isStale(err)) ui.toast(err.message, "error");
   } finally {
     done();
   }
@@ -5188,13 +5410,15 @@ async function requireUser() {
 }
 
 async function render() {
+  const scope = routeLifecycle.begin();
   state.pendingRoutes += 1;
   document.body.classList.add("is-routing");
   const route = routes.find(routeMatches);
   const page = route ? route.page : location.pathname === "/" ? () => navigate(state.user ? "/today" : "/auth", true) : dashboardPage;
   try {
     if (route?.access === "protected") await requireUser();
-    await page();
+    await page(scope);
+    scope.assertCurrent();
     syncRouteAccessibility();
     bindGlobalShellActions();
     ui.on(document, "keydown", globalKeyboardShortcuts);
@@ -5207,7 +5431,18 @@ async function render() {
       done();
     });
   } catch (err) {
-    if (err.message !== "auth required") ui.toast(err.message, "error");
+    if (scope.isCurrent() && !routeLifecycle.isStale(err) && err.message !== "auth required") {
+      setRoot(scope, shell("Page unavailable", `
+        <section class="panel empty-state" role="alert">
+          <p class="meta">This page could not be loaded.</p>
+          <h2>Try loading it again</h2>
+          <p>${escapeHTML(err.message)}</p>
+          <button type="button" id="route-retry">Retry</button>
+        </section>
+      `));
+      document.querySelector("#route-retry")?.addEventListener("click", () => render());
+      ui.toast(err.message, "error");
+    }
   } finally {
     state.pendingRoutes = Math.max(0, state.pendingRoutes - 1);
     if (state.pendingRoutes === 0) document.body.classList.remove("is-routing");

@@ -8,6 +8,13 @@ Arivu is not just a bookmark vault; it is a knowledge engine that processes URL 
 
 Saving a bookmark initiates several processing stages to build a structured graph:
 
+The initial local mutation is an aggregate command: the bookmark, explicitly
+requested collection/tags/annotation, Inbox state, pending summary, capture
+attempt, and durable processing job either commit together or all roll back.
+Provider-backed X ingestion uses a source-capture command with the same guarantee
+for its bookmark, evidence, pending summary, and job. Expensive extraction and
+analysis begin only after that short transaction commits.
+
 1. **Extraction**: `safefetch` validates URLs, enforces SSRF and size limits,
    removes chrome, and records complete, partial, metadata-only, or failed
    evidence with stable reasons. Direct HTTP capture retains image references
@@ -147,7 +154,9 @@ Second-brain v1 adds user-authored context around bookmarks:
 - Unified search has a durable per-user index for bookmarks and notes. The
   typed `/api/search/items` route returns ranked bookmark/note results with
   snippets and source links, and `/api/search/rebuild` exists as a
-  quota-protected repair path for imports or operator recovery.
+  quota-protected repair path for imports or operator recovery. Rebuilds prepare
+  all rows first and atomically replace regular and FTS projections, so a failure
+  preserves the prior complete search view.
 - The browser keeps bounded local read snapshots for high-use second-brain GET
   surfaces: saved pages, notes, Today inputs, Review, Inbox/work queues,
   reminders, memory jogger, and typed search. These snapshots make offline

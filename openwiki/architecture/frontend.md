@@ -12,6 +12,8 @@ Assets live under `internal/app/web/` and are embedded with `go:embed`.
   theme-color metadata, app mount, route progress indicator, and toast region.
 - `app.js`: client router, authenticated shell, API client, canonical and
   compatibility routes, shared UI primitives, and product screens.
+- `route-lifecycle.mjs`: generation-scoped route commits, abort signaling, and
+  route-owned listener cleanup that prevents stale asynchronous renders.
 - `styles.css`: Brightlight-derived light-only warm editorial tokens, responsive
   shell, component states, graph semantics, and reduced-motion handling.
 - `manifest.webmanifest`: install metadata, matching light-only `#fcfcf9`
@@ -80,7 +82,12 @@ and supports action clicks, context menus, keyboard saves, popup capture, and
 opt-in selected-text annotations. Page/link saves post to
 `POST /api/extension/bookmarks`; selected text posts `{url,title,quote,note}` to
 `POST /api/extension/annotations`. Both endpoints require an extension-audience
-token. Arivu-origin pages continue using the native reader annotation composer.
+token. Popup requests cross a message seam into the background worker, which
+owns API URL joining, bearer headers, JSON transport, normalized errors, and
+401 token cleanup. The broker accepts only the extension popup and exactly the
+collection-list and bookmark-create operations. Permission prompts remain
+popup-owned because optional origins require a user gesture. Arivu-origin pages
+continue using the native reader annotation composer.
 
 ## CLI And Agent Interfaces
 

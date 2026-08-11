@@ -215,6 +215,7 @@ func Reprocess(ctx context.Context, options ReprocessOptions) (ReprocessResult, 
 			payload, _ := json.Marshal(map[string]string{
 				"bookmark_id":               candidate.BookmarkID,
 				"url":                       candidate.URL,
+				"url_key":                   normalizeJobURL(candidate.URL),
 				"quality_reprocess_run_id":  runID,
 				"target_fetch_version":      TargetFetchVersion,
 				"target_summary_version":    TargetSummaryVersion,
@@ -238,6 +239,23 @@ func Reprocess(ctx context.Context, options ReprocessOptions) (ReprocessResult, 
 		return ReprocessResult{}, err
 	}
 	return result, nil
+}
+
+func normalizeJobURL(raw string) string {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Hostname() == "" {
+		return ""
+	}
+	values := parsed.Query()
+	for key := range values {
+		lower := strings.ToLower(key)
+		if strings.HasPrefix(lower, "utm_") || lower == "fbclid" || lower == "gclid" {
+			values.Del(key)
+		}
+	}
+	parsed.RawQuery = values.Encode()
+	parsed.Fragment = ""
+	return strings.ToLower(strings.TrimRight(parsed.String(), "/"))
 }
 
 type candidate struct {

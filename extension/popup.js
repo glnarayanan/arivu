@@ -1,7 +1,6 @@
 const DEFAULT_API_URL = 'https://arivu.app/api';
 const INLINE_ANNOTATION_ORIGINS = ['https://*/*', 'http://*/*'];
 
-let accessToken = null;
 let apiUrl = DEFAULT_API_URL;
 
 async function getApiUrl() {
@@ -36,17 +35,11 @@ async function init() {
   apiUrl = await getApiUrl();
 
   const tokenResult = await chrome.storage.session.get(['accessToken', 'refreshToken']);
-  accessToken = tokenResult.accessToken;
-
-  if (!accessToken) {
+  if (!tokenResult.accessToken) {
     document.getElementById('loginPrompt').style.display = 'block';
     const loginLink = document.getElementById('loginLink');
-    const baseUrl = apiUrl.replace('/api', '');
     try {
-      const parsed = new URL(baseUrl);
-      if (parsed.protocol === 'https:' || parsed.protocol === 'http:') {
-        loginLink.href = `${baseUrl}/auth`;
-      }
+      loginLink.href = ArivuExtensionURL.appUrl(apiUrl, '/auth');
     } catch {
       // Invalid URL — keep default href from HTML
     }
@@ -65,11 +58,12 @@ async function init() {
 
 async function loadCollections() {
   try {
-    const response = await fetch(`${apiUrl}/extension/collections`, {
-      headers: { 'Authorization': `Bearer ${accessToken}` }
+    const response = await chrome.runtime.sendMessage({
+      action: 'apiRequest',
+      request: { path: '/extension/collections' },
     });
-    if (!response.ok) return;
-    const collections = await response.json();
+    if (!response?.success || !Array.isArray(response.data)) return;
+    const collections = response.data;
 
     const select = document.getElementById('collection');
     collections.forEach(col => {
@@ -112,28 +106,22 @@ document.getElementById('bookmarkForm').addEventListener('submit', async (e) => 
     if (note) payload.note = note;
     if (tags.length) payload.tags = tags;
 
-    const response = await fetch(`${apiUrl}/extension/bookmarks`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${accessToken}`
-      },
-      body: JSON.stringify(payload)
+    const response = await chrome.runtime.sendMessage({
+      action: 'apiRequest',
+      request: { path: '/extension/bookmarks', method: 'POST', body: payload },
     });
 
-    if (response.ok) {
-      const result = await response.json();
+    if (response?.success) {
+      const result = response.data;
       const bookmarkId = result?.bookmark?.id;
-      const baseUrl = apiUrl.replace(/\/api\/?$/, '');
       status.className = 'status success';
       status.textContent = 'Saved to Inbox';
       status.style.display = 'block';
       const actions = document.getElementById('savedActions');
-      actions.replaceChildren(savedLink(`${baseUrl}/inbox`, 'Open Inbox'));
-      if (bookmarkId) actions.appendChild(savedLink(`${baseUrl}/bookmark/${encodeURIComponent(bookmarkId)}`, 'Open Item'));
+      actions.replaceChildren(savedLink(ArivuExtensionURL.appUrl(apiUrl, '/inbox'), 'Open Inbox'));
+      if (bookmarkId) actions.appendChild(savedLink(ArivuExtensionURL.appUrl(apiUrl, `/bookmark/${encodeURIComponent(bookmarkId)}`), 'Open Item'));
       actions.style.display = 'grid';
-    } else if (response.status === 401) {
-      await chrome.storage.session.remove(['accessToken', 'refreshToken']);
+    } else if (response?.status === 401) {
       status.className = 'status error';
       status.textContent = 'Session expired — reopen Arivu to reconnect';
       status.style.display = 'block';

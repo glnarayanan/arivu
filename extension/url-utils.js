@@ -12,26 +12,37 @@ function normalizeApiUrl(value) {
   return parsed.toString().replace(/\/$/, '');
 }
 
+function joinApiUrl(apiUrl, path) {
+  const normalized = normalizeApiUrl(apiUrl);
+  if (typeof path !== 'string' || !path.startsWith('/') || path.startsWith('//')) {
+    throw new Error('API path must be root-relative');
+  }
+  const parsed = new URL(normalized);
+  parsed.pathname = `${parsed.pathname.replace(/\/$/, '')}${path}`;
+  return parsed.toString();
+}
+
+function appUrl(apiUrl, path = '/') {
+  const parsed = new URL(normalizeApiUrl(apiUrl));
+  parsed.pathname = parsed.pathname.replace(/\/api$/, '');
+  const suffix = String(path || '/');
+  if (!suffix.startsWith('/') || suffix.startsWith('//')) throw new Error('App path must be root-relative');
+  parsed.pathname = `${parsed.pathname.replace(/\/$/, '')}${suffix}`;
+  return parsed.toString();
+}
+
 function apiOriginPattern(value) {
   const parsed = new URL(value);
   return `${parsed.protocol}//${parsed.hostname}/*`;
 }
 
 function builtInApiOrigin(pattern) {
-  return pattern === 'https://arivu.app/*' || pattern === 'http://localhost/*';
+  return pattern === 'https://arivu.app/*';
 }
 
 function senderOriginAllowed(senderUrl, apiUrl) {
-  if (!senderUrl) return false;
-  const allowedOrigins = new Set(['https://arivu.app', 'http://localhost']);
   try {
-    allowedOrigins.add(new URL(apiUrl).origin);
-  } catch {
-    // Invalid custom URL should not block the built-in origins.
-  }
-  try {
-    const parsed = new URL(senderUrl);
-    return parsed.hostname === 'localhost' || allowedOrigins.has(parsed.origin);
+    return new URL(senderUrl).origin === new URL(normalizeApiUrl(apiUrl)).origin;
   } catch {
     return false;
   }
@@ -39,6 +50,8 @@ function senderOriginAllowed(senderUrl, apiUrl) {
 
 globalThis.ArivuExtensionURL = {
   normalizeApiUrl,
+  joinApiUrl,
+  appUrl,
   apiOriginPattern,
   builtInApiOrigin,
   senderOriginAllowed,

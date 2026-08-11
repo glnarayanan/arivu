@@ -113,6 +113,25 @@ The full tables structure is declared in `/internal/database/schema.sql`. It mod
   relationship feedback. Library rows, graph nodes/edges, and insights are
   read-time projections rather than duplicate durable content tables.
 
+User-visible aggregate commands keep required writes in short SQLite
+transactions. Bookmark capture commits the bookmark, requested collection,
+manual tags and annotation, initial state and summary, capture attempt, and
+durable processing job together. Note creation/deletion, X-source ingestion and
+repair, and administrative processing retry use the same ownership rule. HTTP
+and provider adapters validate and translate requests but do not reproduce those
+persistence invariants. Network fetches, browser capture, model calls, and email
+remain outside database transactions.
+
+Unified search is a derived projection. A rebuild computes replacement rows
+before opening its write transaction, then replaces both `search_index` and
+`search_fts` atomically when FTS5 is available; LIKE-only installations replace
+the regular projection atomically. Rebuilds are serialized so an older snapshot
+cannot publish after a newer one. A failed rebuild leaves the previous complete
+projection available and is logged; mutation success does not depend on
+rebuilding derived search state. Explicit item deletion removes its projection
+inside the source transaction so failed best-effort rebuilding cannot expose
+deleted private content.
+
 The current knowledge redesign needs no blocking startup backfill. Existing
 bookmarks, notes, daily notes, annotations, objects, entities, concepts, links,
 and embeddings become visible through projections immediately. Missing

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -186,19 +187,14 @@ func (s *Service) CreateNote(w http.ResponseWriter, r *http.Request, user auth.U
 		writeError(w, http.StatusBadRequest, "Note body is too large")
 		return
 	}
-	if body.BookmarkID != "" && !s.bookmarkExists(r.Context(), user.ID, body.BookmarkID) {
+	id, err := s.CreateNoteCommand(r.Context(), CreateNoteInput{UserID: user.ID, Title: title, Body: text, BookmarkID: body.BookmarkID})
+	if errors.Is(err, sql.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "Bookmark not found")
 		return
 	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	id := ids.New()
-	if _, err := s.db.ExecContext(r.Context(), `INSERT INTO notes(id,user_id,title,body,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, user.ID, title, text, "manual", now, now); err != nil {
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not create note")
 		return
-	}
-	_ = s.upsertItemState(r.Context(), user.ID, "note", id, "inbox", 0, "", now)
-	if body.BookmarkID != "" {
-		_, _ = s.db.ExecContext(r.Context(), `INSERT INTO bookmark_notes(bookmark_id,note_id,user_id,created_at) VALUES(?,?,?,?)`, body.BookmarkID, id, user.ID, now)
 	}
 	note, _ := s.note(r.Context(), user.ID, id)
 	s.decorateNote(r.Context(), user.ID, note)
@@ -252,16 +248,15 @@ func (s *Service) decorateNote(ctx context.Context, userID string, note map[stri
 }
 
 func (s *Service) DeleteNote(w http.ResponseWriter, r *http.Request, user auth.User) {
-	res, _ := s.db.ExecContext(r.Context(), `DELETE FROM notes WHERE id=? AND user_id=?`, r.PathValue("id"), user.ID)
-	if n, _ := res.RowsAffected(); n == 0 {
+	deleted, err := s.DeleteItemCommand(r.Context(), user.ID, "note", r.PathValue("id"))
+	if err != nil {
+		writeError(w, 500, "Could not delete note")
+		return
+	}
+	if !deleted {
 		writeError(w, http.StatusNotFound, "Note not found")
 		return
 	}
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM action_items WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM reminders WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM item_states WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM review_events WHERE user_id=? AND item_type='note' AND item_id=?`, user.ID, r.PathValue("id"))
-	_, _ = s.db.ExecContext(r.Context(), `DELETE FROM item_links WHERE user_id=? AND ((from_type='note' AND from_id=?) OR (to_type='note' AND to_id=?))`, user.ID, r.PathValue("id"), r.PathValue("id"))
 	s.refreshSearchIndex(r.Context(), user.ID)
 	writeJSON(w, http.StatusOK, map[string]any{"message": "Note deleted"})
 }

@@ -4,9 +4,11 @@ function getCookie(name) {
 
 async function fetchExtensionTokens() {
   try {
-    const apiBase = window.location.origin + '/api';
+    const context = await chrome.runtime.sendMessage({ action: 'tokenBootstrapContext' });
+    if (!context?.success || !context.apiUrl) return;
+
     const csrf = getCookie('csrf_token');
-    const response = await fetch(`${apiBase}/auth/extension-token`, {
+    const response = await fetch(`${context.apiUrl}/auth/extension-token`, {
       method: 'POST',
       credentials: 'include',
       headers: csrf ? { 'X-CSRF-Token': csrf } : {},
@@ -28,24 +30,3 @@ async function fetchExtensionTokens() {
 }
 
 fetchExtensionTokens();
-
-window.addEventListener('message', (event) => {
-  if (event.source !== window) return;
-
-  if (event.data.type === 'ARIVU_SAVE_TOKENS') {
-    chrome.runtime.sendMessage({
-      action: 'saveTokens',
-      accessToken: event.data.accessToken,
-      refreshToken: event.data.refreshToken,
-    });
-  }
-
-  // Legacy support
-  if (event.data.type === 'ARIVU_SAVE_TOKEN') {
-    chrome.runtime.sendMessage({
-      action: 'saveTokens',
-      accessToken: event.data.token,
-      refreshToken: event.data.token,
-    });
-  }
-});

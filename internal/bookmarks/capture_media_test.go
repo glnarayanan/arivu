@@ -276,7 +276,7 @@ func TestBookmarkMergeDoesNotCopyDeletedBookmarkMediaReferences(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := mergeOneBookmark(t.Context(), tx, "user-1", "bookmark-1", "bookmark-2"); err != nil {
+	if err := mergeOneBookmark(t.Context(), tx, "user-1", "bookmark-1", "bookmark-2", false); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
