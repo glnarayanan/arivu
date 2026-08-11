@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+tool_root="$HOME/.local/share/arivu-orb"
+bin_dir="$HOME/.local/bin"
+go_version="1.25.12"
+node_version="22.23.1"
+
+step() {
+	printf '\n==> %s\n' "$1"
+}
+
+elapsed() {
+	local started="$1"
+	local label="$2"
+	printf '    %s completed in %ss\n' "$label" "$((SECONDS - started))"
+}
+
+install_system_packages() {
+	local missing=()
+	local package
+	for package in build-essential ca-certificates curl xz-utils; do
+		if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q '^install ok installed$'; then
+			missing+=("$package")
+		fi
+	done
+	if ((${#missing[@]} == 0)); then
+		echo "    system packages already installed"
+		return
+	fi
+
+	local apt=(apt-get)
+	if ((EUID != 0)); then
+		apt=(sudo -n apt-get)
+	fi
+	"${apt[@]}" update
+	"${apt[@]}" install -y --no-install-recommends "${missing[@]}"
+}
+
+install_go() {
+	local arch archive_url checksum_url install_dir archive checksum
+	case "$(uname -m)" in
+		x86_64) arch="amd64" ;;
+		aarch64|arm64) arch="arm64" ;;
+		*) echo "unsupported architecture: $(uname -m)" >&2; return 1 ;;
+	esac
+	install_dir="$tool_root/go-$go_version"
+	if [[ -x "$install_dir/bin/go" ]] && [[ "$($install_dir/bin/go version)" == "go version go$go_version "* ]]; then
+		echo "    Go $go_version already installed"
+	else
+		archive_url="https://dl.google.com/go/go${go_version}.linux-${arch}.tar.gz"
+		checksum_url="${archive_url}.sha256"
+		archive="$(mktemp)"
+		checksum="$(mktemp)"
+		trap 'rm -f "$archive" "$checksum"' RETURN
+		curl -fsSL --retry 3 -o "$archive" "$archive_url"
+		curl -fsSL --retry 3 -o "$checksum" "$checksum_url"
+		printf '%s  %s\n' "$(tr -d '[:space:]' < "$checksum")" "$archive" | sha256sum -c -
+		rm -rf "$install_dir"
+		mkdir -p "$install_dir"
+		tar -xzf "$archive" --strip-components=1 -C "$install_dir"
+		trap - RETURN
+		rm -f "$archive" "$checksum"
+	fi
+	ln -sfn "$install_dir/bin/go" "$bin_dir/go"
+	ln -sfn "$install_dir/bin/gofmt" "$bin_dir/gofmt"
+}
+
+install_node() {
+	local arch archive_name base_url install_dir archive checksums expected
+	case "$(uname -m)" in
+		x86_64) arch="x64" ;;
+		aarch64|arm64) arch="arm64" ;;
+		*) echo "unsupported architecture: $(uname -m)" >&2; return 1 ;;
+	esac
+	install_dir="$tool_root/node-$node_version"
+	if [[ -x "$install_dir/bin/node" ]] && [[ "$($install_dir/bin/node --version)" == "v$node_version" ]]; then
+		echo "    Node.js $node_version already installed"
+	else
+		archive_name="node-v${node_version}-linux-${arch}.tar.xz"
+		base_url="https://nodejs.org/dist/v${node_version}"
+		archive="$(mktemp)"
+		checksums="$(mktemp)"
+		trap 'rm -f "$archive" "$checksums"' RETURN
+		curl -fsSL --retry 3 -o "$archive" "$base_url/$archive_name"
+		curl -fsSL --retry 3 -o "$checksums" "$base_url/SHASUMS256.txt"
+		expected="$(awk -v name="$archive_name" '$2 == name { print $1 }' "$checksums")"
+		[[ -n "$expected" ]] || { echo "checksum not found for $archive_name" >&2; return 1; }
+		printf '%s  %s\n' "$expected" "$archive" | sha256sum -c -
+		rm -rf "$install_dir"
+		mkdir -p "$install_dir"
+		tar -xJf "$archive" --strip-components=1 -C "$install_dir"
+		trap - RETURN
+		rm -f "$archive" "$checksums"
+	fi
+	local command
+	for command in node npm npx corepack; do
+		ln -sfn "$install_dir/bin/$command" "$bin_dir/$command"
+	done
+}
+
+persist_path() {
+	local marker="# Arivu orb toolchain"
+	touch "$HOME/.bash_profile"
+	if ! grep -Fqx "$marker" "$HOME/.bash_profile"; then
+		cat >> "$HOME/.bash_profile" <<'EOF'
+
+# Arivu orb toolchain
+case ":$PATH:" in
+	*:"$HOME/.local/bin":*) ;;
+	*) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
+EOF
+	fi
+	export PATH="$bin_dir:$PATH"
+}
+
+install_dependencies() {
+	local lock_hash stamp
+	lock_hash="$(sha256sum "$repo_root/capture/package-lock.json" | awk '{print $1}')"
+	stamp="$repo_root/capture/node_modules/.amp-package-lock.sha256"
+	if [[ -f "$stamp" ]] && [[ "$(cat "$stamp")" == "$lock_hash" ]]; then
+		echo "    capture dependencies match package-lock.json"
+	else
+		npm ci --prefix "$repo_root/capture"
+		printf '%s\n' "$lock_hash" > "$stamp"
+	fi
+	go mod download
+}
+
+mkdir -p "$tool_root" "$bin_dir"
+
+step "Checking system packages"
+started=$SECONDS
+install_system_packages
+elapsed "$started" "system package check"
+
+step "Installing pinned toolchains"
+started=$SECONDS
+install_go
+install_node
+persist_path
+elapsed "$started" "toolchain setup"
+
+step "Installing repository dependencies"
+started=$SECONDS
+cd "$repo_root"
+install_dependencies
+elapsed "$started" "dependency setup"
+
+printf '\nOrb setup complete: %s, Node.js %s\n' "$(go version)" "$(node --version)"
