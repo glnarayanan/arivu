@@ -18,9 +18,9 @@ Monolith reports exactly version 2.10.1.
 
 Direct package versions are exact in `package.json` and `package-lock.json`:
 
-- Playwright `1.61.1` and its pinned Chromium runtime (Apache-2.0).
+- Playwright `1.62.1` and its pinned Chromium runtime (Apache-2.0).
 - Mozilla Readability `0.6.0` (Apache-2.0).
-- JSDOM `29.1.1` (MIT).
+- JSDOM `30.0.1` (MIT).
 - Monolith `2.10.1` (CC0-1.0), installed as a separate executable.
 
 No dependency from this bundle may be imported into `internal/app/web`.
@@ -39,7 +39,7 @@ PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers
 /usr/local/lib/arivu-capture/node src/index.mjs
 ```
 
-Use Node `22.13.0` or newer. Production packaging pins Chromium through
+Use Node `22.22.2` or newer. Production packaging pins Chromium through
 Playwright and pins Monolith to `2.10.1`; it must not resolve either runtime to
 an unreviewed floating version.
 

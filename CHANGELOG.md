@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Upgraded the isolated capture runtime to Playwright 1.62.1 and JSDOM 30.0.1,
+  removing the vulnerable transitive Undici 7 dependency; raised its documented
+  Node.js minimum to 22.22.2. Also upgraded the bundled SQLite driver to 1.14.49
+  and GitHub Actions' Go setup action to v7.
+
 ## [1.5.0] - 2026-07-15
 
 - Fixed complete browser captures to fetch every image referenced by the
