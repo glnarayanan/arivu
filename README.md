@@ -92,7 +92,7 @@ updates `arivu`, `arivu-installer`, and the enabled capture runtime from one
 release, then rolls them back together if activation does not become healthy.
 Check installed versions with `arivu --version` and `arivu-installer --version`.
 
-For local development, use the Go version declared in `go.mod` (currently Go 1.25.12):
+For local development, use the Go version declared in `go.mod` (currently Go 1.25.13):
 
 ```bash
 go run ./cmd/arivu serve -addr 127.0.0.1:8080 -db arivu.sqlite3

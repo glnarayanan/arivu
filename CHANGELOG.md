@@ -4,6 +4,10 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Upgraded to Go 1.25.13 to fix six reachable standard-library vulnerabilities,
+  including denial-of-service flaws in URL, TLS, HTTP, XML, and ASN.1 handling.
+  Also upgraded `golang.org/x/crypto` to 0.55.0, `golang.org/x/net` to 0.58.0,
+  and the bundled SQLite driver to 1.14.50.
 - Made bookmark, note, X-source capture, deletion, and administrative retry
   workflows atomic across their required SQLite rows and durable processing
   jobs. Search-index rebuilds now prepare replacements before atomically swapping
