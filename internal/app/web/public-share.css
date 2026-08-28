@@ -1,13 +1,13 @@
 @font-face{font-family:Geist;src:url("/fonts/geist-variable.woff2") format("woff2");font-weight:100 900;font-display:swap}
 @font-face{font-family:"Noto Serif";src:url("/fonts/noto-serif-variable-latin.woff2") format("woff2");font-weight:100 900;font-display:swap}
-:root{color-scheme:light;--paper:oklch(98.73% .004 106.47);--panel:#fff;--sand:oklch(97.03% .007 88.64);--line:oklch(87% 0 0);--ink:oklch(20.5% 0 0);--muted:oklch(43.9% 0 0);--accent:oklch(45.78% .139 34.91);--accent-hover:oklch(35.02% .102 35.05);--accent-soft:oklch(96.37% .014 34.3);--focus:oklch(55.96% .174 34.81);font:16px Geist,"Segoe UI",sans-serif}
+:root{color-scheme:light;--paper:#fff;--panel:#fff;--sand:oklch(97.03% .007 88.64);--line:oklch(92.2% 0 0);--ink:oklch(20.5% 0 0);--muted:oklch(55.6% 0 0);--accent:oklch(64.47% .167 35.21);--accent-hover:oklch(55.96% .174 34.81);--accent-soft:oklch(96.37% .014 34.3);--focus:oklch(55.96% .174 34.81);font:16px Geist,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
 body{min-height:100vh;margin:0;background:var(--paper);color:var(--ink);line-height:1.6}
 header,main{width:min(900px,calc(100% - 32px));margin-inline:auto}
 header{padding:56px 0 32px;border-bottom:1px dashed var(--line)}
-header::before{content:"Arivu";display:block;margin-bottom:24px;color:var(--accent);font:650 1rem/1 "Noto Serif",serif}
-h1,h2{font-family:"Noto Serif",Georgia,serif;letter-spacing:-.025em;text-wrap:balance}
-h1{max-width:18ch;margin:0;font-size:clamp(2rem,7vw,4.5rem);line-height:1.05}
+header::before{content:"Arivu";display:block;margin-bottom:24px;color:var(--ink);font:500 1.125rem/1 "Noto Serif",serif}
+h1,h2{font-family:"Noto Serif",Georgia,serif;font-weight:500;letter-spacing:-.025em;text-wrap:balance}
+h1{max-width:18ch;margin:0;font-size:clamp(1.5rem,4vw,2.25rem);line-height:1.15}
 #d{max-width:70ch;color:var(--muted);text-wrap:pretty}
 label{display:inline-grid;gap:6px;margin:20px 12px 0 0;color:var(--muted);font-size:.8125rem;font-weight:650;vertical-align:top}
 input,select{min-height:44px;margin:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);padding:0 12px;font:inherit}

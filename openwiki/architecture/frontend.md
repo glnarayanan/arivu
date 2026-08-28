@@ -8,15 +8,16 @@ separate frontend build.
 
 Assets live under `internal/app/web/` and are embedded with `go:embed`.
 
-- `index.html`: accessible root document, light warm-sand `#fcfcf9`
-  theme-color metadata, app mount, route progress indicator, and toast region.
+- `index.html`: accessible root document, white `#ffffff` theme-color
+  metadata, app mount, route progress indicator, and toast region.
 - `app.js`: client router, authenticated shell, API client, canonical and
   compatibility routes, shared UI primitives, and product screens.
 - `route-lifecycle.mjs`: generation-scoped route commits, abort signaling, and
   route-owned listener cleanup that prevents stale asynchronous renders.
-- `styles.css`: Brightlight-derived light-only warm editorial tokens, responsive
-  shell, component states, graph semantics, and reduced-motion handling.
-- `manifest.webmanifest`: install metadata, matching light-only `#fcfcf9`
+- `styles.css`: Brightlight-derived light-only tokens (white canvas, dashed
+  rails, `--accent-500` pills), responsive shell, component states, graph
+  semantics, and reduced-motion handling.
+- `manifest.webmanifest`: install metadata, matching light-only `#ffffff`
   background/theme colors, and the compatible GET share target into
   `/dashboard`.
 - `sw.js`: app-shell and first-party font cache; `/api/*` remains network-only.

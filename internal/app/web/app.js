@@ -596,18 +596,21 @@ function shell(title, content, { wide = false } = {}) {
 async function authPage(scope) {
   setRoot(scope, `
     <main class="auth">
-      <section class="panel">
-        <h1>Arivu</h1>
-        <p class="meta">Save pages worth remembering, then turn them into summaries, signals, and connections.</p>
-        <form class="form" id="login-form">
-          <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="username"></div>
-          <div class="field"><label for="password">Password</label><input id="password" type="password" required autocomplete="current-password"></div>
-          <p class="form-message" id="auth-message" data-form-message hidden></p>
-          <button type="submit">Sign in</button>
-          <button type="button" class="secondary" id="signup">Create account</button>
-          <a class="text-link" href="/reset-password">Forgot password?</a>
-        </form>
-      </section>
+      <div class="auth-layout">
+        <section class="auth-form">
+          <h1>Arivu</h1>
+          <p class="lede">Save pages worth remembering, then turn them into summaries, signals, and connections.</p>
+          <form class="form" id="login-form">
+            <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="username"></div>
+            <div class="field"><label for="password">Password</label><input id="password" type="password" required autocomplete="current-password"></div>
+            <p class="form-message" id="auth-message" data-form-message hidden></p>
+            <button type="submit">Sign in</button>
+            <button type="button" class="secondary" id="signup">Create account</button>
+            <a class="text-link" href="/reset-password">Forgot password?</a>
+          </form>
+        </section>
+        <aside class="auth-panel" aria-hidden="true"></aside>
+      </div>
     </main>
   `);
   const form = document.querySelector("#login-form");
@@ -656,11 +659,14 @@ async function resetPasswordPage(scope) {
   const token = new URLSearchParams(location.search).get("token") || "";
   setRoot(scope, `
     <main class="auth">
-      <section class="panel">
-        <p class="meta">Account recovery</p>
-        <h1>Reset password</h1>
-        ${token ? resetPasswordForm() : forgotPasswordForm()}
-      </section>
+      <div class="auth-layout">
+        <section class="auth-form">
+          <h1>Reset password</h1>
+          <p class="lede">Account recovery for a workspace you already host.</p>
+          ${token ? resetPasswordForm() : forgotPasswordForm()}
+        </section>
+        <aside class="auth-panel" aria-hidden="true"></aside>
+      </div>
     </main>
   `);
   const form = document.querySelector("#reset-form");
@@ -717,18 +723,20 @@ function resetPasswordForm() {
 async function acceptInvitePage(scope) {
   setRoot(scope, `
     <main class="auth">
-      <section class="panel">
-        <p class="meta">Invited account</p>
-        <h1>Accept invite</h1>
-        <p>Use the email and temporary password your admin provided. You can change the password after signing in.</p>
-        <form class="form" id="invite-form">
-          <div class="field"><label for="invite-email">Email</label><input id="invite-email" type="email" required autocomplete="username"></div>
-          <div class="field"><label for="invite-password">Temporary password</label><input id="invite-password" type="password" required autocomplete="current-password"></div>
-          <p class="form-message" id="invite-message" data-form-message hidden></p>
-          <button type="submit">Sign in</button>
-          <a class="text-link" href="/reset-password">Need a new password?</a>
-        </form>
-      </section>
+      <div class="auth-layout">
+        <section class="auth-form">
+          <h1>Accept invite</h1>
+          <p class="lede">Use the email and temporary password your admin provided. You can change the password after signing in.</p>
+          <form class="form" id="invite-form">
+            <div class="field"><label for="invite-email">Email</label><input id="invite-email" type="email" required autocomplete="username"></div>
+            <div class="field"><label for="invite-password">Temporary password</label><input id="invite-password" type="password" required autocomplete="current-password"></div>
+            <p class="form-message" id="invite-message" data-form-message hidden></p>
+            <button type="submit">Sign in</button>
+            <a class="text-link" href="/reset-password">Need a new password?</a>
+          </form>
+        </section>
+        <aside class="auth-panel" aria-hidden="true"></aside>
+      </div>
     </main>
   `);
   const form = document.querySelector("#invite-form");
