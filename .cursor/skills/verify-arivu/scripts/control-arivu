@@ -1,0 +1,299 @@
+#!/usr/bin/env bash
+# Verification scaffolding. Isolated Arivu instances for agent proofs.
+set -euo pipefail
+
+SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ROOT="$(cd "$SKILL_DIR/../../.." && pwd)"
+RUNS_DIR="$SKILL_DIR/runs"
+ARTIFACTS_DIR="$SKILL_DIR/artifacts"
+DEFAULT_EMAIL="verify@arivu.test"
+DEFAULT_PASSWORD="VerifyPass9"
+
+die() {
+  echo "control-arivu: $*" >&2
+  exit 1
+}
+
+usage() {
+  cat <<'EOF'
+control-arivu launch
+control-arivu doctor
+control-arivu env
+control-arivu signup
+control-arivu login
+control-arivu api METHOD PATH [JSON_BODY]
+control-arivu db -- <sqlite3 args>
+control-arivu cli -- <arivu args>
+control-arivu stop
+
+Launch starts serve in a new session. Reads ARIVU_VERIFY_RUN_ID, or the newest run.
+Never targets :8080 unless this run's PID owns that port.
+Never runs `arivu login` against the operator HOME.
+EOF
+}
+
+latest_run_id() {
+  if [[ -n "${ARIVU_VERIFY_RUN_ID:-}" ]]; then
+    printf '%s\n' "$ARIVU_VERIFY_RUN_ID"
+    return
+  fi
+  [[ -d "$RUNS_DIR" ]] || die "no runs; launch first"
+  local latest
+  latest="$(ls -1t "$RUNS_DIR" 2>/dev/null | head -n 1 || true)"
+  [[ -n "$latest" ]] || die "no runs; launch first"
+  printf '%s\n' "$latest"
+}
+
+state_file() {
+  printf '%s\n' "$RUNS_DIR/$(latest_run_id)/state.env"
+}
+
+load_state() {
+  local file
+  file="$(state_file)"
+  [[ -f "$file" ]] || die "missing state $file"
+  # shellcheck disable=SC1090
+  source "$file"
+  : "${RUN_ID:?}" "${URL:?}" "${PID:?}" "${DB_PATH:?}" "${BIN:?}" "${DATA_DIR:?}"
+}
+
+write_state() {
+  local file="$RUNS_DIR/$RUN_ID/state.env"
+  mkdir -p "$(dirname "$file")"
+  cat >"$file" <<EOF
+RUN_ID=$(printf '%q' "$RUN_ID")
+ROOT=$(printf '%q' "$ROOT")
+DATA_DIR=$(printf '%q' "$DATA_DIR")
+DB_PATH=$(printf '%q' "$DB_PATH")
+ADDR=$(printf '%q' "$ADDR")
+URL=$(printf '%q' "$URL")
+PID=$(printf '%q' "$PID")
+BIN=$(printf '%q' "$BIN")
+SECRET_KEY=$(printf '%q' "$SECRET_KEY")
+EMAIL=$(printf '%q' "$EMAIL")
+PASSWORD=$(printf '%q' "$PASSWORD")
+COOKIE_JAR=$(printf '%q' "$COOKIE_JAR")
+HOME_DIR=$(printf '%q' "$HOME_DIR")
+LOG_FILE=$(printf '%q' "$LOG_FILE")
+ARTIFACT_DIR=$(printf '%q' "$ARTIFACT_DIR")
+EOF
+}
+
+csrf_token() {
+  awk -F '\t' '$0 !~ /^#/ && $6 == "csrf_token" { print $7; exit }' "$COOKIE_JAR"
+}
+
+listen_pid() {
+  local port="${ADDR##*:}"
+  lsof -nP -t -iTCP:"$port" -sTCP:LISTEN 2>/dev/null | awk 'NR==1 { print; exit }'
+}
+
+wait_ready() {
+  local i
+  for i in $(seq 1 60); do
+    if curl -fsS "$URL/api/health" >/dev/null 2>&1; then
+      return 0
+    fi
+    if ! kill -0 "$PID" 2>/dev/null; then
+      die "server exited before ready; see $LOG_FILE"
+    fi
+    sleep 0.25
+  done
+  kill "$PID" 2>/dev/null || true
+  die "timed out waiting for $URL/api/health; see $LOG_FILE"
+}
+
+cmd_launch() {
+  command -v go >/dev/null || die "go is required"
+  command -v curl >/dev/null || die "curl is required"
+  command -v lsof >/dev/null || die "lsof is required"
+
+  RUN_ID="verify-$(date +%Y%m%dT%H%M%S)-$RANDOM"
+  DATA_DIR="/tmp/arivu-verify-$RUN_ID"
+  mkdir -p "$DATA_DIR" "$RUNS_DIR/$RUN_ID" "$SKILL_DIR/artifacts/$RUN_ID"
+  DB_PATH="$DATA_DIR/arivu.sqlite3"
+  BIN="$DATA_DIR/arivu"
+  COOKIE_JAR="$DATA_DIR/cookies.txt"
+  HOME_DIR="$DATA_DIR/home"
+  LOG_FILE="$DATA_DIR/serve.log"
+  ARTIFACT_DIR="$SKILL_DIR/artifacts/$RUN_ID"
+  EMAIL="$DEFAULT_EMAIL"
+  PASSWORD="$DEFAULT_PASSWORD"
+  SECRET_KEY="verify-secret-$RUN_ID-32-bytes-min"
+  mkdir -p "$HOME_DIR"
+
+  local port
+  port="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1]); s.close()')"
+  ADDR="127.0.0.1:$port"
+  URL="http://$ADDR"
+
+  (
+    cd "$ROOT"
+    GOCACHE="${GOCACHE:-/private/tmp/arivu-build-cache}" CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o "$BIN" ./cmd/arivu
+  )
+
+  PID="$(python3 - "$BIN" "$ADDR" "$DB_PATH" "$LOG_FILE" "$URL" "$SECRET_KEY" <<'PY'
+import os, subprocess, sys
+bin_path, addr, db_path, log_file, app_url, secret = sys.argv[1:]
+env = os.environ.copy()
+env.update({
+    "SIGNUPS_ENABLED": "true",
+    "COOKIE_SECURE": "false",
+    "APP_URL": app_url,
+    "SECRET_KEY": secret,
+    "ARIVU_BROWSER_CAPTURE_ENABLED": "false",
+})
+with open(log_file, "ab") as log:
+    proc = subprocess.Popen(
+        [bin_path, "serve", "-addr", addr, "-db", db_path],
+        stdin=subprocess.DEVNULL,
+        stdout=log,
+        stderr=subprocess.STDOUT,
+        env=env,
+        start_new_session=True,
+        close_fds=True,
+    )
+print(proc.pid)
+PY
+)"
+  write_state
+  wait_ready
+  if [[ "$(listen_pid)" != "$PID" ]]; then
+    kill "$PID" 2>/dev/null || true
+    die "listen PID mismatch after launch"
+  fi
+  export ARIVU_VERIFY_RUN_ID="$RUN_ID"
+  cat <<EOF
+RUN_ID=$RUN_ID
+URL=$URL
+ADDR=$ADDR
+DB_PATH=$DB_PATH
+ARTIFACT_DIR=$ARTIFACT_DIR
+EMAIL=$EMAIL
+PASSWORD=$PASSWORD
+EOF
+}
+
+cmd_doctor() {
+  load_state
+  kill -0 "$PID" 2>/dev/null || die "PID $PID is not running"
+  local owner
+  owner="$(listen_pid)"
+  [[ "$owner" == "$PID" ]] || die "port ${ADDR##*:} is owned by pid ${owner:-none}, not $PID"
+  local health version me
+  health="$(curl -fsS "$URL/api/health")"
+  printf '%s\n' "$health" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("status")=="ok" and d.get("stack")=="go-sqlite", d'
+  version="$("$BIN" --version)"
+  [[ "$version" == arivu* ]] || die "unexpected version: $version"
+  [[ -x "$BIN" && "$BIN" == "$DATA_DIR/arivu" ]] || die "binary is not this run's $DATA_DIR/arivu"
+  curl -fsS -o /dev/null "$URL/auth"
+  if [[ -s "$COOKIE_JAR" ]]; then
+    me="$(curl -fsS -b "$COOKIE_JAR" "$URL/api/auth/me")"
+    printf '%s\n' "$me" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert d.get("email"), d'
+  fi
+  cat <<EOF
+ok
+RUN_ID=$RUN_ID
+URL=$URL
+PID=$PID
+BIN=$BIN
+VERSION=$version
+HEALTH=$health
+COOKIE_JAR=$COOKIE_JAR
+EOF
+}
+
+cmd_env() {
+  load_state
+  cat "$(state_file)"
+}
+
+cmd_signup() {
+  load_state
+  local body
+  body="$(curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" \
+    "$URL/api/auth/signup")"
+  printf '%s\n' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "access_token" in d or "detail" in d, d; print(json.dumps(d, indent=2)); raise SystemExit(0 if "access_token" in d else 1)'
+}
+
+cmd_login() {
+  load_state
+  local body
+  body="$(curl -sS -c "$COOKIE_JAR" -b "$COOKIE_JAR" \
+    -H 'Content-Type: application/json' \
+    -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" \
+    "$URL/api/auth/login")"
+  printf '%s\n' "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); assert "access_token" in d, d; print(json.dumps(d, indent=2))'
+}
+
+cmd_api() {
+  load_state
+  local method="${1:-}" path="${2:-}" payload="${3:-}"
+  [[ -n "$method" && -n "$path" ]] || die "usage: control-arivu api METHOD PATH [JSON_BODY]"
+  [[ "$path" == /* ]] || path="/$path"
+  local args=(curl -sS -b "$COOKIE_JAR" -c "$COOKIE_JAR" -X "$method" "$URL$path")
+  local csrf
+  csrf="$(csrf_token || true)"
+  if [[ -n "$csrf" ]]; then
+    args+=(-H "X-CSRF-Token: $csrf")
+  fi
+  if [[ -n "$payload" ]]; then
+    args+=(-H 'Content-Type: application/json' -d "$payload")
+  fi
+  "${args[@]}"
+  echo
+}
+
+cmd_db() {
+  load_state
+  command -v sqlite3 >/dev/null || die "sqlite3 is required"
+  sqlite3 "$DB_PATH" "$@"
+}
+
+cmd_cli() {
+  load_state
+  mkdir -p "$HOME_DIR"
+  HOME="$HOME_DIR" XDG_CONFIG_HOME="$HOME_DIR/.config" "$BIN" "$@"
+}
+
+cmd_stop() {
+  load_state
+  if kill -0 "$PID" 2>/dev/null; then
+    kill "$PID"
+    local i
+    for i in $(seq 1 40); do
+      kill -0 "$PID" 2>/dev/null || break
+      sleep 0.25
+    done
+    if kill -0 "$PID" 2>/dev/null; then
+      kill -9 "$PID" 2>/dev/null || true
+    fi
+  fi
+  rm -rf "$DATA_DIR"
+  rm -rf "$RUNS_DIR/$RUN_ID"
+  echo "stopped $RUN_ID (artifacts kept in $ARTIFACT_DIR)"
+}
+
+cmd="${1:-}"
+shift || true
+case "$cmd" in
+  launch) cmd_launch "$@" ;;
+  doctor) cmd_doctor "$@" ;;
+  env) cmd_env "$@" ;;
+  signup) cmd_signup "$@" ;;
+  login) cmd_login "$@" ;;
+  api) cmd_api "$@" ;;
+  db)
+    if [[ "${1:-}" == "--" ]]; then shift; fi
+    cmd_db "$@"
+    ;;
+  cli)
+    if [[ "${1:-}" == "--" ]]; then shift; fi
+    cmd_cli "$@"
+    ;;
+  stop) cmd_stop "$@" ;;
+  -h|--help|help|"") usage ;;
+  *) die "unknown command $cmd" ;;
+esac

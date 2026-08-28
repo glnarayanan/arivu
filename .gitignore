@@ -28,6 +28,8 @@ migration-manifest.json
 openwiki/.last-update.json
 .stfolder/
 .playwright-mcp/
+.cursor/skills/verify-arivu/artifacts/
+.cursor/skills/verify-arivu/runs/
 # Temporary planning artifacts
 /docs/plan/
 /docs/plans/
