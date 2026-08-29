@@ -44,9 +44,13 @@ Tokens live in `internal/app/web/styles.css` and use OKLCH.
 - **Canvas:** white `--paper` with dashed `--base-200` rails. White `--panel`
   and `--sidebar` sit on that field. Quiet surfaces use pale sand, not gray-blue.
 - **Text:** near-black base neutrals provide `--ink`; secondary copy uses
-  `--base-500`. Placeholder roles remain dark enough for WCAG AA.
-- **Accent:** `--accent-500` supplies primary actions, focus, and selection.
-  Active navigation is a text-weight change, not a coral pill fill.
+  `--base-500`. Placeholder text uses `--base-600` so 1rem field hints meet
+  WCAG AA on white.
+- **Accent:** `--accent-500` remains the decorative brand coral. Primary
+  action fills use `--accent-700` with white labels so 0.875rem control text
+  meets WCAG AA. Hover ink on quiet surfaces uses `--accent-50` /
+  `--accent-800`. Active navigation is a text-weight change, not a coral
+  pill fill.
 - **Semantic roles:** danger, success, information, highlight, and modal scrim
   remain distinct. Color never carries meaning alone.
 - **Spacing:** use the established 4, 8, 12, 16, 24, 32, 48, and 64px rhythm.
@@ -100,8 +104,10 @@ and route cleanup. Do not replace their behavior or create theme-only variants.
 Interactive components need default, hover, focus, active, disabled, loading,
 success, and error treatment as applicable.
 
-- Primary actions use `--accent-500` pills; quieter actions use sand-100 with
-  sand-950 text. Desktop controls may be `h-9`; mobile and touch stay 44px.
+- Primary actions use `--accent-700` pills with white labels; quieter actions
+  use sand-100 with sand-950 text. Disabled controls use sand-200 with
+  sand-950 text instead of opacity. Desktop controls may be `h-9`; mobile
+  and touch stay 44px.
 - Fields use white fills, `rounded-md`, and a `base-200` ring. Keep 1rem type
   in operate forms.
 - Dashed separators divide editorial sections without wrapping every item in a
