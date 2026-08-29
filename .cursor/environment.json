@@ -1,0 +1,10 @@
+{
+  "name": "Arivu (Go + SQLite)",
+  "install": "bash /agent/repos/arivu/.cursor/install.sh",
+  "terminals": [
+    {
+      "name": "arivu-dev-server",
+      "command": "cd /agent/repos/arivu && CGO_ENABLED=1 go build -trimpath -o /tmp/arivu-dev ./cmd/arivu && APP_URL=http://127.0.0.1:8080 SECRET_KEY=dev-only-secret-change-me-0123456789abcdef SIGNUPS_ENABLED=true COOKIE_SECURE=false ARIVU_BROWSER_CAPTURE_ENABLED=false /tmp/arivu-dev serve -addr 127.0.0.1:8080 -db /tmp/arivu-dev.sqlite3"
+    }
+  ]
+}
