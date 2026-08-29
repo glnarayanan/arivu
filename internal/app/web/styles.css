@@ -59,17 +59,17 @@
   --paper: white;
   --panel: white;
   --field: white;
-  --placeholder: var(--base-400);
+  --placeholder: var(--base-600);
   --muted: var(--base-500);
   --line: var(--base-200);
   --line-soft: var(--base-200);
-  --accent: var(--accent-500);
-  --accent-hover: var(--accent-600);
+  --accent: var(--accent-700);
+  --accent-hover: var(--accent-800);
   --accent-ink: white;
   --interactive-bg: var(--sand-100);
   --interactive-ink: var(--sand-950);
-  --interactive-hover-bg: var(--sand-100);
-  --interactive-hover-ink: var(--accent-500);
+  --interactive-hover-bg: var(--accent-50);
+  --interactive-hover-ink: var(--accent-800);
   --accent-2: var(--accent-500);
   --danger: oklch(45% 0.17 25);
   --danger-surface: oklch(95% 0.025 25);
@@ -237,7 +237,28 @@ button.icon-button {
 button:disabled,
 .button[aria-disabled="true"] {
   cursor: not-allowed;
-  opacity: 0.55;
+  background: var(--sand-200);
+  color: var(--sand-950);
+  opacity: 1;
+}
+
+button:active:not(:disabled),
+.button:active:not([aria-disabled="true"]) {
+  background: var(--accent-800);
+  color: var(--accent-ink);
+}
+
+button.secondary:active:not(:disabled),
+.button.secondary:active:not([aria-disabled="true"]),
+button.icon-button:active:not(:disabled) {
+  background: var(--interactive-hover-bg);
+  color: var(--interactive-hover-ink);
+}
+
+button.danger:active:not(:disabled),
+.button.danger:active:not([aria-disabled="true"]) {
+  background: oklch(36% 0.14 25);
+  color: white;
 }
 
 button:focus {
@@ -602,16 +623,46 @@ details.panel[open] > summary::before {
     linear-gradient(165deg, var(--sand-50) 0%, var(--sand-100) 55%, var(--accent-50) 100%);
 }
 
-.auth-panel::after {
-  content: "";
-  position: absolute;
-  inset: 18% 16% auto auto;
-  width: min(22rem, 70%);
-  aspect-ratio: 4 / 5;
-  border-radius: var(--radius-lg);
-  background: white;
-  box-shadow: var(--shadow);
-  outline: 1px dashed var(--base-200);
+.auth-panel-inner {
+  display: grid;
+  align-content: center;
+  min-height: 100%;
+  max-width: 28rem;
+  padding: var(--space-8);
+  gap: var(--space-5);
+}
+
+.auth-panel-inner h2 {
+  margin: 0;
+  font-size: 1.75rem;
+}
+
+.auth-panel-inner > p {
+  margin: 0;
+  color: var(--base-700);
+}
+
+.auth-steps {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: var(--space-4);
+}
+
+.auth-steps li {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.auth-steps strong {
+  font: 650 0.875rem/1.3 var(--font-ui);
+  color: var(--accent-800);
+}
+
+.auth-steps span {
+  color: var(--base-700);
+  font-size: 0.9375rem;
 }
 
 @media (min-width: 768px) {
@@ -1230,6 +1281,13 @@ progress::-moz-progress-bar {
   font-size: 1.5rem;
 }
 
+.empty-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin: var(--space-4) 0 0;
+}
+
 .reader,
 .primary-reader {
   max-width: var(--reader-max-width);
@@ -1714,9 +1772,49 @@ progress::-moz-progress-bar {
   align-items: end;
   flex-wrap: wrap;
   gap: var(--space-3);
-  margin-bottom: var(--space-5);
+  margin-bottom: var(--space-4);
   border-block: 1px dashed var(--line);
-  padding-block: var(--space-5);
+  padding-block: var(--space-4);
+}
+
+.library-more-filters {
+  flex: 1 1 100%;
+}
+
+.library-more-filters > summary {
+  width: fit-content;
+  min-height: var(--control-size);
+  display: inline-flex;
+  align-items: center;
+  padding: 0 var(--space-3);
+  font: 550 0.875rem/1.2 var(--font-ui);
+  cursor: pointer;
+}
+
+.library-more-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-top: var(--space-3);
+}
+
+.library-filter-status {
+  flex: 1 1 100%;
+  margin: 0;
+  color: var(--base-700);
+  font: 550 0.875rem/1.4 var(--font-ui);
+}
+
+.library-filter-status a {
+  color: var(--accent-800);
+}
+
+.collection-browser {
+  margin: 0 0 var(--space-4);
+}
+
+.collection-browser > summary {
+  font: 550 0.9375rem/1.3 var(--font-ui);
 }
 
 .library-filters .field {
@@ -1972,13 +2070,18 @@ progress::-moz-progress-bar {
   stroke-width: 3;
 }
 
+.graph-node .graph-hit {
+  fill: transparent;
+  stroke: none;
+}
+
 .graph-node text {
   fill: var(--ink);
   stroke: var(--sand-50);
-  stroke-width: 4px;
+  stroke-width: 5px;
   stroke-linejoin: round;
   paint-order: stroke;
-  font: 600 11px var(--font-ui);
+  font: 650 13px var(--font-ui);
   text-anchor: middle;
 }
 
