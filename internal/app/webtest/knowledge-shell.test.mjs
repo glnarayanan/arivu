@@ -187,6 +187,22 @@ test("keeps imports inside Settings and uses legible interactive states", () => 
   assert.ok(styles.includes("button.secondary:hover:not(:disabled)"));
   assert.match(styles, /\.chips a:hover,[\s\S]*?\.collection-tree a:hover \{\s+background: var\(--interactive-hover-bg\);\s+color: var\(--interactive-hover-ink\);/);
   assert.ok(styles.includes(".graph-nodes a:focus-visible .graph-node circle"));
+  assert.ok(styles.includes("--placeholder: var(--base-600);"));
+  assert.ok(styles.includes("--accent: var(--accent-700);"));
+  assert.ok(styles.includes("background: var(--sand-200);\n  color: var(--sand-950);"));
+});
+
+test("auth, library, graph, and insights keep accessible composition", () => {
+  assert.ok(app.includes("function authEvidencePanel()"));
+  assert.ok(app.includes("Your library stays with you"));
+  assert.ok(!app.includes('<aside class="auth-panel" aria-hidden="true"></aside>'));
+  assert.ok(app.includes('<summary>More filters</summary>'));
+  assert.ok(app.includes("if (!(collections || []).length && !selected) return \"\""));
+  assert.ok(app.includes('Clear filters'));
+  assert.ok(app.includes('class="graph-hit"'));
+  assert.ok(app.includes('href="/settings?section=import"'));
+  assert.ok(app.includes('data-insight-next="capture-note"'));
+  assert.ok(styles.includes(".graph-node .graph-hit"));
 });
 
 test("public shares use the product typography and labeled controls", () => {

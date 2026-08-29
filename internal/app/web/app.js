@@ -593,23 +593,46 @@ function shell(title, content, { wide = false } = {}) {
   `;
 }
 
-async function authPage(scope) {
-  setRoot(scope, `
+function authEvidencePanel() {
+  return `
+        <aside class="auth-panel" aria-labelledby="auth-evidence-title">
+          <div class="auth-panel-inner">
+            <h2 id="auth-evidence-title">Your library stays with you</h2>
+            <p>Arivu is a private, self-hosted second brain. Capture material, connect it on your terms, and keep a portable SQLite-backed library you own.</p>
+            <ol class="auth-steps">
+              <li><strong>Capture</strong><span>Save a link, note, quote, or file without choosing a folder first.</span></li>
+              <li><strong>Connect</strong><span>Add explicit links. Review locally derived relationships when they appear.</span></li>
+              <li><strong>Discover</strong><span>Search what you saved, or explore a bounded graph with provenance.</span></li>
+            </ol>
+          </div>
+        </aside>`;
+}
+
+function authShell(formInner) {
+  return `
     <main class="auth">
-      <section class="panel">
-        <h1>Arivu</h1>
-        <p class="meta">Save pages worth remembering, then turn them into summaries, signals, and connections.</p>
-        <form class="form" id="login-form">
-          <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="username"></div>
-          <div class="field"><label for="password">Password</label><input id="password" type="password" required autocomplete="current-password"></div>
-          <p class="form-message" id="auth-message" data-form-message hidden></p>
-          <button type="submit">Sign in</button>
-          <button type="button" class="secondary" id="signup">Create account</button>
-          <a class="text-link" href="/reset-password">Forgot password?</a>
-        </form>
-      </section>
+      <div class="auth-layout">
+        <section class="auth-form">
+          ${formInner}
+        </section>
+        ${authEvidencePanel()}
+      </div>
     </main>
-  `);
+  `;
+}
+
+async function authPage(scope) {
+  setRoot(scope, authShell(`
+          <h1>Arivu</h1>
+          <p class="lede">Save pages worth remembering, then turn them into summaries, signals, and connections.</p>
+          <form class="form" id="login-form">
+            <div class="field"><label for="email">Email</label><input id="email" type="email" required autocomplete="username"></div>
+            <div class="field"><label for="password">Password</label><input id="password" type="password" required autocomplete="current-password"></div>
+            <p class="form-message" id="auth-message" data-form-message hidden></p>
+            <button type="submit">Sign in</button>
+            <button type="button" class="secondary" id="signup">Create account</button>
+            <a class="text-link" href="/reset-password">Forgot password?</a>
+          </form>`));
   const form = document.querySelector("#login-form");
   const emailInput = form.querySelector("#email");
   const passwordInput = form.querySelector("#password");
@@ -654,15 +677,10 @@ async function authPage(scope) {
 
 async function resetPasswordPage(scope) {
   const token = new URLSearchParams(location.search).get("token") || "";
-  setRoot(scope, `
-    <main class="auth">
-      <section class="panel">
-        <p class="meta">Account recovery</p>
-        <h1>Reset password</h1>
-        ${token ? resetPasswordForm() : forgotPasswordForm()}
-      </section>
-    </main>
-  `);
+  setRoot(scope, authShell(`
+          <h1>Reset password</h1>
+          <p class="lede">Account recovery for a workspace you already host.</p>
+          ${token ? resetPasswordForm() : forgotPasswordForm()}`));
   const form = document.querySelector("#reset-form");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -715,22 +733,16 @@ function resetPasswordForm() {
 }
 
 async function acceptInvitePage(scope) {
-  setRoot(scope, `
-    <main class="auth">
-      <section class="panel">
-        <p class="meta">Invited account</p>
-        <h1>Accept invite</h1>
-        <p>Use the email and temporary password your admin provided. You can change the password after signing in.</p>
-        <form class="form" id="invite-form">
-          <div class="field"><label for="invite-email">Email</label><input id="invite-email" type="email" required autocomplete="username"></div>
-          <div class="field"><label for="invite-password">Temporary password</label><input id="invite-password" type="password" required autocomplete="current-password"></div>
-          <p class="form-message" id="invite-message" data-form-message hidden></p>
-          <button type="submit">Sign in</button>
-          <a class="text-link" href="/reset-password">Need a new password?</a>
-        </form>
-      </section>
-    </main>
-  `);
+  setRoot(scope, authShell(`
+          <h1>Accept invite</h1>
+          <p class="lede">Use the email and temporary password your admin provided. You can change the password after signing in.</p>
+          <form class="form" id="invite-form">
+            <div class="field"><label for="invite-email">Email</label><input id="invite-email" type="email" required autocomplete="username"></div>
+            <div class="field"><label for="invite-password">Temporary password</label><input id="invite-password" type="password" required autocomplete="current-password"></div>
+            <p class="form-message" id="invite-message" data-form-message hidden></p>
+            <button type="submit">Sign in</button>
+            <a class="text-link" href="/reset-password">Need a new password?</a>
+          </form>`));
   const form = document.querySelector("#invite-form");
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -952,21 +964,28 @@ async function libraryPage(scope) {
       <a href="/library?scope=derived"${contentScope === "derived" ? ' aria-current="page"' : ""}>Concepts &amp; entities</a>
     </nav>
     ${contentScope === "derived" ? '<p class="library-view-help">Concepts and entities are generated from your saved material. Explore them here, or use Graph to see how they connect.</p>' : ""}
-    ${collectionBrowser(collections, params.get("collection_id") || params.get("collection"))}
     <form class="library-filters" role="search" id="library-filter-form">
       <input type="hidden" name="scope" value="${escapeHTML(contentScope)}">
+      ${params.get("collection_id") || params.get("collection") ? `<input type="hidden" name="collection_id" value="${escapeHTML(params.get("collection_id") || params.get("collection"))}">` : ""}
       <div class="field library-query"><label for="library-query">Search library</label><input id="library-query" name="q" type="search" value="${escapeHTML(params.get("q") || "")}" placeholder="Title, text, or topic"></div>
       <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(typeOptions, params.get("type"), "All types")}</select></div>
       <div class="field"><label for="library-stage">Stage</label><select id="library-stage" name="stage">${libraryFilterOptions(["inbox", "processing", "processed", "archived"], params.get("stage"), "Any stage")}</select></div>
-      <div class="field"><label for="library-connection">Connections</label><select id="library-connection" name="connection">${libraryFilterOptions(["connected", "unconnected"], params.get("connection"), "Any state")}</select></div>
-      <div class="field"><label for="library-topic">Topic</label><input id="library-topic" name="topic" value="${escapeHTML(params.get("topic") || "")}" placeholder="Topic"></div>
-      <div class="field"><label for="library-source">Source</label><input id="library-source" name="source" value="${escapeHTML(params.get("source") || "")}" placeholder="Source"></div>
-      <div class="field"><label for="library-date-from">From</label><input id="library-date-from" name="date_from" type="date" value="${escapeHTML(params.get("date_from") || "")}"></div>
-      <div class="field"><label for="library-date-to">To</label><input id="library-date-to" name="date_to" type="date" value="${escapeHTML(params.get("date_to") || "")}"></div>
       <div class="field"><label for="library-sort">Sort</label><select id="library-sort" name="sort">${libraryFilterOptions(["relevance", "newest", "oldest", "title", "domain"], sort, "Sort")}</select></div>
-      <div class="field"><label for="library-density">Density</label><select id="library-density" name="density">${libraryFilterOptions(["comfortable", "compact"], density, "Density")}</select></div>
       <button type="submit" class="secondary">Apply</button>
+      <details class="library-more-filters"${["connection", "topic", "source", "date_from", "date_to"].some((key) => params.get(key)) || (params.get("density") && params.get("density") !== "comfortable") ? " open" : ""}>
+        <summary>More filters</summary>
+        <div class="library-more-fields">
+          <div class="field"><label for="library-connection">Connections</label><select id="library-connection" name="connection">${libraryFilterOptions(["connected", "unconnected"], params.get("connection"), "Any state")}</select></div>
+          <div class="field"><label for="library-topic">Topic</label><input id="library-topic" name="topic" value="${escapeHTML(params.get("topic") || "")}" placeholder="Topic"></div>
+          <div class="field"><label for="library-source">Source</label><input id="library-source" name="source" value="${escapeHTML(params.get("source") || "")}" placeholder="Source"></div>
+          <div class="field"><label for="library-date-from">From</label><input id="library-date-from" name="date_from" type="date" value="${escapeHTML(params.get("date_from") || "")}"></div>
+          <div class="field"><label for="library-date-to">To</label><input id="library-date-to" name="date_to" type="date" value="${escapeHTML(params.get("date_to") || "")}"></div>
+          <div class="field"><label for="library-density">Density</label><select id="library-density" name="density">${libraryFilterOptions(["comfortable", "compact"], density, "Density")}</select></div>
+        </div>
+      </details>
+      ${["q", "type", "stage", "connection", "topic", "source", "date_from", "date_to", "collection_id", "collection"].some((key) => params.get(key)) ? `<p class="library-filter-status">Filters are active. <a href="/library${contentScope === "derived" ? "?scope=derived" : ""}">Clear filters</a></p>` : ""}
     </form>
+    ${collectionBrowser(collections, params.get("collection_id") || params.get("collection"))}
     <section class="library-list density-${escapeHTML(density)}" aria-label="Library items">
       ${items.map(libraryItem).join("") || emptyState({ eyebrow: "A clear desk", title: "Your library is ready", body: "Capture a link, note, quote, or file. Arivu will keep it even before enrichment or organization.", tag: "section" })}
     </section>
@@ -984,11 +1003,12 @@ async function libraryPage(scope) {
 }
 
 function collectionBrowser(collections, selected) {
+  if (!(collections || []).length && !selected) return "";
   const byParent = new Map();
   for (const item of collections || []) { const key = item.parent_id || ""; byParent.set(key, [...(byParent.get(key) || []), item]); }
   const branch = (parent = "", depth = 0) => depth >= 100 ? "" : (byParent.get(parent) || []).map((item) => `<li><a href="/library?collection_id=${encodeURIComponent(item.id)}"${selected === item.id ? ' aria-current="page"' : ""}>${escapeHTML(item.name)}</a>${byParent.has(item.id) ? `<ul>${branch(item.id, depth + 1)}</ul>` : ""}</li>`).join("");
   const trail = []; let current = (collections || []).find((item) => item.id === selected); for (let depth = 0; current && depth < 100; depth++) { trail.unshift(current); current = (collections || []).find((item) => item.id === current.parent_id); }
-  return `<aside class="panel collection-browser" aria-labelledby="collections-heading"><h2 id="collections-heading">Collections</h2>${trail.length ? `<nav aria-label="Collection breadcrumbs"><a href="/library">Library</a> ${trail.map((item) => ` / ${escapeHTML(item.name)}`).join("")}</nav>` : ""}<ul class="collection-tree">${branch() || "<li>No collections yet.</li>"}</ul><p class="meta">Manage collection names and nesting in Settings.</p></aside>`;
+  return `<details class="panel collection-browser"${selected ? " open" : ""}><summary id="collections-heading">Collections</summary>${trail.length ? `<nav aria-label="Collection breadcrumbs"><a href="/library">Library</a> ${trail.map((item) => ` / ${escapeHTML(item.name)}`).join("")}</nav>` : ""}<ul class="collection-tree">${branch() || "<li>No collections yet.</li>"}</ul><p class="meta">Manage collection names and nesting in Settings.</p></details>`;
 }
 
 function libraryFilterOptions(values, selected, emptyLabel) {
@@ -1539,13 +1559,14 @@ function workflowEmptyState() {
   </div>`;
 }
 
-function emptyState({ eyebrow, title, body, tag = "div", panel = true, headingLevel = 2 }) {
+function emptyState({ eyebrow, title, body, tag = "div", panel = true, headingLevel = 2, action = "" }) {
   const safeTag = tag === "article" || tag === "section" ? tag : "div";
   const safeHeadingLevel = headingLevel === 3 ? 3 : 2;
   return `<${safeTag} class="${panel ? "panel " : ""}empty-state">
     <span class="meta">${escapeHTML(eyebrow)}</span>
     <h${safeHeadingLevel}>${escapeHTML(title)}</h${safeHeadingLevel}>
     <p>${escapeHTML(body)}</p>
+    ${action ? `<p class="empty-state-actions">${action}</p>` : ""}
   </${safeTag}>`;
 }
 
@@ -4827,7 +4848,7 @@ function graphPositions(nodes) {
     if (index === 0) return [node.id, center];
     const angle = index * 2.399963;
     const ring = Math.ceil(Math.sqrt(index));
-    const radius = Math.min(250, 58 + ring * 34);
+    const radius = Math.min(280, 80 + ring * 42);
     return [node.id, { x: center.x + Math.cos(angle) * radius, y: center.y + Math.sin(angle) * radius }];
   }));
 }
@@ -4844,7 +4865,7 @@ function graphSVG(nodes, edges, positions) {
     }).join("")}</g>
     <g class="graph-nodes">${nodes.map((node) => {
       const point = positions[node.id];
-      return `<a href="${escapeHTML(knowledgeItemHref(node.type, node.source_id, node.title))}" data-graph-node="${escapeHTML(node.id)}" aria-label="${escapeHTML(`Open ${node.title || node.id}, ${knowledgeTypeLabel(node.type)}`)}"><g class="graph-node" data-kind="${escapeHTML(node.type)}" transform="translate(${point.x} ${point.y})"><circle r="${node === nodes[0] ? 12 : 8}"></circle><text y="-15">${escapeHTML(String(node.title || node.id).slice(0, 24))}</text></g></a>`;
+      return `<a href="${escapeHTML(knowledgeItemHref(node.type, node.source_id, node.title))}" data-graph-node="${escapeHTML(node.id)}" aria-label="${escapeHTML(`Open ${node.title || node.id}, ${knowledgeTypeLabel(node.type)}`)}"><g class="graph-node" data-kind="${escapeHTML(node.type)}" transform="translate(${point.x} ${point.y})"><circle class="graph-hit" r="20"></circle><circle r="${node === nodes[0] ? 14 : 11}"></circle><text y="-20">${escapeHTML(String(node.title || node.id).slice(0, 28))}</text></g></a>`;
     }).join("")}</g>
   </svg>`;
 }
@@ -4905,9 +4926,10 @@ async function insightsPage(scope) {
 }
 
 function insightEmptyState(state, family) {
-  if (state === "not_enough_history") return emptyState({ eyebrow: "Not enough history", title: "Insights need a little history", body: "Keep capturing and connecting. Arivu will surface patterns only when your own evidence supports them.", tag: "section" });
-  if (state === "reprocessing_required") return emptyState({ eyebrow: "Processing needed", title: "Refresh your saved sources", body: "Some items need to be reprocessed before Arivu can derive trustworthy patterns.", tag: "section" });
-  return emptyState({ eyebrow: "No qualifying patterns", title: family ? "No patterns in this family" : "No insights yet", body: "Arivu did not find a specific, evidence-backed pattern for this view.", tag: "section" });
+  const captureOrLibrary = `<button type="button" data-insight-next="capture-note">Capture</button><a class="button secondary" href="/library">Open Library</a>`;
+  if (state === "not_enough_history") return emptyState({ eyebrow: "Not enough history", title: "Insights need a little history", body: "Keep capturing and connecting. Arivu will surface patterns only when your own evidence supports them.", tag: "section", action: captureOrLibrary });
+  if (state === "reprocessing_required") return emptyState({ eyebrow: "Processing needed", title: "Refresh your saved sources", body: "Some items need to be reprocessed before Arivu can derive trustworthy patterns.", tag: "section", action: `<a class="button" href="/settings?section=import">Open import settings</a>` });
+  return emptyState({ eyebrow: "No qualifying patterns", title: family ? "No patterns in this family" : "No insights yet", body: "Arivu did not find a specific, evidence-backed pattern for this view.", tag: "section", action: captureOrLibrary });
 }
 
 function insightCard(insight) {

@@ -4,6 +4,18 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Restored WCAG AA interactive contrast: placeholders use `--base-600`,
+  primary actions use `--accent-700` with white labels, hover states return
+  to `--accent-50` / `--accent-800`, and disabled controls use solid sand
+  instead of faded coral. The sign-in panel now explains private
+  self-hosting and the capture-connect-discover loop. Library hides empty
+  Collections chrome, keeps primary filters visible, and puts secondary
+  filters behind More filters. Graph labels and hit areas are larger.
+  Insights empty states now point to Capture, Library, or import settings.
+- Restyled the embedded app onto Brightlight's white dashed-rail grammar:
+  `--accent-500` pills, sand-100 muted controls, compact serif titles, ringed
+  fields, and a split sign-in layout without licensed imagery. Routes,
+  navigation, and operate behavior are unchanged.
 - Upgraded to Go 1.25.13 to fix six reachable standard-library vulnerabilities,
   including denial-of-service flaws in URL, TLS, HTTP, XML, and ASN.1 handling.
   Also upgraded `golang.org/x/crypto` to 0.55.0, `golang.org/x/net` to 0.58.0,
