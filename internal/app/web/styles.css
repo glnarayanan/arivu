@@ -29,31 +29,23 @@
   --accent-50: oklch(96.37% 0.014 34.3);
   --accent-100: oklch(92.11% 0.031 32.56);
   --accent-200: oklch(85.18% 0.06 35);
-  --accent-300: oklch(77.67% 0.096 34.47);
-  --accent-400: oklch(70.47% 0.133 35.14);
   --accent-500: oklch(64.47% 0.167 35.21);
   --accent-600: oklch(55.96% 0.174 34.81);
   --accent-700: oklch(45.78% 0.139 34.91);
   --accent-800: oklch(35.02% 0.102 35.05);
-  --accent-900: oklch(22.26% 0.055 35.39);
-  --accent-950: oklch(16.51% 0.033 41.46);
   --sand-50: oklch(98.73% 0.004 106.47);
   --sand-100: oklch(97.03% 0.007 88.64);
   --sand-200: oklch(90.07% 0.024 90.76);
-  --sand-300: oklch(82.59% 0.04 87.57);
   --sand-700: oklch(47.95% 0.054 88.5);
   --sand-950: oklch(16.56% 0.011 80.55);
-  --base-50: oklch(98.5% 0 0);
   --base-100: oklch(97% 0 0);
   --base-200: oklch(92.2% 0 0);
-  --base-300: oklch(87% 0 0);
   --base-400: oklch(70.8% 0 0);
   --base-500: oklch(55.6% 0 0);
   --base-600: oklch(43.9% 0 0);
   --base-700: oklch(37.1% 0 0);
   --base-800: oklch(26.9% 0 0);
   --base-900: oklch(20.5% 0 0);
-  --base-950: oklch(14.5% 0 0);
 
   --ink: var(--base-900);
   --paper: white;
@@ -70,7 +62,6 @@
   --interactive-ink: var(--sand-950);
   --interactive-hover-bg: var(--accent-50);
   --interactive-hover-ink: var(--accent-800);
-  --accent-2: var(--accent-500);
   --danger: oklch(45% 0.17 25);
   --danger-surface: oklch(95% 0.025 25);
   --success: oklch(40% 0.1 150);
@@ -587,92 +578,17 @@ details.panel[open] > summary::before {
 .auth {
   min-height: 100vh;
   display: grid;
-  padding: 0;
-  background: white;
-}
-
-.auth-layout {
-  display: grid;
-  min-height: 100vh;
-  grid-template-columns: 1fr;
+  place-items: center;
+  padding: max(var(--space-6), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-6), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
+  background: var(--paper);
 }
 
 .auth-form {
-  display: grid;
-  align-content: center;
-  min-height: 100vh;
-  padding: max(var(--space-6), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-6), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
-  background: var(--sand-50);
-}
-
-.auth-form .lede {
-  max-width: 28rem;
-  margin: 0 0 var(--space-5);
-}
-
-.auth-form .form {
   width: min(24rem, 100%);
 }
 
-.auth-panel {
-  display: none;
-  position: relative;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 72% 28%, var(--accent-100), transparent 42%),
-    linear-gradient(165deg, var(--sand-50) 0%, var(--sand-100) 55%, var(--accent-50) 100%);
-}
-
-.auth-panel-inner {
-  display: grid;
-  align-content: center;
-  min-height: 100%;
-  max-width: 28rem;
-  padding: var(--space-8);
-  gap: var(--space-5);
-}
-
-.auth-panel-inner h2 {
-  margin: 0;
-  font-size: 1.75rem;
-}
-
-.auth-panel-inner > p {
-  margin: 0;
-  color: var(--base-700);
-}
-
-.auth-steps {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: var(--space-4);
-}
-
-.auth-steps li {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.auth-steps strong {
-  font: 650 0.875rem/1.3 var(--font-ui);
-  color: var(--accent-800);
-}
-
-.auth-steps span {
-  color: var(--base-700);
-  font-size: 0.9375rem;
-}
-
-@media (min-width: 768px) {
-  .auth-layout {
-    grid-template-columns: minmax(22rem, 32rem) minmax(0, 1fr);
-  }
-
-  .auth-panel {
-    display: block;
-  }
+.auth-form .lede {
+  margin: 0 0 var(--space-5);
 }
 
 .auth h1 {

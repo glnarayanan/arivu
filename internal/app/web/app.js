@@ -593,30 +593,12 @@ function shell(title, content, { wide = false } = {}) {
   `;
 }
 
-function authEvidencePanel() {
-  return `
-        <aside class="auth-panel" aria-labelledby="auth-evidence-title">
-          <div class="auth-panel-inner">
-            <h2 id="auth-evidence-title">Your library stays with you</h2>
-            <p>Arivu is a private, self-hosted second brain. Capture material, connect it on your terms, and keep a portable SQLite-backed library you own.</p>
-            <ol class="auth-steps">
-              <li><strong>Capture</strong><span>Save a link, note, quote, or file without choosing a folder first.</span></li>
-              <li><strong>Connect</strong><span>Add explicit links. Review locally derived relationships when they appear.</span></li>
-              <li><strong>Discover</strong><span>Search what you saved, or explore a bounded graph with provenance.</span></li>
-            </ol>
-          </div>
-        </aside>`;
-}
-
 function authShell(formInner) {
   return `
     <main class="auth">
-      <div class="auth-layout">
-        <section class="auth-form">
-          ${formInner}
-        </section>
-        ${authEvidencePanel()}
-      </div>
+      <section class="auth-form">
+        ${formInner}
+      </section>
     </main>
   `;
 }
@@ -4928,7 +4910,7 @@ async function insightsPage(scope) {
 function insightEmptyState(state, family) {
   const captureOrLibrary = `<button type="button" data-insight-next="capture-note">Capture</button><a class="button secondary" href="/library">Open Library</a>`;
   if (state === "not_enough_history") return emptyState({ eyebrow: "Not enough history", title: "Insights need a little history", body: "Keep capturing and connecting. Arivu will surface patterns only when your own evidence supports them.", tag: "section", action: captureOrLibrary });
-  if (state === "reprocessing_required") return emptyState({ eyebrow: "Processing needed", title: "Refresh your saved sources", body: "Some items need to be reprocessed before Arivu can derive trustworthy patterns.", tag: "section", action: `<a class="button" href="/settings?section=import">Open import settings</a>` });
+  if (state === "reprocessing_required") return emptyState({ eyebrow: "Processing needed", title: "Refresh your saved sources", body: "Some items need to be reprocessed before Arivu can derive trustworthy patterns.", tag: "section" });
   return emptyState({ eyebrow: "No qualifying patterns", title: family ? "No patterns in this family" : "No insights yet", body: "Arivu did not find a specific, evidence-backed pattern for this view.", tag: "section", action: captureOrLibrary });
 }
 
