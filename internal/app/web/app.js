@@ -4910,7 +4910,7 @@ async function insightsPage(scope) {
 function insightEmptyState(state, family) {
   const captureOrLibrary = `<button type="button" data-insight-next="capture-note">Capture</button><a class="button secondary" href="/library">Open Library</a>`;
   if (state === "not_enough_history") return emptyState({ eyebrow: "Not enough history", title: "Insights need a little history", body: "Keep capturing and connecting. Arivu will surface patterns only when your own evidence supports them.", tag: "section", action: captureOrLibrary });
-  if (state === "reprocessing_required") return emptyState({ eyebrow: "Processing needed", title: "Refresh your saved sources", body: "Some items need to be reprocessed before Arivu can derive trustworthy patterns.", tag: "section", action: `<a class="button" href="/settings?section=import">Open import settings</a>` });
+  if (state === "reprocessing_required") return emptyState({ eyebrow: "Processing needed", title: "Refresh your saved sources", body: "Some items need to be reprocessed before Arivu can derive trustworthy patterns.", tag: "section" });
   return emptyState({ eyebrow: "No qualifying patterns", title: family ? "No patterns in this family" : "No insights yet", body: "Arivu did not find a specific, evidence-backed pattern for this view.", tag: "section", action: captureOrLibrary });
 }
 

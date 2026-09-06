@@ -197,7 +197,6 @@ test("library, graph, and insights keep accessible composition", () => {
   assert.ok(app.includes("if (!(collections || []).length && !selected) return \"\""));
   assert.ok(app.includes('Clear filters'));
   assert.ok(app.includes('class="graph-hit"'));
-  assert.ok(app.includes('href="/settings?section=import"'));
   assert.ok(app.includes('data-insight-next="capture-note"'));
   assert.ok(styles.includes(".graph-node .graph-hit"));
 });

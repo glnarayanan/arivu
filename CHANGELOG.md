@@ -6,6 +6,8 @@ All notable changes to this project will be documented in this file.
 
 - Simplified sign-in, password recovery, and invite acceptance to focused
   account forms by removing the promotional side panel.
+- Removed the import-settings action from Insights when saved items require
+  reprocessing; import settings cannot perform that recovery.
 
 ## [1.6.0] - 2026-08-29
 
