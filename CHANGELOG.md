@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Simplified sign-in, password recovery, and invite acceptance to focused
+  account forms by removing the promotional side panel.
+
 ## [1.6.0] - 2026-08-29
 
 - Restored WCAG AA interactive contrast: placeholders use `--base-600`,

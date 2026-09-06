@@ -593,30 +593,12 @@ function shell(title, content, { wide = false } = {}) {
   `;
 }
 
-function authEvidencePanel() {
-  return `
-        <aside class="auth-panel" aria-labelledby="auth-evidence-title">
-          <div class="auth-panel-inner">
-            <h2 id="auth-evidence-title">Your library stays with you</h2>
-            <p>Arivu is a private, self-hosted second brain. Capture material, connect it on your terms, and keep a portable SQLite-backed library you own.</p>
-            <ol class="auth-steps">
-              <li><strong>Capture</strong><span>Save a link, note, quote, or file without choosing a folder first.</span></li>
-              <li><strong>Connect</strong><span>Add explicit links. Review locally derived relationships when they appear.</span></li>
-              <li><strong>Discover</strong><span>Search what you saved, or explore a bounded graph with provenance.</span></li>
-            </ol>
-          </div>
-        </aside>`;
-}
-
 function authShell(formInner) {
   return `
     <main class="auth">
-      <div class="auth-layout">
-        <section class="auth-form">
-          ${formInner}
-        </section>
-        ${authEvidencePanel()}
-      </div>
+      <section class="auth-form">
+        ${formInner}
+      </section>
     </main>
   `;
 }

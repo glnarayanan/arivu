@@ -587,92 +587,17 @@ details.panel[open] > summary::before {
 .auth {
   min-height: 100vh;
   display: grid;
-  padding: 0;
-  background: white;
-}
-
-.auth-layout {
-  display: grid;
-  min-height: 100vh;
-  grid-template-columns: 1fr;
+  place-items: center;
+  padding: max(var(--space-6), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-6), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
+  background: var(--paper);
 }
 
 .auth-form {
-  display: grid;
-  align-content: center;
-  min-height: 100vh;
-  padding: max(var(--space-6), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-6), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
-  background: var(--sand-50);
-}
-
-.auth-form .lede {
-  max-width: 28rem;
-  margin: 0 0 var(--space-5);
-}
-
-.auth-form .form {
   width: min(24rem, 100%);
 }
 
-.auth-panel {
-  display: none;
-  position: relative;
-  overflow: hidden;
-  background:
-    radial-gradient(circle at 72% 28%, var(--accent-100), transparent 42%),
-    linear-gradient(165deg, var(--sand-50) 0%, var(--sand-100) 55%, var(--accent-50) 100%);
-}
-
-.auth-panel-inner {
-  display: grid;
-  align-content: center;
-  min-height: 100%;
-  max-width: 28rem;
-  padding: var(--space-8);
-  gap: var(--space-5);
-}
-
-.auth-panel-inner h2 {
-  margin: 0;
-  font-size: 1.75rem;
-}
-
-.auth-panel-inner > p {
-  margin: 0;
-  color: var(--base-700);
-}
-
-.auth-steps {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-  display: grid;
-  gap: var(--space-4);
-}
-
-.auth-steps li {
-  display: grid;
-  gap: var(--space-1);
-}
-
-.auth-steps strong {
-  font: 650 0.875rem/1.3 var(--font-ui);
-  color: var(--accent-800);
-}
-
-.auth-steps span {
-  color: var(--base-700);
-  font-size: 0.9375rem;
-}
-
-@media (min-width: 768px) {
-  .auth-layout {
-    grid-template-columns: minmax(22rem, 32rem) minmax(0, 1fr);
-  }
-
-  .auth-panel {
-    display: block;
-  }
+.auth-form .lede {
+  margin: 0 0 var(--space-5);
 }
 
 .auth h1 {
