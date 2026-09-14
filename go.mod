@@ -3,7 +3,7 @@ module github.com/glnarayanan/arivu
 go 1.25.13
 
 require (
-	github.com/mattn/go-sqlite3 v1.14.50
+	github.com/mattn/go-sqlite3 v1.14.52
 	golang.org/x/crypto v0.55.0
 	golang.org/x/net v0.58.0
 )
