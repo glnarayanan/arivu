@@ -65,6 +65,7 @@ var (
 	quotaCollectionsWrite = mutationQuota{name: "collections.write", limit: 240, window: time.Hour}
 	quotaSubscriptions    = mutationQuota{name: "subscriptions.write", limit: 120, window: time.Hour}
 	quotaSharesWrite      = mutationQuota{name: "shares.write", limit: 120, window: time.Hour}
+	quotaLearning         = mutationQuota{name: "learning.generate", limit: 30, window: time.Hour}
 )
 
 func New(cfg config.Config) (*App, error) {
@@ -160,6 +161,13 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/search", a.withUser(a.bookmarks.Search))
 	mux.HandleFunc("GET /api/search/items", a.withUser(a.bookmarks.SearchItems))
 	mux.HandleFunc("GET /api/search/answer", a.withUser(a.bookmarks.SearchAnswer))
+	mux.HandleFunc("GET /api/learning", a.withUser(a.bookmarks.LearningList))
+	mux.HandleFunc("POST /api/learning", a.withUserQuota(quotaNotesWrite, a.bookmarks.PrepareLearning))
+	mux.HandleFunc("GET /api/learning/{id}", a.withUser(a.bookmarks.Learning))
+	mux.HandleFunc("DELETE /api/learning/{id}", a.withUser(a.bookmarks.DeleteLearning))
+	mux.HandleFunc("POST /api/learning/{id}/generate", a.withUserQuota(quotaLearning, a.bookmarks.GenerateLearning))
+	mux.HandleFunc("POST /api/learning/{id}/submit", a.withUserQuota(quotaNotesWrite, a.bookmarks.SubmitLearningQuiz))
+	mux.HandleFunc("POST /api/learning/{id}/note", a.withUserQuota(quotaNotesWrite, a.bookmarks.SaveLearningNote))
 	mux.HandleFunc("POST /api/search/rebuild", a.withUserQuota(quotaSearchRebuild, a.bookmarks.RebuildSearch))
 	mux.HandleFunc("POST /api/feedback", a.withUserQuota(quotaFeedback, a.bookmarks.SaveFeedback))
 	mux.HandleFunc("GET /api/library/items", a.withUser(a.bookmarks.LibraryItems))

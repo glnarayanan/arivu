@@ -2,34 +2,32 @@
 
 Self-hosted second brain for connected knowledge and evidence-backed learning.
 
-Arivu turns links, notes, quotes, files, and highlights into a private knowledge
-network. Its core loop is **Capture -> Connect -> Discover -> Learn**: save
-without setup, add explicit links, explore a bounded graph, and recognize
-patterns that cite the source material behind them. It runs on your own
+Arivu keeps links, notes, quotes, files, and highlights on your own server.
+Capture, understand, remember, and reuse saved material without a task queue.
+Read original sources, ask cited questions, and write notes. It runs on your own
 infrastructure with a Go application, SQLite persistence, embedded browser UI,
 browser extension, CLI, and optional AI provider integrations.
 
 ## What Arivu Does
 
-- Start from Home for a daily note, active threads, useful memories, and
-  contextual Focus and Review views.
-- Browse bookmarks, notes, daily notes, annotations, objects, entities, and
-  concepts in one filtered Library.
+- Start from Home for recent sources, notes, and material worth revisiting.
+- Browse saved items in Library; explore derived concepts and entities separately.
 - Capture a link, note, quote, or file globally without choosing taxonomy or an
   AI provider first.
 - Create explicit links and backlinks, then inspect typed derived relationships
   with provenance and confidence in the bounded Graph.
-- Use deterministic Insights to find emerging themes, recurring connections,
-  forgotten value, knowledge gaps, and serendipitous connections, each linked
-  to owned evidence.
-- Search saved content or ask cited questions against your own material.
-- Triage and act on tasks/reminders when they support the knowledge at hand.
+- Search locally or preview original passages before asking an AI provider.
+- Save cited answers as notes, or try an optional three-question source quiz.
+- Revisit saved material through Review without a study schedule.
 - Import from common bookmark tools and export JSON, CSV, browser HTML,
   Markdown, and Obsidian-ready ZIP archives.
 
 The primary browser destinations are Home (`/today`), Library (`/library`),
-Notes (`/notes`), Graph (`/graph`), and Insights (`/insights`), with Search / Ask at `/search`.
-Existing product deep links remain compatibility routes.
+Notes (`/notes`), and Search / Ask (`/search`). Conversations and quizzes live
+at `/learn`; Review and Graph sit under More. Planning workflows are retired.
+Existing writing becomes notes, and full backups keep exact legacy records.
+See [PRODUCT.md](PRODUCT.md) and the
+[learning contract](openwiki/plans/knowledge-learning.md) for scope and limits.
 
 ## How It Runs
 
@@ -40,13 +38,14 @@ Existing product deep links remain compatibility routes.
   implemented in first-party CSS with self-hosted OFL-licensed Geist and Noto
   Serif fonts; no Astro, Tailwind, reference assets, remote font requests, or
   frontend dependency tree ships with Arivu.
-- SQLite stores content, sessions, jobs, settings, search indexes, tasks, and
-  reminders.
+- SQLite stores content, sessions, jobs, settings, search indexes, and preserved
+  legacy records.
 - Web, CLI, and extension sessions are audience-isolated, with CSRF protection
   for browser mutations.
-- Model providers are optional. Capture, local search, explicit links,
-  deterministic graph structure, and deterministic insights continue without
-  one.
+- Model providers are optional. Capture, local search, notes, explicit links,
+  and Graph continue without one. AI requests disclose the provider and source
+  text; self-hosting does not mean local AI processing. Check cited quotes:
+  an exact quote does not prove an AI claim.
 - Outbound fetching is SSRF-shielded, archived HTML is sanitized on the backend,
   and provider integrations use direct HTTP clients for model providers, Resend,
   and X.

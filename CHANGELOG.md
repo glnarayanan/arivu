@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Added optional conversations and three-question quizzes from original saved
+  passages. Preview the sources and provider before sending; inspect exact
+  cited quotes and save answers or passages as editable notes with source links.
+  Sessions support up to eight sources and six chat turns, retain recent
+  follow-up context, and stop generation when a source changes or disappears.
+  Quiz answers stay hidden until submission. Full backups include sessions;
+  restore retains distinct snapshots without overwriting continued chats.
+  Quote checks do not prove AI claims; reading and search still work without AI.
 - Focused navigation on Home, Library, Notes, and Search, with Review and Graph
   under More. Retired planning controls, tasks, recurring reminders, typed
   objects, calendar import, and the standalone Insights page. Useful legacy

@@ -1712,6 +1712,66 @@ progress::-moz-progress-bar {
   margin-inline: auto;
 }
 
+.learning-workspace {
+  width: 100%;
+  max-width: 76ch;
+  margin-inline: auto;
+  display: grid;
+  gap: var(--space-6);
+  overflow-wrap: anywhere;
+}
+
+.learning-source-actions {
+  margin-block: var(--space-4);
+}
+
+.learning-passage,
+.learning-exchange,
+.learning-question {
+  min-width: 0;
+  border: 0;
+  border-top: 1px dashed var(--line);
+  padding: var(--space-5) 0;
+  margin: 0;
+}
+
+.learning-question legend {
+  padding: 0;
+  font-weight: 600;
+}
+
+.learning-choice {
+  display: flex;
+  align-items: start;
+  gap: var(--space-3);
+  min-height: 44px;
+  padding-block: var(--space-2);
+  cursor: pointer;
+}
+
+.learning-choice input {
+  flex: 0 0 auto;
+  width: 1.125rem;
+  height: 1.125rem;
+  min-height: 0;
+  accent-color: var(--accent-700);
+}
+
+.learning-citation {
+  padding: var(--space-3);
+  background: var(--sand-50);
+  border-radius: var(--radius-md);
+  margin-block: var(--space-3);
+}
+
+.learning-workspace blockquote {
+  margin: var(--space-4) 0;
+  border-left: 2px solid var(--line);
+  padding-left: var(--space-4);
+  white-space: pre-wrap;
+  line-height: 1.65;
+}
+
 .search-result {
   grid-template-columns: 1fr;
 }

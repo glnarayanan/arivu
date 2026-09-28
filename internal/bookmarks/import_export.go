@@ -637,6 +637,10 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	if err := validatePreservationImport(backup); err != nil {
 		return nil, true, err
 	}
+	learning, err := decodeLearningBackup(backup["learning_sessions"])
+	if err != nil {
+		return nil, true, err
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	jobID := ids.New()
 	oldBookmarks := map[string]string{}
@@ -703,6 +707,9 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	s.restoreResultFeedback(ctx, userID, backup["result_feedback"], oldBookmarks, oldNotes, now)
 	s.restoreKnowledgeFeedback(ctx, userID, backup["knowledge_feedback"], now)
 	s.restoreInsightImpressions(ctx, userID, backup["insight_impressions"], now)
+	if err := s.restoreLearning(ctx, userID, learning, oldBookmarks, oldNotes); err != nil {
+		return nil, true, err
+	}
 	s.restoreImportSources(ctx, userID, jobID, backup["import_sources"], oldBookmarks, now)
 	_, _ = s.db.ExecContext(ctx, `UPDATE import_jobs SET total_bookmarks=?,content_fetched=?,ai_processed=?,status='completed',updated_at=? WHERE id=? AND user_id=?`, restored, restored, restored, now, jobID, userID)
 	s.refreshSearchIndex(ctx, userID)
@@ -866,7 +873,7 @@ func (s *Service) restoreNote(ctx context.Context, userID string, note map[strin
 		return ""
 	}
 	id := fallback(stringValue(note["id"]), ids.New())
-	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notes(id,user_id,title,body,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, userID, strings.TrimSpace(stringValue(note["title"])), strings.TrimSpace(stringValue(note["body"])), fallback(stringValue(note["source"]), "restore"), fallback(stringValue(note["created_at"]), now), fallback(stringValue(note["updated_at"]), now))
+	res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notes(id,user_id,title,body,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, userID, stringValue(note["title"]), stringValue(note["body"]), fallback(stringValue(note["source"]), "restore"), fallback(stringValue(note["created_at"]), now), fallback(stringValue(note["updated_at"]), now))
 	if err != nil {
 		return ""
 	}
@@ -875,7 +882,7 @@ func (s *Service) restoreNote(ctx context.Context, userID string, note map[strin
 			return ""
 		}
 		id = ids.New()
-		res, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notes(id,user_id,title,body,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, userID, strings.TrimSpace(stringValue(note["title"])), strings.TrimSpace(stringValue(note["body"])), fallback(stringValue(note["source"]), "restore"), fallback(stringValue(note["created_at"]), now), fallback(stringValue(note["updated_at"]), now))
+		res, err = s.db.ExecContext(ctx, `INSERT OR IGNORE INTO notes(id,user_id,title,body,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, userID, stringValue(note["title"]), stringValue(note["body"]), fallback(stringValue(note["source"]), "restore"), fallback(stringValue(note["created_at"]), now), fallback(stringValue(note["updated_at"]), now))
 		if err != nil {
 			return ""
 		}
@@ -1126,8 +1133,13 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 	if err != nil {
 		return nil, err
 	}
+	learning, err := s.exportLearning(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
 		"version":                3,
+		"learning_sessions":      learning,
 		"knowledge_preservation": preserved,
 		"exported_at":            time.Now().UTC().Format(time.RFC3339),
 		"bookmarks":              bookmarks,
