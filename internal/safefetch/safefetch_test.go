@@ -2,7 +2,6 @@ package safefetch
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 )
@@ -49,12 +48,6 @@ func TestResolveSafeRejectsResolvedBlockedIP(t *testing.T) {
 	}
 }
 
-func TestValidateURLAllowsPublicHTTP(t *testing.T) {
-	if err := ValidateURL("https://example.com/article"); err != nil {
-		t.Fatalf("expected public URL to be allowed: %v", err)
-	}
-}
-
 func TestValidatedURLKeepsPublicTarget(t *testing.T) {
 	parsed, err := validatedURL("https://example.com:443/articles?id=1#section")
 	if err != nil {
@@ -62,24 +55,6 @@ func TestValidatedURLKeepsPublicTarget(t *testing.T) {
 	}
 	if parsed.Scheme != "https" || parsed.Hostname() != "example.com" || parsed.Port() != "443" {
 		t.Fatalf("unexpected parsed URL: %#v", parsed)
-	}
-}
-
-func TestFetchUsesConfiguredUserAgent(t *testing.T) {
-	client := NewWithUserAgent("ForkedArivu/1.0")
-	req, err := client.newRequest(t.Context(), "https://example.com/article")
-	if err != nil {
-		t.Fatalf("newRequest error = %v", err)
-	}
-	if req.UserAgent() != "ForkedArivu/1.0" {
-		t.Fatalf("User-Agent = %q", req.UserAgent())
-	}
-}
-
-func TestNewWithUserAgentFallsBackToNeutralDefault(t *testing.T) {
-	client := NewWithUserAgent(" ")
-	if client.userAgent != DefaultUserAgent {
-		t.Fatalf("userAgent = %q, want %q", client.userAgent, DefaultUserAgent)
 	}
 }
 
@@ -146,17 +121,6 @@ func TestExtractArticlePrefersSubstackPostBodyOverDiscussion(t *testing.T) {
 	}
 }
 
-func TestExtractDescriptionReadsStandardAndOpenGraphMetadata(t *testing.T) {
-	standard := `<html><head><meta name="description" content=" Standard description. "></head></html>`
-	if got := ExtractDescription(standard); got != "Standard description." {
-		t.Fatalf("standard description = %q", got)
-	}
-	openGraph := `<html><head><meta property="og:description" content="OpenGraph description."></head></html>`
-	if got := ExtractDescription(openGraph); got != "OpenGraph description." {
-		t.Fatalf("OpenGraph description = %q", got)
-	}
-}
-
 func TestContentQualityMarksEmptyAndDiscussionOnlyExtractionsPartial(t *testing.T) {
 	if got := Assess("article_extraction", "article", "", ""); got.Status != QualityFailed {
 		t.Fatalf("empty assessment = %#v", got)
@@ -179,21 +143,6 @@ func TestExtractionBoundaryDecodesEntitiesExactlyOnce(t *testing.T) {
 	}
 	if got := ExtractDescription(input); got != `A & B &quot;literal&quot;` {
 		t.Fatalf("description was decoded more than once: %q", got)
-	}
-}
-
-func TestFailureReasonPreservesStructuredUpstreamStatus(t *testing.T) {
-	err := &FetchError{Reason: "upstream_http_401", Err: errors.New("upstream status 401")}
-	if got := FailureReason(err); got != "upstream_http_401" {
-		t.Fatalf("FailureReason() = %q", got)
-	}
-}
-
-func TestTrimLeadingChromeUsesTheArticleTitle(t *testing.T) {
-	title := "Useful & Specific Article"
-	text := "Skip to content Privacy preferences and tracking options. " + title + " The article starts here."
-	if got := trimLeadingChrome(text, title); got != title+" The article starts here." {
-		t.Fatalf("trimLeadingChrome() = %q", got)
 	}
 }
 

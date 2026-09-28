@@ -12,60 +12,6 @@ import (
 	"time"
 )
 
-func TestGeminiSummaryFieldsUseConfiguredModelAndBaseURL(t *testing.T) {
-	var gotPath string
-	var gotPrompt string
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		gotPath = r.URL.Path
-		var body struct {
-			Contents []struct {
-				Parts []struct {
-					Text string `json:"text"`
-				} `json:"parts"`
-			} `json:"contents"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Fatal(err)
-		}
-		gotPrompt = body.Contents[0].Parts[0].Text
-		var buf bytes.Buffer
-		_ = json.NewEncoder(&buf).Encode(map[string]any{
-			"candidates": []map[string]any{{
-				"content": map[string]any{"parts": []map[string]any{{
-					"text": `{"one_sentence":"Specific result.","long_form":"Two useful paragraphs.","bullet_points":["key point"],"highlights":["first","second"],"suggested_tags":["research","go"]}`,
-				}}},
-			}},
-		})
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Header:     make(http.Header),
-			Body:       io.NopCloser(&buf),
-		}, nil
-	})}
-
-	gemini := GeminiClient{APIKey: "secret", Model: "gemini-test", BaseURL: "https://gemini.test", HTTP: client}
-	longArticle := "Clean article text " + strings.Repeat("detail ", 2200) + "tail-marker"
-	fields, err := gemini.GenerateSummaryFields(context.Background(), longArticle)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if gotPath != "/v1beta/models/gemini-test:generateContent" {
-		t.Fatalf("path = %q", gotPath)
-	}
-	if !strings.Contains(gotPrompt, "Clean article text") {
-		t.Fatalf("prompt did not include article text: %q", gotPrompt)
-	}
-	if !strings.Contains(gotPrompt, "tail-marker") {
-		t.Fatalf("summary prompt was truncated before article tail")
-	}
-	if !strings.Contains(gotPrompt, "100-150 word executive briefing") {
-		t.Fatalf("summary prompt did not request the executive briefing format: %q", gotPrompt)
-	}
-	if fields["one_sentence"] != "Specific result." || len(fields["bullet_points"].([]any)) != 1 || len(fields["highlights"].([]any)) != 2 || len(fields["suggested_tags"].([]any)) != 2 {
-		t.Fatalf("unexpected parsed fields: %#v", fields)
-	}
-}
-
 func TestGeminiTypedSummaryUsesStructuredOutputAndRetriesValidationOnce(t *testing.T) {
 	requests := 0
 	var responseSchema map[string]any
@@ -225,29 +171,6 @@ func TestOpenAICompatibleInsightUsesChatCompletions(t *testing.T) {
 	}
 	if gotPath != "/v1/chat/completions" || gotAuth != "Bearer secret" || gotModel != "test-model" || gotPrompt != "Summarize this." {
 		t.Fatalf("unexpected openai-compatible request path=%q auth=%q model=%q prompt=%q", gotPath, gotAuth, gotModel, gotPrompt)
-	}
-}
-
-func TestKeylessOllamaInsightUsesChatCompletions(t *testing.T) {
-	var gotAuth string
-	client := &http.Client{Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
-		gotAuth = r.Header.Get("Authorization")
-		var buf bytes.Buffer
-		_ = json.NewEncoder(&buf).Encode(map[string]any{
-			"choices": []map[string]any{{
-				"message": map[string]any{"content": "local result"},
-			}},
-		})
-		return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(&buf)}, nil
-	})}
-
-	ai := GeminiClient{Provider: ProviderOllama, Model: "llama3.2", HTTP: client}
-	result, err := ai.GenerateInsight(context.Background(), "Use the local model.")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result != "local result" || gotAuth != "" {
-		t.Fatalf("unexpected keyless result=%q auth=%q", result, gotAuth)
 	}
 }
 

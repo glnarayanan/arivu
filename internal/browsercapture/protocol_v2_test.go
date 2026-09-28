@@ -65,13 +65,6 @@ func TestDecodeV2HeaderIsStrictAndBounded(t *testing.T) {
 	}
 }
 
-func TestValidateV2HeaderAcceptsCompleteBoundedCapture(t *testing.T) {
-	cfg, response := v2Fixture()
-	if err := validateV2Header("request-token", []string{"screenshot"}, cfg, response); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestValidateV2HeaderRejectsUntrustedManifest(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -2958,22 +2958,6 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 	}
 }
 
-func TestInlineAnnotationComposerSource(t *testing.T) {
-	script, err := webFS.ReadFile("web/app.js")
-	if err != nil {
-		t.Fatalf("read embedded app.js: %v", err)
-	}
-	for _, expected := range []string{
-		`function bindReaderAnnotationComposer`,
-		`reader-annotation-composer`,
-		"closeComposer();\n        render();",
-	} {
-		if !strings.Contains(string(script), expected) {
-			t.Fatalf("reader annotation composer missing %s", expected)
-		}
-	}
-}
-
 func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),

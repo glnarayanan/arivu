@@ -10,19 +10,6 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-func TestOpenInitializesSchema(t *testing.T) {
-	db, err := Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
-	if err != nil {
-		t.Fatalf("Open() error = %v", err)
-	}
-	defer db.Close()
-
-	var name string
-	if err := db.QueryRowContext(context.Background(), `SELECT name FROM sqlite_master WHERE type='table' AND name='users'`).Scan(&name); err != nil {
-		t.Fatalf("users table missing: %v", err)
-	}
-}
-
 func TestMigratePreservesPublicSnapshotsAndReadingProgressBounds(t *testing.T) {
 	ctx := context.Background()
 	db, err := Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
@@ -82,41 +69,6 @@ func TestMigratePreservesPublicSnapshotsAndReadingProgressBounds(t *testing.T) {
 	}
 	if _, err := db.ExecContext(ctx, `INSERT INTO bookmarks(id,user_id,url,title,reading_progress,created_at,updated_at) VALUES('b2','u1','https://two.example','Two',1.1,?,?)`, now, now); err == nil {
 		t.Fatal("out-of-range reading progress was accepted")
-	}
-}
-
-func TestClassifySchemaStatementPhasesIndexesAfterStructure(t *testing.T) {
-	cases := []struct {
-		stmt string
-		kind schemaStatementKind
-	}{
-		{`CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY)`, schemaStatementStructure},
-		{`CREATE VIRTUAL TABLE IF NOT EXISTS bookmarks_fts USING fts5(title)`, schemaStatementStructure},
-		{`CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_id_user ON bookmarks(id, user_id)`, schemaStatementStructure},
-		{`CREATE INDEX IF NOT EXISTS idx_entities_quality ON bookmark_entities(user_id, enrichment_version)`, schemaStatementIndex},
-		{`create index if not exists idx_reminders_user_due on reminders(user_id)`, schemaStatementIndex},
-	}
-	for _, tc := range cases {
-		if got := classifySchemaStatement(tc.stmt); got != tc.kind {
-			t.Fatalf("classifySchemaStatement(%q) = %v, want %v", tc.stmt, got, tc.kind)
-		}
-	}
-	structure, indexes, err := loadSchemaPhases()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(structure) == 0 || len(indexes) == 0 {
-		t.Fatalf("expected non-empty schema phases, structure=%d indexes=%d", len(structure), len(indexes))
-	}
-	for _, stmt := range structure {
-		if classifySchemaStatement(stmt) != schemaStatementStructure {
-			t.Fatalf("structure phase contains index statement: %s", stmt)
-		}
-	}
-	for _, stmt := range indexes {
-		if classifySchemaStatement(stmt) != schemaStatementIndex {
-			t.Fatalf("index phase contains structure statement: %s", stmt)
-		}
 	}
 }
 

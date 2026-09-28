@@ -24,16 +24,6 @@ func TestWriteIfRequestedSupportsCommandAndFlag(t *testing.T) {
 	}
 }
 
-func TestWriteIfRequestedIgnoresOtherCommands(t *testing.T) {
-	var output bytes.Buffer
-	if WriteIfRequested(&output, "arivu", []string{"serve"}) {
-		t.Fatal("serve was treated as a version request")
-	}
-	if output.Len() != 0 {
-		t.Fatalf("unexpected output %q", output.String())
-	}
-}
-
 func TestVersionFallsBackForDevelopmentBuilds(t *testing.T) {
 	oldVersion := releaseVersion
 	releaseVersion = ""

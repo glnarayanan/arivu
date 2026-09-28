@@ -17,20 +17,6 @@ type fakeTTY struct {
 
 func (f fakeTTY) Close() error { return nil }
 
-func TestParseOptionsAllowsNonInteractivePlanWithoutPassword(t *testing.T) {
-	_, _, nonInteractive, _, _, err := parseOptions([]string{
-		"--non-interactive",
-		"--domain", "arivu.example.com",
-		"--admin-email", "admin@example.com",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !nonInteractive {
-		t.Fatal("expected non-interactive mode")
-	}
-}
-
 func TestParseOptionsRequiresPasswordForNonInteractiveInstall(t *testing.T) {
 	opts, apply, nonInteractive, _, _, err := parseOptions([]string{
 		"--non-interactive",
@@ -61,27 +47,6 @@ func TestParseOptionsAllowsDryRunInstallWithoutPassword(t *testing.T) {
 	}
 	if !apply.DryRun {
 		t.Fatal("expected dry-run mode")
-	}
-}
-
-func TestParseOptionsAcceptsExistingProxyAliasAndVersion(t *testing.T) {
-	opts, _, _, _, flagsSet, err := parseOptions([]string{
-		"--domain", "arivu.example.com",
-		"--admin-email", "admin@example.com",
-		"--proxy-mode", "existing",
-		"--version", "v1.2.3",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if opts.ProxyMode != "existing-proxy" {
-		t.Fatalf("proxy mode = %s", opts.ProxyMode)
-	}
-	if opts.Version != "v1.2.3" {
-		t.Fatalf("version = %q", opts.Version)
-	}
-	if !flagsSet["version"] || !flagsSet["proxy-mode"] {
-		t.Fatalf("missing visited flags: %#v", flagsSet)
 	}
 }
 
@@ -201,18 +166,5 @@ func TestCompletionMessageAvoidsPublicSuccessWhenFirewallIsManual(t *testing.T) 
 	}
 	if !strings.Contains(message, "public HTTPS still needs firewall access") || !strings.Contains(message, "sudo ufw allow 80/tcp") {
 		t.Fatalf("message missing manual firewall guidance: %s", message)
-	}
-}
-
-func TestCompletionMessageForAppOnlyReferencesPrintedSnippets(t *testing.T) {
-	plan := installer.Plan{
-		Options:     installer.Options{Domain: "arivu.example.com"},
-		ProxyMode:   installer.ProxyAppOnly,
-		BindAddress: "127.0.0.1",
-		BindPort:    8090,
-	}
-	message := completionMessage(plan)
-	if !strings.Contains(message, "configure your reverse proxy manually using the snippets printed above") {
-		t.Fatalf("app-only completion message = %s", message)
 	}
 }

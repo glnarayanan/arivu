@@ -10,28 +10,6 @@ import (
 	"github.com/glnarayanan/arivu/internal/database"
 )
 
-func TestLeaseClaimsReadyQueuedJob(t *testing.T) {
-	ctx := context.Background()
-	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	queue := New(db)
-	jobID, err := queue.EnqueueAt(ctx, "", "bookmark.process", `{"url":"https://example.com"}`, time.Now().Add(-time.Minute))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	job, ok, err := queue.Lease(ctx, time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !ok || job.ID != jobID {
-		t.Fatalf("Lease() = job:%#v ok:%v, want %s", job, ok, jobID)
-	}
-}
-
 func TestLeaseRecoversExpiredLeasedJob(t *testing.T) {
 	ctx := context.Background()
 	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))

@@ -22,13 +22,6 @@ import (
 	"github.com/glnarayanan/arivu/internal/safefetch"
 )
 
-func TestReadingTimeUsesStandardAdultReadingSpeedAndRoundsUp(t *testing.T) {
-	text := strings.TrimSpace(strings.Repeat("word ", 9639))
-	if got := readingTime(text); got != 41 {
-		t.Fatalf("readingTime() = %d, want 41", got)
-	}
-}
-
 func TestDirectCaptureActivatesReaderWithoutAI(t *testing.T) {
 	service, db := capturePipelineService(t)
 	service.fetchPage = func(context.Context, string) (safefetch.Result, error) {

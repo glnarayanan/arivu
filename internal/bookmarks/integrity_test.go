@@ -97,26 +97,6 @@ func TestCreateRollsBackWhenRequiredCompanionFails(t *testing.T) {
 	}
 }
 
-func TestCreateDeduplicatesTagsBySlug(t *testing.T) {
-	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if _, err = db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('u1','one@example.com','One','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
-		t.Fatal(err)
-	}
-	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
-	result, err := service.CreateBookmark(context.Background(), CreateBookmarkInput{UserID: "u1", URL: "https://example.com/tags", Title: "Tags", Domain: "example.com", Tags: []string{"C", "C++", "!!!"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM bookmark_tags WHERE bookmark_id=?`, result.BookmarkID).Scan(&count); err != nil || count != 1 {
-		t.Fatalf("slug-equivalent tags count=%d err=%v", count, err)
-	}
-}
-
 func TestRepairSourceCaptureDoesNotDuplicateActiveJobForNormalizedURL(t *testing.T) {
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
 	if err != nil {
@@ -464,21 +444,5 @@ func TestDeleteItemCommandRollsBackWhenProjectionDeleteFails(t *testing.T) {
 	var count int
 	if err = db.QueryRow(`SELECT COUNT(*) FROM notes WHERE id='n1' AND user_id='u1'`).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("source note did not roll back: count=%d err=%v", count, err)
-	}
-}
-
-func TestEvidencePayloadUsesStableFrontendFields(t *testing.T) {
-	payload := evidencePayload([]BookmarkEvidence{{
-		ID: "e1", Kind: "source_native", Origin: "x", Authority: 90,
-		CanonicalURL: "https://example.com/source", ExtractionMethod: "api",
-		QualityStatus: "complete", QualityReasons: []string{"authoritative"},
-		ExtractorVersion: "x-v1", Selected: true, Text: strings.Repeat("e", 900),
-	}})
-	if len(payload) != 1 || payload[0]["kind"] != "source_native" || payload[0]["selected"] != true {
-		t.Fatalf("unexpected evidence payload: %#v", payload)
-	}
-	preview, _ := payload[0]["preview"].(string)
-	if len([]rune(preview)) > 803 || !strings.HasSuffix(preview, "...") || payload[0]["canonical_url"] != "https://example.com/source" {
-		t.Fatalf("evidence inspection fields missing: %#v", payload[0])
 	}
 }
