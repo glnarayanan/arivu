@@ -299,6 +299,17 @@ CREATE TABLE IF NOT EXISTS notes (
 
 CREATE INDEX IF NOT EXISTS idx_notes_user_updated ON notes(user_id, updated_at DESC);
 
+-- Retained independently of converted notes, including after a user deletes one.
+CREATE TABLE IF NOT EXISTS knowledge_preservation (
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL,
+  legacy_id TEXT NOT NULL,
+  payload_json TEXT NOT NULL CHECK(json_valid(payload_json)),
+  note_id TEXT REFERENCES notes(id) ON DELETE SET NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(user_id, kind, legacy_id)
+);
+
 CREATE TABLE IF NOT EXISTS daily_notes (
   user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   note_date TEXT NOT NULL,
