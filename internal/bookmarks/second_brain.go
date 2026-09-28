@@ -1328,42 +1328,32 @@ func scanNote(row scanner) map[string]any {
 	return result
 }
 
+const annotationSelect = `SELECT a.id,a.bookmark_id,a.quote,a.note,a.selector_json,a.tags_json,a.created_at,a.updated_at,COALESCE(a.evidence_id,''),
+	CASE WHEN e.id IS NULL THEN 'unresolved' WHEN e.is_selected=1 THEN 'resolved' ELSE 'version_mismatch' END
+	FROM annotations a LEFT JOIN bookmark_evidence e ON e.id=a.evidence_id AND e.bookmark_id=a.bookmark_id`
+
 func (s *Service) annotation(ctx context.Context, userID, id string) (map[string]any, error) {
-	var bookmarkID, quote, note, selector, tags, created, updated, evidenceID string
-	err := s.db.QueryRowContext(ctx, `SELECT bookmark_id,quote,note,selector_json,tags_json,created_at,updated_at,COALESCE(evidence_id,'') FROM annotations WHERE id=? AND user_id=?`, id, userID).Scan(&bookmarkID, &quote, &note, &selector, &tags, &created, &updated, &evidenceID)
+	return scanAnnotation(s.db.QueryRowContext(ctx, annotationSelect+` WHERE a.id=? AND a.user_id=?`, id, userID))
+}
+
+func scanAnnotation(row scanner) (map[string]any, error) {
+	var id, bookmarkID, quote, note, selector, tags, created, updated, evidenceID, resolution string
+	err := row.Scan(&id, &bookmarkID, &quote, &note, &selector, &tags, &created, &updated, &evidenceID, &resolution)
 	if err != nil {
 		return nil, err
-	}
-	resolution := "unresolved"
-	if evidenceID != "" {
-		var selected bool
-		if s.db.QueryRowContext(ctx, `SELECT is_selected FROM bookmark_evidence WHERE id=? AND bookmark_id=?`, evidenceID, bookmarkID).Scan(&selected) == nil {
-			if selected {
-				resolution = "resolved"
-			} else {
-				resolution = "version_mismatch"
-			}
-		}
 	}
 	return map[string]any{"id": id, "bookmark_id": bookmarkID, "quote": quote, "note": note, "selector": jsonObjectValue(selector), "tags": jsonList(tags), "evidence_id": evidenceID, "resolution_state": resolution, "created_at": created, "updated_at": updated}, nil
 }
 
 func (s *Service) bookmarkAnnotations(ctx context.Context, userID, bookmarkID string) []map[string]any {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM annotations WHERE user_id=? AND bookmark_id=? ORDER BY created_at DESC LIMIT 100`, userID, bookmarkID)
+	rows, err := s.db.QueryContext(ctx, annotationSelect+` WHERE a.user_id=? AND a.bookmark_id=? ORDER BY a.created_at DESC LIMIT 100`, userID, bookmarkID)
 	if err != nil {
 		return []map[string]any{}
 	}
-	var ids []string
-	for rows.Next() {
-		var id string
-		if rows.Scan(&id) == nil {
-			ids = append(ids, id)
-		}
-	}
-	_ = rows.Close()
+	defer rows.Close()
 	var result []map[string]any
-	for _, id := range ids {
-		if item, err := s.annotation(ctx, userID, id); err == nil {
+	for rows.Next() {
+		if item, err := scanAnnotation(rows); err == nil {
 			result = append(result, item)
 		}
 	}
@@ -1838,11 +1828,15 @@ func (s *Service) bookmarkTags(ctx context.Context, userID, bookmarkID string) [
 	defer rows.Close()
 	var result []map[string]any
 	for rows.Next() {
-		var id, name, slug, source, created string
-		_ = rows.Scan(&id, &name, &slug, &source, &created)
-		result = append(result, map[string]any{"id": id, "name": name, "slug": slug, "source": source, "created_at": created})
+		result = append(result, scanBookmarkTag(rows))
 	}
 	return result
+}
+
+func scanBookmarkTag(row scanner, extra ...any) map[string]any {
+	var id, name, slug, source, created string
+	_ = row.Scan(append([]any{&id, &name, &slug, &source, &created}, extra...)...)
+	return map[string]any{"id": id, "name": name, "slug": slug, "source": source, "created_at": created}
 }
 
 func (s *Service) upsertTag(ctx context.Context, userID, name, source string) (map[string]any, error) {

@@ -295,23 +295,37 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 	type embeddedNode struct {
 		id        string
 		embedding []float64
+		norm      float64
 	}
 	embedded := []embeddedNode{}
-	rows, err = s.db.QueryContext(ctx, `SELECT b.id,b.embedding FROM bookmarks b WHERE b.user_id=? AND b.embedding IS NOT NULL AND b.enrichment_version=? AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 AND e.quality_status='complete') ORDER BY b.id`, userID, providers.SemanticVersion)
-	if err == nil {
-		for rows.Next() {
-			var id string
-			var raw []byte
-			_ = rows.Scan(&id, &raw)
-			if known[graphNodeID("bookmark", id)] {
-				embedded = append(embedded, embeddedNode{id: id, embedding: parseEmbedding(raw)})
-			}
+	bookmarkIDs := make([]string, 0, len(nodes))
+	for _, node := range nodes {
+		if node.Type == "bookmark" {
+			bookmarkIDs = append(bookmarkIDs, node.SourceID)
 		}
-		rows.Close()
+	}
+	if len(bookmarkIDs) > 0 && len(edges) < limit {
+		placeholders := strings.TrimRight(strings.Repeat("?,", len(bookmarkIDs)), ",")
+		args := make([]any, 0, len(bookmarkIDs)+2)
+		args = append(args, userID, providers.SemanticVersion)
+		for _, id := range bookmarkIDs {
+			args = append(args, id)
+		}
+		rows, err = s.db.QueryContext(ctx, `SELECT b.id,b.embedding FROM bookmarks b WHERE b.user_id=? AND b.embedding IS NOT NULL AND b.enrichment_version=? AND b.id IN (`+placeholders+`) AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 AND e.quality_status='complete') ORDER BY b.id`, args...)
+		if err == nil {
+			for rows.Next() {
+				var id string
+				var raw []byte
+				_ = rows.Scan(&id, &raw)
+				values := parseEmbedding(raw)
+				embedded = append(embedded, embeddedNode{id: id, embedding: values, norm: embeddingNorm(values)})
+			}
+			rows.Close()
+		}
 	}
 	for i := 0; i < len(embedded) && len(edges) < limit; i++ {
 		for j := i + 1; j < len(embedded) && len(edges) < limit; j++ {
-			confidence := cosineSimilarity(embedded[i].embedding, embedded[j].embedding)
+			confidence := cosineSimilarityWithNorms(embedded[i].embedding, embedded[j].embedding, embedded[i].norm, embedded[j].norm)
 			if confidence < 0.82 {
 				continue
 			}

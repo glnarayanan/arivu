@@ -154,7 +154,7 @@ func scanEvidence(row scanner) (BookmarkEvidence, error) {
 	var selected bool
 	err := row.Scan(&evidence.ID, &evidence.BookmarkID, &evidence.Kind, &evidence.Origin, &evidence.Authority, &evidence.Text, &evidence.SanitizedHTML, &evidence.CanonicalURL, &evidence.AuthorID, &evidence.PublisherKey, &evidence.PublishedAt, &evidence.ExtractionMethod, &evidence.ContentHash, &evidence.QualityStatus, &evidence.QualityScore, &reasons, &evidence.ExtractorVersion, &selected, &evidence.CreatedAt, &evidence.UpdatedAt)
 	if err != nil {
-		return BookmarkEvidence{}, err
+		return evidence, err
 	}
 	evidence.Selected = selected
 	_ = json.Unmarshal([]byte(reasons), &evidence.QualityReasons)

@@ -115,9 +115,16 @@ func (s *Service) LibraryItems(w http.ResponseWriter, r *http.Request, user auth
 		return
 	}
 	_ = rows.Close()
+	bookmarkIDs := make([]string, 0, len(items))
 	for _, item := range items {
 		if item["type"] == "bookmark" {
-			item["capture_status"] = s.captureStatus(r.Context(), user.ID, stringValue(item["id"]))
+			bookmarkIDs = append(bookmarkIDs, stringValue(item["id"]))
+		}
+	}
+	statuses := s.captureStatuses(r.Context(), user.ID, bookmarkIDs)
+	for _, item := range items {
+		if item["type"] == "bookmark" {
+			item["capture_status"] = statuses[stringValue(item["id"])]
 		}
 	}
 	var next any

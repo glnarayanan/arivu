@@ -1018,7 +1018,7 @@ func (s *Service) Duplicates(w http.ResponseWriter, r *http.Request, user auth.U
 			if len(bookmarks[j].Embedding) == 0 {
 				continue
 			}
-			similarity := cosineSimilarity(bookmarks[i].Embedding, bookmarks[j].Embedding)
+			similarity := cosineSimilarityWithNorms(bookmarks[i].Embedding, bookmarks[j].Embedding, bookmarks[i].EmbeddingNorm, bookmarks[j].EmbeddingNorm)
 			if similarity < 0.85 {
 				continue
 			}
@@ -1130,8 +1130,12 @@ func (s *Service) getBookmark(ctx context.Context, userID, id string) (map[strin
 }
 
 func (s *Service) summary(ctx context.Context, userID, bookmarkID string) map[string]any {
+	return scanSummary(s.db.QueryRowContext(ctx, `SELECT one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,provider,model,prompt_version,validator_version,evidence_hash,validation_status,validation_reasons_json,highlight_spans_json,generated_at FROM ai_summaries WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID))
+}
+
+func scanSummary(row scanner, extra ...any) map[string]any {
 	var one, bullets, long, highlights, tags, status, providerName, model, promptVersion, validatorVersion, evidenceHash, validationStatus, validationReasons, highlightSpans, generatedAt sql.NullString
-	err := s.db.QueryRowContext(ctx, `SELECT one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,provider,model,prompt_version,validator_version,evidence_hash,validation_status,validation_reasons_json,highlight_spans_json,generated_at FROM ai_summaries WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID).Scan(&one, &bullets, &long, &highlights, &tags, &status, &providerName, &model, &promptVersion, &validatorVersion, &evidenceHash, &validationStatus, &validationReasons, &highlightSpans, &generatedAt)
+	err := row.Scan(append([]any{&one, &bullets, &long, &highlights, &tags, &status, &providerName, &model, &promptVersion, &validatorVersion, &evidenceHash, &validationStatus, &validationReasons, &highlightSpans, &generatedAt}, extra...)...)
 	if err != nil {
 		return map[string]any{"processing_status": "pending"}
 	}
@@ -1141,6 +1145,7 @@ func (s *Service) summary(ctx context.Context, userID, bookmarkID string) map[st
 type duplicateBookmark struct {
 	Data          map[string]any
 	Embedding     []float64
+	EmbeddingNorm float64
 	NormalizedURL string
 }
 
@@ -1165,7 +1170,8 @@ func (s *Service) duplicateCandidates(ctx context.Context, userID string) ([]dup
 		if bm["id"] == "" {
 			continue
 		}
-		candidates = append(candidates, duplicateBookmark{Data: bm, Embedding: parseEmbedding(embedding), NormalizedURL: normalizeDuplicateURL(bm["url"].(string))})
+		values := parseEmbedding(embedding)
+		candidates = append(candidates, duplicateBookmark{Data: bm, Embedding: values, EmbeddingNorm: embeddingNorm(values), NormalizedURL: normalizeDuplicateURL(bm["url"].(string))})
 	}
 	return candidates, rows.Err()
 }
@@ -1314,6 +1320,25 @@ func cosineSimilarity(a, b []float64) float64 {
 	}
 	if normA == 0 || normB == 0 {
 		return 0
+	}
+	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
+}
+
+func embeddingNorm(values []float64) float64 {
+	var norm float64
+	for _, value := range values {
+		norm += value * value
+	}
+	return norm
+}
+
+func cosineSimilarityWithNorms(a, b []float64, normA, normB float64) float64 {
+	if len(a) == 0 || len(a) != len(b) || normA == 0 || normB == 0 {
+		return 0
+	}
+	var dot float64
+	for i := range a {
+		dot += a[i] * b[i]
 	}
 	return dot / (math.Sqrt(normA) * math.Sqrt(normB))
 }

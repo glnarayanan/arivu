@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Batched Library capture-status reads, search-index rebuild reads, export
+  details, and Insights concept reads. Graph now fetches embeddings only for
+  selected nodes and reuses vector norms. Routes, result limits, search swaps,
+  and export fields remain unchanged. See the
+  [benchmark and verification report](openwiki/testing/performance-optimization.md).
+- Removed 58 low-value Go tests and added seven focused checks for the batched
+  reads. Statement coverage is 45.73%, down from 47.13% before pruning.
 - Simplified sign-in, password recovery, and invite acceptance to focused
   account forms by removing the promotional side panel.
 - Removed the import-settings action from Insights when saved items require

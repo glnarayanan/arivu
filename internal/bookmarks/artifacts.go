@@ -164,6 +164,49 @@ func (s *Service) captureStatus(ctx context.Context, userID, bookmarkID string) 
 	return status
 }
 
+func (s *Service) captureStatuses(ctx context.Context, userID string, bookmarkIDs []string) map[string]string {
+	result := make(map[string]string, len(bookmarkIDs))
+	for _, id := range bookmarkIDs {
+		result[id] = "saved"
+	}
+	if len(bookmarkIDs) == 0 {
+		return result
+	}
+	args := make([]any, 0, len(bookmarkIDs)+1)
+	args = append(args, userID)
+	for _, id := range bookmarkIDs {
+		args = append(args, id)
+	}
+	query := `WITH latest AS (SELECT bookmark_id,status,ROW_NUMBER() OVER (PARTITION BY bookmark_id ORDER BY queued_at DESC) rn FROM capture_attempts WHERE user_id=? AND bookmark_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(bookmarkIDs)), ",") + `))
+		SELECT bookmark_id,status,CASE WHEN status='complete' THEN (EXISTS(SELECT 1 FROM bookmark_media m WHERE m.user_id=? AND m.bookmark_id=latest.bookmark_id AND m.is_staged=0 AND m.deleted_at IS NULL) OR EXISTS(SELECT 1 FROM artifacts a WHERE a.user_id=? AND a.bookmark_id=latest.bookmark_id AND a.artifact_type IN ('screenshot','pdf','self_contained_html') AND a.is_staged=0 AND a.deleted_at IS NULL)) ELSE 0 END FROM latest WHERE rn=1`
+	args = append(args, userID, userID)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, status string
+		var preserved bool
+		if rows.Scan(&id, &status, &preserved) != nil {
+			continue
+		}
+		switch status {
+		case "complete":
+			if preserved {
+				result[id] = "preserved"
+			}
+		case "partial":
+			result[id] = "partially_preserved"
+		case "queued", "running":
+			result[id] = "processing"
+		default:
+			result[id] = status
+		}
+	}
+	return result
+}
+
 func (s *Service) ArtifactMetadata(w http.ResponseWriter, r *http.Request, user auth.User) {
 	var id, bookmarkID, kind, mime, digest, created string
 	var size int64
