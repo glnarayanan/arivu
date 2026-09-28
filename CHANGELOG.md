@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Batched Notes-list states, tasks, reminders, links, and endpoint titles while
+  preserving response order, per-note limits, and owner isolation.
 - Batched Library capture-status reads, search-index rebuild reads, export
   details, and Insights concept reads. Graph now fetches embeddings only for
   selected nodes and reuses vector norms. Routes, result limits, search swaps,

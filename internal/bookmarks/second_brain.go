@@ -94,9 +94,7 @@ func (s *Service) Notes(w http.ResponseWriter, r *http.Request, user auth.User) 
 		writeError(w, http.StatusInternalServerError, "Could not load notes")
 		return
 	}
-	for _, note := range notes {
-		s.decorateNote(r.Context(), user.ID, note)
-	}
+	s.decorateNotes(r.Context(), user.ID, notes)
 	writeJSON(w, http.StatusOK, map[string]any{"notes": notes})
 }
 
@@ -245,6 +243,151 @@ func (s *Service) decorateNote(ctx context.Context, userID string, note map[stri
 	note["action_items"] = s.itemActionItems(ctx, userID, "note", id)
 	note["reminders"] = s.itemReminders(ctx, userID, "note", id)
 	note["links"] = s.itemLinks(ctx, userID, "note", id)
+}
+
+// decorateNotes is the list-view equivalent of decorateNote. It keeps the
+// singleton response shape and per-relation limits, while reading each
+// relation for the selected notes as a bounded owner-scoped set.
+func (s *Service) decorateNotes(ctx context.Context, userID string, notes []map[string]any) {
+	byID := make(map[string][]map[string]any, len(notes))
+	ids := make([]string, 0, len(notes))
+	for _, note := range notes {
+		id := stringValue(note["id"])
+		if id == "" {
+			continue
+		}
+		if _, exists := byID[id]; !exists {
+			ids = append(ids, id)
+		}
+		byID[id] = append(byID[id], note)
+		note["item_state"] = map[string]any{"stage": "inbox", "importance": 0, "next_action": ""}
+		note["action_items"] = []map[string]any{}
+		note["reminders"] = []map[string]any{}
+		note["links"] = map[string]any{"outgoing": []map[string]any{}, "incoming": []map[string]any{}}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := make([]any, 1, len(ids)+1)
+	args[0] = userID
+	for _, id := range ids {
+		args = append(args, id)
+	}
+
+	if rows, err := s.db.QueryContext(ctx, `SELECT item_id,stage,importance,next_action,created_at,updated_at FROM item_states WHERE user_id=? AND item_type='note' AND item_id IN (`+placeholders+`)`, args...); err == nil {
+		for rows.Next() {
+			var id, stage, nextAction, created, updated string
+			var importance int
+			if rows.Scan(&id, &stage, &importance, &nextAction, &created, &updated) == nil {
+				for _, note := range byID[id] {
+					note["item_state"] = map[string]any{"stage": stage, "importance": importance, "next_action": nextAction, "created_at": created, "updated_at": updated}
+				}
+			}
+		}
+		rows.Close()
+	}
+
+	titles := make(map[string]string)
+	for id, copies := range byID {
+		title := stringValue(copies[0]["title"])
+		if title == "" {
+			title = "Untitled note"
+		}
+		titles["note\x00"+id] = title
+	}
+	readGrouped := func(query string, scan func(scanner) map[string]any, assign func(map[string]any, string)) {
+		rows, err := s.db.QueryContext(ctx, query, args...)
+		if err != nil {
+			return
+		}
+		defer rows.Close()
+		var items []map[string]any
+		for rows.Next() {
+			items = append(items, scan(rows))
+		}
+		if rows.Err() != nil {
+			return
+		}
+		for _, item := range items {
+			id := stringValue(item["item_id"])
+			if byID[id] == nil {
+				continue
+			}
+			assign(item, id)
+		}
+	}
+	readGrouped(`SELECT id,item_type,item_id,title,status,created_at,completed_at FROM (SELECT id,item_type,item_id,title,status,created_at,COALESCE(completed_at,'') completed_at,ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY status ASC,created_at DESC) rank FROM action_items WHERE user_id=? AND item_type='note' AND item_id IN (`+placeholders+`)) WHERE rank<=100 ORDER BY item_id,status ASC,created_at DESC`, scanActionItem, func(item map[string]any, id string) {
+		item["item_title"] = titles["note\x00"+id]
+		for _, note := range byID[id] {
+			note["action_items"] = append(note["action_items"].([]map[string]any), item)
+		}
+	})
+	readGrouped(`SELECT id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,completed_at,last_notified_at,last_completed_at FROM (SELECT id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,COALESCE(completed_at,'') completed_at,COALESCE(last_notified_at,'') last_notified_at,COALESCE(last_completed_at,'') last_completed_at,ROW_NUMBER() OVER (PARTITION BY item_id ORDER BY due_at ASC) rank FROM reminders WHERE user_id=? AND item_type='note' AND item_id IN (`+placeholders+`)) WHERE rank<=50 ORDER BY item_id,due_at ASC`, scanReminder, func(item map[string]any, id string) {
+		item["item_title"] = titles["note\x00"+id]
+		for _, note := range byID[id] {
+			note["reminders"] = append(note["reminders"].([]map[string]any), item)
+		}
+	})
+
+	type linkDirection struct{ field, column string }
+	type groupedLink struct {
+		field, noteID string
+		item          map[string]any
+	}
+	var groupedLinks []groupedLink
+	endpointIDs := map[string]map[string]bool{"bookmark": {}, "note": {}}
+	for _, direction := range []linkDirection{{"outgoing", "from_id"}, {"incoming", "to_id"}} {
+		query := `SELECT id,from_type,from_id,to_type,to_id,label,source,created_at FROM (SELECT id,from_type,from_id,to_type,to_id,label,source,created_at,ROW_NUMBER() OVER (PARTITION BY ` + direction.column + ` ORDER BY created_at DESC) rank FROM item_links WHERE user_id=? AND ` + strings.TrimSuffix(direction.column, "_id") + `_type='note' AND ` + direction.column + ` IN (` + placeholders + `)) WHERE rank<=100 ORDER BY ` + direction.column + `,created_at DESC`
+		readGrouped(query, func(row scanner) map[string]any {
+			item := scanLink(row)
+			item["item_id"] = item[direction.column]
+			return item
+		}, func(item map[string]any, id string) {
+			delete(item, "item_id")
+			for _, endpoint := range []struct{ typ, id string }{{stringValue(item["from_type"]), stringValue(item["from_id"])}, {stringValue(item["to_type"]), stringValue(item["to_id"])}} {
+				if endpointIDs[endpoint.typ] != nil {
+					endpointIDs[endpoint.typ][endpoint.id] = true
+				}
+			}
+			groupedLinks = append(groupedLinks, groupedLink{direction.field, id, item})
+		})
+	}
+	for itemType, idSet := range endpointIDs {
+		endpointArgs := []any{userID}
+		for id := range idSet {
+			endpointArgs = append(endpointArgs, id)
+		}
+		for start := 1; start < len(endpointArgs); start += 500 {
+			end := min(start+500, len(endpointArgs))
+			chunk := append([]any{endpointArgs[0]}, endpointArgs[start:end]...)
+			chunkPlaceholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)-1), ",")
+			query := `SELECT id,COALESCE(NULLIF(title,''),'Untitled note') FROM notes WHERE user_id=? AND id IN (` + chunkPlaceholders + `)`
+			if itemType == "bookmark" {
+				query = `SELECT id,COALESCE(NULLIF(title,''),url) FROM bookmarks WHERE user_id=? AND id IN (` + chunkPlaceholders + `)`
+			}
+			rows, err := s.db.QueryContext(ctx, query, chunk...)
+			if err != nil {
+				continue
+			}
+			for rows.Next() {
+				var id, title string
+				if rows.Scan(&id, &title) == nil {
+					titles[itemType+"\x00"+id] = title
+				}
+			}
+			rows.Close()
+		}
+	}
+	for _, grouped := range groupedLinks {
+		item := grouped.item
+		item["from_title"] = titles[stringValue(item["from_type"])+"\x00"+stringValue(item["from_id"])]
+		item["to_title"] = titles[stringValue(item["to_type"])+"\x00"+stringValue(item["to_id"])]
+		for _, note := range byID[grouped.noteID] {
+			links := note["links"].(map[string]any)
+			links[grouped.field] = append(links[grouped.field].([]map[string]any), item)
+		}
+	}
 }
 
 func (s *Service) DeleteNote(w http.ResponseWriter, r *http.Request, user auth.User) {
