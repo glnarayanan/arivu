@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Batched search-result feedback by exact item keys, preserving candidate
+  selection, scores, and stable ranking ties.
 - Batched Notes-list states, tasks, reminders, links, and endpoint titles while
   preserving response order, per-note limits, and owner isolation.
 - Batched Library capture-status reads, search-index rebuild reads, export

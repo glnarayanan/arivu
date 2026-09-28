@@ -226,6 +226,39 @@ func (s *Service) feedbackState(ctx context.Context, userID, itemType, itemID, s
 	return value
 }
 
+type feedbackItem struct {
+	itemType string
+	itemID   string
+}
+
+func (s *Service) feedbackStates(ctx context.Context, userID, surface string, items []feedbackItem) map[feedbackItem]string {
+	states := make(map[feedbackItem]string)
+	if len(items) == 0 {
+		return states
+	}
+
+	args := make([]any, 0, 2*len(items)+2)
+	values := make([]string, 0, len(items))
+	for _, item := range items {
+		values = append(values, `(?,?)`)
+		args = append(args, item.itemType, item.itemID)
+	}
+	args = append(args, userID, feedbackSurface(surface))
+	rows, err := s.db.QueryContext(ctx, `WITH selected(item_type,item_id) AS (VALUES `+strings.Join(values, `,`)+`) SELECT f.item_type,f.item_id,f.feedback FROM selected s JOIN result_feedback f ON f.item_type=s.item_type AND f.item_id=s.item_id WHERE f.user_id=? AND f.surface=?`, args...)
+	if err != nil {
+		return states
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item feedbackItem
+		var value string
+		if rows.Scan(&item.itemType, &item.itemID, &value) == nil {
+			states[item] = value
+		}
+	}
+	return states
+}
+
 func (s *Service) anyFeedbackState(ctx context.Context, userID, itemType, itemID string) string {
 	var value string
 	_ = s.db.QueryRowContext(ctx, `SELECT feedback FROM result_feedback WHERE user_id=? AND item_type=? AND item_id=? ORDER BY updated_at DESC LIMIT 1`, userID, itemType, itemID).Scan(&value)
