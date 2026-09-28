@@ -141,119 +141,6 @@ func TestWebAuthRequiresCSRFForBookmarkCreate(t *testing.T) {
 	}
 }
 
-func TestDailyNotesAreDateAddressedAndUserScoped(t *testing.T) {
-	a, err := New(config.Config{
-		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
-		SecretKey:      "test-secret",
-		SignupEnabled:  true,
-		SessionTTL:     time.Hour,
-		RefreshTTL:     time.Hour,
-		ExtensionTTL:   time.Hour,
-		MaxRequestBody: 1 << 20,
-	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer a.Close()
-	handler := a.Handler()
-	accessCookie, csrfCookie := signupForCookies(t, handler, "daily@example.com")
-	otherAccess, otherCSRF := signupForCookies(t, handler, "other-daily@example.com")
-
-	empty := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-07-06", "", accessCookie, csrfCookie)
-	if empty.StatusCode != http.StatusOK {
-		t.Fatalf("empty daily note status = %d body=%s", empty.StatusCode, readBody(empty))
-	}
-	var emptyBody struct {
-		DailyNote map[string]any `json:"daily_note"`
-	}
-	_ = json.NewDecoder(empty.Body).Decode(&emptyBody)
-	empty.Body.Close()
-	if emptyBody.DailyNote["date"] != "2026-07-06" || emptyBody.DailyNote["body"] != "" {
-		t.Fatalf("unexpected empty daily note: %#v", emptyBody.DailyNote)
-	}
-
-	badDate := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-7-6", "", accessCookie, csrfCookie)
-	if badDate.StatusCode != http.StatusBadRequest {
-		t.Fatalf("bad date status = %d body=%s", badDate.StatusCode, readBody(badDate))
-	}
-	badDate.Body.Close()
-
-	missingCSRFReq := httptest.NewRequest(http.MethodPut, "/api/daily-notes/2026-07-06", strings.NewReader(`{"body":"Plan"}`))
-	missingCSRFReq.Header.Set("Content-Type", "application/json")
-	missingCSRFReq.AddCookie(accessCookie)
-	missingCSRFRec := httptest.NewRecorder()
-	handler.ServeHTTP(missingCSRFRec, missingCSRFReq)
-	missingCSRF := missingCSRFRec.Result()
-	if missingCSRF.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("missing csrf status = %d body=%s", missingCSRF.StatusCode, readBody(missingCSRF))
-	}
-	missingCSRF.Body.Close()
-
-	save := adminRequest(t, handler, http.MethodPut, "/api/daily-notes/2026-07-06", `{"body":"Plan the review loop."}`, accessCookie, csrfCookie)
-	if save.StatusCode != http.StatusOK {
-		t.Fatalf("save daily note status = %d body=%s", save.StatusCode, readBody(save))
-	}
-	save.Body.Close()
-	update := adminRequest(t, handler, http.MethodPut, "/api/daily-notes/2026-07-06", `{"body":"Ship the cockpit."}`, accessCookie, csrfCookie)
-	if update.StatusCode != http.StatusOK {
-		t.Fatalf("update daily note status = %d body=%s", update.StatusCode, readBody(update))
-	}
-	update.Body.Close()
-
-	read := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-07-06", "", accessCookie, csrfCookie)
-	var readBodyJSON struct {
-		DailyNote map[string]any `json:"daily_note"`
-	}
-	_ = json.NewDecoder(read.Body).Decode(&readBodyJSON)
-	read.Body.Close()
-	if readBodyJSON.DailyNote["body"] != "Ship the cockpit." {
-		t.Fatalf("daily note was not updated: %#v", readBodyJSON.DailyNote)
-	}
-
-	otherRead := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-07-06", "", otherAccess, otherCSRF)
-	var otherBody struct {
-		DailyNote map[string]any `json:"daily_note"`
-	}
-	_ = json.NewDecoder(otherRead.Body).Decode(&otherBody)
-	otherRead.Body.Close()
-	if otherBody.DailyNote["body"] != "" {
-		t.Fatalf("daily note leaked across users: %#v", otherBody.DailyNote)
-	}
-
-	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
-	if exportResp.StatusCode != http.StatusOK {
-		t.Fatalf("daily note export status = %d body=%s", exportResp.StatusCode, readBody(exportResp))
-	}
-	exportRaw, err := io.ReadAll(exportResp.Body)
-	if err != nil {
-		t.Fatalf("read daily note export: %v", err)
-	}
-	exportResp.Body.Close()
-	var exported struct {
-		DailyNotes []map[string]any `json:"daily_notes"`
-	}
-	_ = json.Unmarshal(exportRaw, &exported)
-	if len(exported.DailyNotes) != 1 || exported.DailyNotes[0]["date"] != "2026-07-06" || exported.DailyNotes[0]["body"] != "Ship the cockpit." {
-		t.Fatalf("export missing daily note: %#v", exported.DailyNotes)
-	}
-
-	restoreAccess, restoreCSRF := signupForCookies(t, handler, "restore-daily@example.com")
-	restore := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(exportRaw), restoreAccess, restoreCSRF)
-	if restore.StatusCode != http.StatusOK {
-		t.Fatalf("restore daily note status = %d body=%s", restore.StatusCode, readBody(restore))
-	}
-	restore.Body.Close()
-	restoredRead := adminRequest(t, handler, http.MethodGet, "/api/daily-notes/2026-07-06", "", restoreAccess, restoreCSRF)
-	var restoredBody struct {
-		DailyNote map[string]any `json:"daily_note"`
-	}
-	_ = json.NewDecoder(restoredRead.Body).Decode(&restoredBody)
-	restoredRead.Body.Close()
-	if restoredBody.DailyNote["body"] != "Ship the cockpit." {
-		t.Fatalf("restored daily note missing: %#v", restoredBody.DailyNote)
-	}
-}
-
 func TestResultFeedbackDecoratesSearchAndRoundTrips(t *testing.T) {
 	a, err := New(config.Config{
 		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
@@ -424,198 +311,6 @@ func TestMediaImportCreatesSearchableNotes(t *testing.T) {
 	transcript.Body.Close()
 	if transcriptBody.Note["source"] != "media:youtube" || !strings.Contains(transcriptBody.Note["body"].(string), "Decision history over time") {
 		t.Fatalf("unexpected transcript note: %#v", transcriptBody.Note)
-	}
-}
-
-func TestKnowledgeObjectsEvolutionCalendarAndAgentRoutes(t *testing.T) {
-	a, err := New(config.Config{
-		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
-		SecretKey:      "test-secret",
-		SignupEnabled:  true,
-		SessionTTL:     time.Hour,
-		RefreshTTL:     time.Hour,
-		ExtensionTTL:   time.Hour,
-		MaxRequestBody: 1 << 20,
-	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer a.Close()
-	handler := a.Handler()
-	accessCookie, csrfCookie := signupForCookies(t, handler, "objects@example.com")
-	otherAccess, otherCSRF := signupForCookies(t, handler, "objects-other@example.com")
-
-	noteResp := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Roadmap note","body":"Roadmap changed after the launch review."}`, accessCookie, csrfCookie)
-	if noteResp.StatusCode != http.StatusOK {
-		t.Fatalf("note status = %d body=%s", noteResp.StatusCode, readBody(noteResp))
-	}
-	var noteBody struct {
-		Note map[string]any `json:"note"`
-	}
-	_ = json.NewDecoder(noteResp.Body).Decode(&noteBody)
-	noteResp.Body.Close()
-	noteID, _ := noteBody.Note["id"].(string)
-	if noteID == "" {
-		t.Fatalf("note missing id: %#v", noteBody.Note)
-	}
-
-	objectResp := adminRequest(t, handler, http.MethodPost, "/api/objects", fmt.Sprintf(`{"object_type":"project","title":"Roadmap","description":"Roadmap object for launch","fields":{"status":"active"},"source_item_type":"note","source_item_id":%q}`, noteID), accessCookie, csrfCookie)
-	if objectResp.StatusCode != http.StatusOK {
-		t.Fatalf("object status = %d body=%s", objectResp.StatusCode, readBody(objectResp))
-	}
-	var objectBody struct {
-		Object map[string]any `json:"object"`
-	}
-	_ = json.NewDecoder(objectResp.Body).Decode(&objectBody)
-	objectResp.Body.Close()
-	if objectBody.Object["object_type"] != "project" || objectBody.Object["source_item_id"] != noteID {
-		t.Fatalf("unexpected object: %#v", objectBody.Object)
-	}
-	crossObject := adminRequest(t, handler, http.MethodPost, "/api/objects", fmt.Sprintf(`{"object_type":"project","title":"Bad source","source_item_type":"note","source_item_id":%q}`, noteID), otherAccess, otherCSRF)
-	if crossObject.StatusCode != http.StatusBadRequest {
-		t.Fatalf("cross-user object source status = %d body=%s", crossObject.StatusCode, readBody(crossObject))
-	}
-	crossObject.Body.Close()
-
-	listResp := adminRequest(t, handler, http.MethodGet, "/api/objects?type=project&q=Roadmap", "", accessCookie, csrfCookie)
-	if listResp.StatusCode != http.StatusOK {
-		t.Fatalf("object list status = %d body=%s", listResp.StatusCode, readBody(listResp))
-	}
-	var listBody struct {
-		Objects []map[string]any `json:"objects"`
-	}
-	_ = json.NewDecoder(listResp.Body).Decode(&listBody)
-	listResp.Body.Close()
-	if len(listBody.Objects) != 1 {
-		t.Fatalf("object list missing project: %#v", listBody.Objects)
-	}
-
-	daily := adminRequest(t, handler, http.MethodPut, "/api/daily-notes/2026-07-06", `{"body":"Roadmap decision moved to the next milestone."}`, accessCookie, csrfCookie)
-	if daily.StatusCode != http.StatusOK {
-		t.Fatalf("daily note status = %d body=%s", daily.StatusCode, readBody(daily))
-	}
-	daily.Body.Close()
-	ics := "BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:meeting-1\nSUMMARY:Roadmap review\nDTSTART:20260706T090000Z\nDTEND:20260706T093000Z\nLOCATION:Studio\nDESCRIPTION:Roadmap meeting notes\nEND:VEVENT\nEND:VCALENDAR"
-	calendarResp := adminRequest(t, handler, http.MethodPost, "/api/calendar/import", fmt.Sprintf(`{"ics":%q,"source":"calendar.ics"}`, ics), accessCookie, csrfCookie)
-	if calendarResp.StatusCode != http.StatusOK {
-		t.Fatalf("calendar status = %d body=%s", calendarResp.StatusCode, readBody(calendarResp))
-	}
-	var calendarBody struct {
-		Count   int              `json:"count"`
-		Objects []map[string]any `json:"objects"`
-	}
-	_ = json.NewDecoder(calendarResp.Body).Decode(&calendarBody)
-	calendarResp.Body.Close()
-	if calendarBody.Count != 1 || calendarBody.Objects[0]["object_type"] != "meeting" {
-		t.Fatalf("calendar did not create meeting object: %#v", calendarBody)
-	}
-
-	exportResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks/export?format=json", "", accessCookie, csrfCookie)
-	if exportResp.StatusCode != http.StatusOK {
-		t.Fatalf("object export status = %d body=%s", exportResp.StatusCode, readBody(exportResp))
-	}
-	exportRaw, err := io.ReadAll(exportResp.Body)
-	if err != nil {
-		t.Fatalf("read object export: %v", err)
-	}
-	exportResp.Body.Close()
-	var exported struct {
-		KnowledgeObjects []map[string]any `json:"knowledge_objects"`
-	}
-	_ = json.Unmarshal(exportRaw, &exported)
-	if len(exported.KnowledgeObjects) < 2 {
-		t.Fatalf("export missing knowledge objects: %#v", exported.KnowledgeObjects)
-	}
-	restoreAccess, restoreCSRF := signupForCookies(t, handler, "objects-restore@example.com")
-	restoreResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/import", string(exportRaw), restoreAccess, restoreCSRF)
-	if restoreResp.StatusCode != http.StatusOK {
-		t.Fatalf("object restore status = %d body=%s", restoreResp.StatusCode, readBody(restoreResp))
-	}
-	restoreResp.Body.Close()
-	restoredObjects := adminRequest(t, handler, http.MethodGet, "/api/objects?q=Roadmap", "", restoreAccess, restoreCSRF)
-	if restoredObjects.StatusCode != http.StatusOK {
-		t.Fatalf("restored objects status = %d body=%s", restoredObjects.StatusCode, readBody(restoredObjects))
-	}
-	var restoredObjectBody struct {
-		Objects []map[string]any `json:"objects"`
-	}
-	_ = json.NewDecoder(restoredObjects.Body).Decode(&restoredObjectBody)
-	restoredObjects.Body.Close()
-	restoredProjectSource := ""
-	for _, object := range restoredObjectBody.Objects {
-		if object["object_type"] == "project" {
-			restoredProjectSource, _ = object["source_item_id"].(string)
-		}
-	}
-	if len(restoredObjectBody.Objects) < 2 || restoredProjectSource == "" || restoredProjectSource == noteID {
-		t.Fatalf("restored objects missing or source id was not remapped: %#v", restoredObjectBody.Objects)
-	}
-
-	evolutionResp := adminRequest(t, handler, http.MethodGet, "/api/evolution?q=Roadmap", "", accessCookie, csrfCookie)
-	if evolutionResp.StatusCode != http.StatusOK {
-		t.Fatalf("evolution status = %d body=%s", evolutionResp.StatusCode, readBody(evolutionResp))
-	}
-	var evolutionBody struct {
-		Timeline []map[string]any `json:"timeline"`
-	}
-	_ = json.NewDecoder(evolutionResp.Body).Decode(&evolutionBody)
-	evolutionResp.Body.Close()
-	if len(evolutionBody.Timeline) < 3 {
-		t.Fatalf("evolution missing timeline entries: %#v", evolutionBody.Timeline)
-	}
-
-	cliToken := bodyToken(t, handler, http.MethodPost, "/api/auth/cli/login", `{"email":"objects@example.com","password":"correct horse battery staple"}`, "")
-	agentNoteResp := bearerRequest(t, handler, http.MethodPost, "/api/agent/notes", `{"title":"Agent note","body":"Agent roadmap context"}`, cliToken)
-	if agentNoteResp.StatusCode != http.StatusOK {
-		t.Fatalf("agent note status = %d body=%s", agentNoteResp.StatusCode, readBody(agentNoteResp))
-	}
-	var agentNoteBody struct {
-		Note map[string]any `json:"note"`
-	}
-	_ = json.NewDecoder(agentNoteResp.Body).Decode(&agentNoteBody)
-	agentNoteResp.Body.Close()
-	agentNoteID, _ := agentNoteBody.Note["id"].(string)
-	if agentNoteID == "" {
-		t.Fatalf("agent note missing id: %#v", agentNoteBody.Note)
-	}
-	if resp := bearerRequest(t, handler, http.MethodGet, "/api/agent/notes/"+agentNoteID, "", cliToken); resp.StatusCode != http.StatusOK {
-		t.Fatalf("agent read note status = %d body=%s", resp.StatusCode, readBody(resp))
-	} else {
-		resp.Body.Close()
-	}
-	if resp := bearerRequest(t, handler, http.MethodGet, "/api/agent/search?q=roadmap&type=note", "", cliToken); resp.StatusCode != http.StatusOK {
-		t.Fatalf("agent search status = %d body=%s", resp.StatusCode, readBody(resp))
-	} else {
-		resp.Body.Close()
-	}
-	if resp := bearerRequest(t, handler, http.MethodPost, "/api/agent/action-items", fmt.Sprintf(`{"item_type":"note","item_id":%q,"title":"Agent task"}`, agentNoteID), cliToken); resp.StatusCode != http.StatusOK {
-		t.Fatalf("agent action item status = %d body=%s", resp.StatusCode, readBody(resp))
-	} else {
-		resp.Body.Close()
-	}
-	dueAt := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
-	if resp := bearerRequest(t, handler, http.MethodPost, "/api/agent/reminders", fmt.Sprintf(`{"item_type":"note","item_id":%q,"due_at":%q,"timezone":"UTC","note":"Agent reminder"}`, agentNoteID, dueAt), cliToken); resp.StatusCode != http.StatusOK {
-		t.Fatalf("agent reminder status = %d body=%s", resp.StatusCode, readBody(resp))
-	} else {
-		resp.Body.Close()
-	}
-	if resp := bearerRequest(t, handler, http.MethodPost, "/api/agent/decisions", `{"title":"Agent decision","decision":"Roadmap stays local-first","rationale":"Keeps ownership clear"}`, cliToken); resp.StatusCode != http.StatusOK {
-		t.Fatalf("agent decision status = %d body=%s", resp.StatusCode, readBody(resp))
-	} else {
-		resp.Body.Close()
-	}
-
-	boardResp := adminRequest(t, handler, http.MethodGet, "/api/today-board", "", accessCookie, csrfCookie)
-	if boardResp.StatusCode != http.StatusOK {
-		t.Fatalf("board status = %d body=%s", boardResp.StatusCode, readBody(boardResp))
-	}
-	var boardBody struct {
-		Columns []map[string]any `json:"columns"`
-	}
-	_ = json.NewDecoder(boardResp.Body).Decode(&boardBody)
-	boardResp.Body.Close()
-	if len(boardBody.Columns) != 5 {
-		t.Fatalf("unexpected board columns: %#v", boardBody.Columns)
 	}
 }
 
@@ -1208,17 +903,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("note create without csrf status = %d body=%s", missingResp.StatusCode, readBody(missingResp))
 	}
 	missingResp.Body.Close()
-	missingActionCSRF := httptest.NewRequest(http.MethodPost, "/api/action-items", strings.NewReader(`{"item_type":"bookmark","item_id":"capture","title":"No CSRF"}`))
-	missingActionCSRF.Header.Set("Content-Type", "application/json")
-	missingActionCSRF.AddCookie(accessCookie)
-	missingActionRec := httptest.NewRecorder()
-	handler.ServeHTTP(missingActionRec, missingActionCSRF)
-	missingActionResp := missingActionRec.Result()
-	if missingActionResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("action item without csrf status = %d body=%s", missingActionResp.StatusCode, readBody(missingActionResp))
-	}
-	missingActionResp.Body.Close()
-
 	noteResp := adminRequest(t, handler, http.MethodPost, "/api/notes", `{"title":"Research note","body":"Keep quotes with the source.","bookmark_id":"capture"}`, accessCookie, csrfCookie)
 	if noteResp.StatusCode != http.StatusOK {
 		t.Fatalf("create note status = %d body=%s", noteResp.StatusCode, readBody(noteResp))
@@ -1298,68 +982,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("snooze note missing id: %#v", snoozeNoteBody)
 	}
 	_, _ = a.db.ExecContext(context.Background(), `UPDATE notes SET created_at=?,updated_at=? WHERE id=?`, now.AddDate(0, 0, -4).Format(time.RFC3339), now.AddDate(0, 0, -4).Format(time.RFC3339), snoozeNoteID)
-
-	inboxResp := adminRequest(t, handler, http.MethodGet, "/api/inbox?stage=inbox", "", accessCookie, csrfCookie)
-	if inboxResp.StatusCode != http.StatusOK {
-		t.Fatalf("inbox status = %d body=%s", inboxResp.StatusCode, readBody(inboxResp))
-	}
-	var inboxBody struct {
-		Items  []map[string]any `json:"items"`
-		Counts map[string]int   `json:"counts"`
-	}
-	_ = json.NewDecoder(inboxResp.Body).Decode(&inboxBody)
-	inboxResp.Body.Close()
-	var sawCaptureInbox, sawSearchNoteInbox bool
-	for _, item := range inboxBody.Items {
-		if item["id"] == "capture" && item["item_type"] == "bookmark" && item["stage"] == "inbox" {
-			sawCaptureInbox = true
-		}
-		if item["id"] == searchNoteID && item["item_type"] == "note" && item["stage"] == "inbox" {
-			sawSearchNoteInbox = true
-		}
-		if item["id"] == otherNoteID {
-			t.Fatalf("inbox leaked other user's note: %#v", inboxBody)
-		}
-	}
-	if !sawCaptureInbox || !sawSearchNoteInbox || inboxBody.Counts["inbox"] < 3 {
-		t.Fatalf("unexpected inbox body: %#v", inboxBody)
-	}
-	updateInboxResp := adminRequest(t, handler, http.MethodPatch, "/api/inbox/note:"+searchNoteID, `{"stage":"processing","importance":4,"next_action":"Synthesize into the recall project."}`, accessCookie, csrfCookie)
-	if updateInboxResp.StatusCode != http.StatusOK {
-		t.Fatalf("update inbox status = %d body=%s", updateInboxResp.StatusCode, readBody(updateInboxResp))
-	}
-	updateInboxResp.Body.Close()
-	badInboxResp := adminRequest(t, handler, http.MethodPatch, "/api/inbox/note:"+otherNoteID, `{"stage":"processed"}`, accessCookie, csrfCookie)
-	if badInboxResp.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user inbox update status = %d body=%s", badInboxResp.StatusCode, readBody(badInboxResp))
-	}
-	badInboxResp.Body.Close()
-	missingBulkInboxCSRF := httptest.NewRequest(http.MethodPost, "/api/inbox/bulk", strings.NewReader(`{"items":["note:`+snoozeNoteID+`"],"stage":"processing"}`))
-	missingBulkInboxCSRF.Header.Set("Content-Type", "application/json")
-	missingBulkInboxCSRF.AddCookie(accessCookie)
-	missingBulkInboxRec := httptest.NewRecorder()
-	handler.ServeHTTP(missingBulkInboxRec, missingBulkInboxCSRF)
-	missingBulkInboxResp := missingBulkInboxRec.Result()
-	if missingBulkInboxResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("bulk inbox without csrf status = %d body=%s", missingBulkInboxResp.StatusCode, readBody(missingBulkInboxResp))
-	}
-	missingBulkInboxResp.Body.Close()
-	bulkInboxResp := adminRequest(t, handler, http.MethodPost, "/api/inbox/bulk", `{"items":["note:`+snoozeNoteID+`","note:`+otherNoteID+`"],"stage":"processing","importance":5,"next_action":"Prepare this for weekly review.","action_item":"Bulk-created follow-up"}`, accessCookie, csrfCookie)
-	if bulkInboxResp.StatusCode != http.StatusOK {
-		t.Fatalf("bulk inbox status = %d body=%s", bulkInboxResp.StatusCode, readBody(bulkInboxResp))
-	}
-	var bulkInboxBody struct {
-		UpdatedCount int              `json:"updated_count"`
-		FailedCount  int              `json:"failed_count"`
-		Updated      []map[string]any `json:"updated"`
-		Failed       []map[string]any `json:"failed"`
-	}
-	_ = json.NewDecoder(bulkInboxResp.Body).Decode(&bulkInboxBody)
-	bulkInboxResp.Body.Close()
-	if bulkInboxBody.UpdatedCount != 1 || bulkInboxBody.FailedCount != 1 || len(bulkInboxBody.Updated) != 1 || len(bulkInboxBody.Failed) != 1 {
-		t.Fatalf("unexpected bulk inbox result: %#v", bulkInboxBody)
-	}
-
 	linkResp := adminRequest(t, handler, http.MethodPost, "/api/links", `{"from_type":"bookmark","from_id":"capture","to_type":"note","to_id":"`+searchNoteID+`","label":"supports"}`, accessCookie, csrfCookie)
 	if linkResp.StatusCode != http.StatusOK {
 		t.Fatalf("create link status = %d body=%s", linkResp.StatusCode, readBody(linkResp))
@@ -1530,248 +1152,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("delete cleanup target note status = %d body=%s", deleteCleanupTarget.StatusCode, readBody(deleteCleanupTarget))
 	}
 	deleteCleanupTarget.Body.Close()
-	reminderDue := now.Add(48 * time.Hour).UTC().Format(time.RFC3339)
-	reminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"bookmark","item_id":"capture","due_at":"`+reminderDue+`","timezone":"Asia/Kolkata","recurrence":"weekly","notification_channel":"email","note":"Use this in planning."}`, accessCookie, csrfCookie)
-	if reminderResp.StatusCode != http.StatusOK {
-		t.Fatalf("create reminder status = %d body=%s", reminderResp.StatusCode, readBody(reminderResp))
-	}
-	var reminderBody struct {
-		Reminder map[string]any `json:"reminder"`
-	}
-	_ = json.NewDecoder(reminderResp.Body).Decode(&reminderBody)
-	reminderResp.Body.Close()
-	reminderID, _ := reminderBody.Reminder["id"].(string)
-	if reminderID == "" || reminderBody.Reminder["item_title"] != "Capture Loop" || reminderBody.Reminder["timezone"] != "Asia/Kolkata" || reminderBody.Reminder["recurrence"] != "weekly" || reminderBody.Reminder["notification_channel"] != "email" || reminderBody.Reminder["due_state"] == "" {
-		t.Fatalf("unexpected reminder body: %#v", reminderBody)
-	}
-	crossReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"note","item_id":"`+otherNoteID+`","due_at":"`+reminderDue+`"}`, accessCookie, csrfCookie)
-	if crossReminderResp.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user reminder status = %d body=%s", crossReminderResp.StatusCode, readBody(crossReminderResp))
-	}
-	crossReminderResp.Body.Close()
-	remindersResp := adminRequest(t, handler, http.MethodGet, "/api/reminders", "", accessCookie, csrfCookie)
-	if remindersResp.StatusCode != http.StatusOK {
-		t.Fatalf("reminders status = %d body=%s", remindersResp.StatusCode, readBody(remindersResp))
-	}
-	var remindersBody struct {
-		Reminders []map[string]any `json:"reminders"`
-	}
-	_ = json.NewDecoder(remindersResp.Body).Decode(&remindersBody)
-	remindersResp.Body.Close()
-	if len(remindersBody.Reminders) != 1 || remindersBody.Reminders[0]["id"] != reminderID || remindersBody.Reminders[0]["note"] != "Use this in planning." || remindersBody.Reminders[0]["email_enabled"] != true {
-		t.Fatalf("unexpected reminders body: %#v", remindersBody)
-	}
-	noteReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"note","item_id":"`+searchNoteID+`","due_at":"`+now.Add(96*time.Hour).UTC().Format(time.RFC3339)+`","note":"Bring this note back."}`, accessCookie, csrfCookie)
-	if noteReminderResp.StatusCode != http.StatusOK {
-		t.Fatalf("create note reminder status = %d body=%s", noteReminderResp.StatusCode, readBody(noteReminderResp))
-	}
-	var noteReminderBody struct {
-		Reminder map[string]any `json:"reminder"`
-	}
-	_ = json.NewDecoder(noteReminderResp.Body).Decode(&noteReminderBody)
-	noteReminderResp.Body.Close()
-	noteReminderID, _ := noteReminderBody.Reminder["id"].(string)
-	if noteReminderID == "" || noteReminderBody.Reminder["item_title"] != "Recall field note" {
-		t.Fatalf("unexpected note reminder body: %#v", noteReminderBody)
-	}
-	missingReminderCSRF := httptest.NewRequest(http.MethodPost, "/api/reminders/"+reminderID+"/complete", strings.NewReader(`{}`))
-	missingReminderCSRF.Header.Set("Content-Type", "application/json")
-	missingReminderCSRF.AddCookie(accessCookie)
-	missingReminderRec := httptest.NewRecorder()
-	handler.ServeHTTP(missingReminderRec, missingReminderCSRF)
-	missingReminderResp := missingReminderRec.Result()
-	if missingReminderResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("reminder complete without csrf status = %d body=%s", missingReminderResp.StatusCode, readBody(missingReminderResp))
-	}
-	missingReminderResp.Body.Close()
-	crossCompleteReminder := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+reminderID+"/complete", `{}`, otherAccess, otherCSRF)
-	if crossCompleteReminder.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user reminder complete status = %d body=%s", crossCompleteReminder.StatusCode, readBody(crossCompleteReminder))
-	}
-	crossCompleteReminder.Body.Close()
-	crossDeleteReminder := adminRequest(t, handler, http.MethodDelete, "/api/reminders/"+reminderID, "", otherAccess, otherCSRF)
-	if crossDeleteReminder.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user reminder delete status = %d body=%s", crossDeleteReminder.StatusCode, readBody(crossDeleteReminder))
-	}
-	crossDeleteReminder.Body.Close()
-	tempReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"bookmark","item_id":"capture","due_at":"`+now.Add(72*time.Hour).UTC().Format(time.RFC3339)+`","note":"Temporary reminder."}`, accessCookie, csrfCookie)
-	if tempReminderResp.StatusCode != http.StatusOK {
-		t.Fatalf("create temp reminder status = %d body=%s", tempReminderResp.StatusCode, readBody(tempReminderResp))
-	}
-	var tempReminderBody struct {
-		Reminder map[string]any `json:"reminder"`
-	}
-	_ = json.NewDecoder(tempReminderResp.Body).Decode(&tempReminderBody)
-	tempReminderResp.Body.Close()
-	tempReminderID, _ := tempReminderBody.Reminder["id"].(string)
-	missingPatchReminderCSRF := httptest.NewRequest(http.MethodPatch, "/api/reminders/"+tempReminderID, strings.NewReader(`{"due_at":"`+now.Add(73*time.Hour).UTC().Format(time.RFC3339)+`"}`))
-	missingPatchReminderCSRF.Header.Set("Content-Type", "application/json")
-	missingPatchReminderCSRF.AddCookie(accessCookie)
-	missingPatchReminderRec := httptest.NewRecorder()
-	handler.ServeHTTP(missingPatchReminderRec, missingPatchReminderCSRF)
-	missingPatchReminderResp := missingPatchReminderRec.Result()
-	if missingPatchReminderResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("reminder patch without csrf status = %d body=%s", missingPatchReminderResp.StatusCode, readBody(missingPatchReminderResp))
-	}
-	missingPatchReminderResp.Body.Close()
-	updatedDue := now.Add(74 * time.Hour).UTC().Format(time.RFC3339)
-	updateReminderResp := adminRequest(t, handler, http.MethodPatch, "/api/reminders/"+tempReminderID, `{"due_at":"`+updatedDue+`","timezone":"America/New_York","recurrence":"custom","recurrence_interval_days":3,"notification_channel":"in_app","note":"Updated temporary reminder."}`, accessCookie, csrfCookie)
-	if updateReminderResp.StatusCode != http.StatusOK {
-		t.Fatalf("update reminder status = %d body=%s", updateReminderResp.StatusCode, readBody(updateReminderResp))
-	}
-	var updateReminderBody struct {
-		Reminder map[string]any `json:"reminder"`
-	}
-	_ = json.NewDecoder(updateReminderResp.Body).Decode(&updateReminderBody)
-	updateReminderResp.Body.Close()
-	if updateReminderBody.Reminder["due_at"] != updatedDue || updateReminderBody.Reminder["timezone"] != "America/New_York" || updateReminderBody.Reminder["recurrence"] != "custom" || int(updateReminderBody.Reminder["recurrence_interval_days"].(float64)) != 3 || updateReminderBody.Reminder["notification_channel"] != "in_app" {
-		t.Fatalf("unexpected updated reminder: %#v", updateReminderBody)
-	}
-	crossUpdateReminder := adminRequest(t, handler, http.MethodPatch, "/api/reminders/"+tempReminderID, `{"due_at":"`+updatedDue+`"}`, otherAccess, otherCSRF)
-	if crossUpdateReminder.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user reminder update status = %d body=%s", crossUpdateReminder.StatusCode, readBody(crossUpdateReminder))
-	}
-	crossUpdateReminder.Body.Close()
-	missingSnoozeReminderCSRF := httptest.NewRequest(http.MethodPost, "/api/reminders/"+tempReminderID+"/snooze", strings.NewReader(`{"minutes":30}`))
-	missingSnoozeReminderCSRF.Header.Set("Content-Type", "application/json")
-	missingSnoozeReminderCSRF.AddCookie(accessCookie)
-	missingSnoozeReminderRec := httptest.NewRecorder()
-	handler.ServeHTTP(missingSnoozeReminderRec, missingSnoozeReminderCSRF)
-	missingSnoozeReminderResp := missingSnoozeReminderRec.Result()
-	if missingSnoozeReminderResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("reminder snooze without csrf status = %d body=%s", missingSnoozeReminderResp.StatusCode, readBody(missingSnoozeReminderResp))
-	}
-	missingSnoozeReminderResp.Body.Close()
-	snoozeReminderResp := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+tempReminderID+"/snooze", `{"days":1}`, accessCookie, csrfCookie)
-	if snoozeReminderResp.StatusCode != http.StatusOK {
-		t.Fatalf("snooze reminder status = %d body=%s", snoozeReminderResp.StatusCode, readBody(snoozeReminderResp))
-	}
-	snoozeReminderResp.Body.Close()
-	crossSnoozeReminder := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+tempReminderID+"/snooze", `{"days":1}`, otherAccess, otherCSRF)
-	if crossSnoozeReminder.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user reminder snooze status = %d body=%s", crossSnoozeReminder.StatusCode, readBody(crossSnoozeReminder))
-	}
-	crossSnoozeReminder.Body.Close()
-	completeTempReminder := adminRequest(t, handler, http.MethodPost, "/api/reminders/"+tempReminderID+"/complete", `{}`, accessCookie, csrfCookie)
-	if completeTempReminder.StatusCode != http.StatusOK {
-		t.Fatalf("complete temp reminder status = %d body=%s", completeTempReminder.StatusCode, readBody(completeTempReminder))
-	}
-	var completeTempReminderBody map[string]any
-	_ = json.NewDecoder(completeTempReminder.Body).Decode(&completeTempReminderBody)
-	completeTempReminder.Body.Close()
-	if completeTempReminderBody["next_due_at"] == "" || completeTempReminderBody["message"] != "Reminder advanced" {
-		t.Fatalf("recurring reminder did not advance: %#v", completeTempReminderBody)
-	}
-	deleteTempReminder := adminRequest(t, handler, http.MethodDelete, "/api/reminders/"+tempReminderID, "", accessCookie, csrfCookie)
-	if deleteTempReminder.StatusCode != http.StatusOK {
-		t.Fatalf("delete temp reminder status = %d body=%s", deleteTempReminder.StatusCode, readBody(deleteTempReminder))
-	}
-	deleteTempReminder.Body.Close()
-
-	actionResp := adminRequest(t, handler, http.MethodPost, "/api/action-items", `{"item_type":"bookmark","item_id":"capture","title":"Turn this into the launch checklist"}`, accessCookie, csrfCookie)
-	if actionResp.StatusCode != http.StatusOK {
-		t.Fatalf("create action item status = %d body=%s", actionResp.StatusCode, readBody(actionResp))
-	}
-	var actionBody struct {
-		ActionItem map[string]any `json:"action_item"`
-	}
-	_ = json.NewDecoder(actionResp.Body).Decode(&actionBody)
-	actionResp.Body.Close()
-	actionID, _ := actionBody.ActionItem["id"].(string)
-	if actionID == "" || actionBody.ActionItem["item_title"] != "Capture Loop" {
-		t.Fatalf("unexpected action item body: %#v", actionBody)
-	}
-	noteActionResp := adminRequest(t, handler, http.MethodPost, "/api/action-items", `{"item_type":"note","item_id":"`+searchNoteID+`","title":"Extract the recall heuristic"}`, accessCookie, csrfCookie)
-	if noteActionResp.StatusCode != http.StatusOK {
-		t.Fatalf("create note action item status = %d body=%s", noteActionResp.StatusCode, readBody(noteActionResp))
-	}
-	var noteActionBody struct {
-		ActionItem map[string]any `json:"action_item"`
-	}
-	_ = json.NewDecoder(noteActionResp.Body).Decode(&noteActionBody)
-	noteActionResp.Body.Close()
-	noteActionID, _ := noteActionBody.ActionItem["id"].(string)
-	if noteActionID == "" || noteActionBody.ActionItem["item_title"] != "Recall field note" {
-		t.Fatalf("unexpected note action item body: %#v", noteActionBody)
-	}
-	notesListResp := adminRequest(t, handler, http.MethodGet, "/api/notes", "", accessCookie, csrfCookie)
-	if notesListResp.StatusCode != http.StatusOK {
-		t.Fatalf("notes list status = %d body=%s", notesListResp.StatusCode, readBody(notesListResp))
-	}
-	var notesListBody struct {
-		Notes []map[string]any `json:"notes"`
-	}
-	_ = json.NewDecoder(notesListResp.Body).Decode(&notesListBody)
-	notesListResp.Body.Close()
-	var decoratedNote map[string]any
-	for _, note := range notesListBody.Notes {
-		if note["id"] == searchNoteID {
-			decoratedNote = note
-			break
-		}
-	}
-	if decoratedNote == nil {
-		t.Fatalf("notes list missing recall note: %#v", notesListBody)
-	}
-	if state, _ := decoratedNote["item_state"].(map[string]any); state["stage"] != "processing" || state["next_action"] != "Synthesize into the recall project." {
-		t.Fatalf("notes list missing note item state: %#v", decoratedNote["item_state"])
-	}
-	actionItems, _ := decoratedNote["action_items"].([]any)
-	if len(actionItems) != 1 || actionItems[0].(map[string]any)["id"] != noteActionID {
-		t.Fatalf("notes list missing note action items: %#v", decoratedNote["action_items"])
-	}
-	reminders, _ := decoratedNote["reminders"].([]any)
-	if len(reminders) != 1 || reminders[0].(map[string]any)["id"] != noteReminderID {
-		t.Fatalf("notes list missing note reminders: %#v", decoratedNote["reminders"])
-	}
-	if links, _ := decoratedNote["links"].(map[string]any); len(links["outgoing"].([]any)) != 2 || len(links["incoming"].([]any)) != 1 {
-		t.Fatalf("notes list missing note links: %#v", decoratedNote["links"])
-	}
-	crossActionResp := adminRequest(t, handler, http.MethodPost, "/api/action-items", `{"item_type":"note","item_id":"`+otherNoteID+`","title":"Steal this"}`, accessCookie, csrfCookie)
-	if crossActionResp.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user action item status = %d body=%s", crossActionResp.StatusCode, readBody(crossActionResp))
-	}
-	crossActionResp.Body.Close()
-	actionListResp := adminRequest(t, handler, http.MethodGet, "/api/action-items?item=bookmark:capture", "", accessCookie, csrfCookie)
-	if actionListResp.StatusCode != http.StatusOK {
-		t.Fatalf("action item list status = %d body=%s", actionListResp.StatusCode, readBody(actionListResp))
-	}
-	var actionListBody struct {
-		ActionItems []map[string]any `json:"action_items"`
-	}
-	_ = json.NewDecoder(actionListResp.Body).Decode(&actionListBody)
-	actionListResp.Body.Close()
-	if len(actionListBody.ActionItems) != 1 || actionListBody.ActionItems[0]["id"] != actionID {
-		t.Fatalf("unexpected action item list: %#v", actionListBody)
-	}
-	completeActionResp := adminRequest(t, handler, http.MethodPost, "/api/action-items/"+actionID+"/complete", `{}`, accessCookie, csrfCookie)
-	if completeActionResp.StatusCode != http.StatusOK {
-		t.Fatalf("complete action item status = %d body=%s", completeActionResp.StatusCode, readBody(completeActionResp))
-	}
-	completeActionResp.Body.Close()
-	deleteActionResp := adminRequest(t, handler, http.MethodDelete, "/api/action-items/"+actionID, "", accessCookie, csrfCookie)
-	if deleteActionResp.StatusCode != http.StatusOK {
-		t.Fatalf("delete completed action item status = %d body=%s", deleteActionResp.StatusCode, readBody(deleteActionResp))
-	}
-	deleteActionResp.Body.Close()
-	actionResp = adminRequest(t, handler, http.MethodPost, "/api/action-items", `{"item_type":"bookmark","item_id":"capture","title":"Turn this into the launch checklist"}`, accessCookie, csrfCookie)
-	if actionResp.StatusCode != http.StatusOK {
-		t.Fatalf("recreate action item status = %d body=%s", actionResp.StatusCode, readBody(actionResp))
-	}
-	_ = json.NewDecoder(actionResp.Body).Decode(&actionBody)
-	actionResp.Body.Close()
-	actionID, _ = actionBody.ActionItem["id"].(string)
-	crossCompleteAction := adminRequest(t, handler, http.MethodPost, "/api/action-items/"+actionID+"/complete", `{}`, otherAccess, otherCSRF)
-	if crossCompleteAction.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user action complete status = %d body=%s", crossCompleteAction.StatusCode, readBody(crossCompleteAction))
-	}
-	crossCompleteAction.Body.Close()
-	crossDeleteAction := adminRequest(t, handler, http.MethodDelete, "/api/action-items/"+actionID, "", otherAccess, otherCSRF)
-	if crossDeleteAction.StatusCode != http.StatusNotFound {
-		t.Fatalf("cross-user action delete status = %d body=%s", crossDeleteAction.StatusCode, readBody(crossDeleteAction))
-	}
-	crossDeleteAction.Body.Close()
-
 	annotationResp := adminRequest(t, handler, http.MethodPost, "/api/bookmarks/capture/annotations", `{"quote":"Recall with evidence","note":"Promote this into review.","selector":{"type":"quote"},"tags":["Evidence","evidence"]}`, accessCookie, csrfCookie)
 	if annotationResp.StatusCode != http.StatusOK {
 		t.Fatalf("create annotation status = %d body=%s", annotationResp.StatusCode, readBody(annotationResp))
@@ -1873,19 +1253,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	if len(detail["notes"].([]any)) != 1 || len(detail["annotations"].([]any)) != 1 || len(detail["tags"].([]any)) == 0 {
 		t.Fatalf("bookmark detail missing second-brain data: %#v", detail)
 	}
-	if state, _ := detail["item_state"].(map[string]any); state["stage"] != "inbox" {
-		t.Fatalf("bookmark detail missing item state: %#v", detail["item_state"])
-	}
-	if links, _ := detail["links"].(map[string]any); len(links["outgoing"].([]any)) != 1 {
-		t.Fatalf("bookmark detail missing links: %#v", detail["links"])
-	}
-	if reminders, _ := detail["reminders"].([]any); len(reminders) != 1 {
-		t.Fatalf("bookmark detail missing reminders: %#v", detail["reminders"])
-	}
-	if actionItems, _ := detail["action_items"].([]any); len(actionItems) != 1 || actionItems[0].(map[string]any)["id"] != actionID {
-		t.Fatalf("bookmark detail missing action items: %#v", detail["action_items"])
-	}
-
 	filteredResp := adminRequest(t, handler, http.MethodGet, "/api/bookmarks?tag=evidence&date_from="+url.QueryEscape(now.AddDate(0, 0, -30).Format(time.RFC3339)), "", accessCookie, csrfCookie)
 	if filteredResp.StatusCode != http.StatusOK {
 		t.Fatalf("filtered bookmarks status = %d body=%s", filteredResp.StatusCode, readBody(filteredResp))
@@ -2044,10 +1411,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		}
 		if item["id"] == searchNoteID && item["item_type"] == "note" {
 			sawNoteReview = true
-			state, _ := item["item_state"].(map[string]any)
-			if state["stage"] != "processing" || state["next_action"] != "Synthesize into the recall project." {
-				t.Fatalf("review note missing item state: %#v", item)
-			}
 		}
 		if item["id"] == snoozeNoteID && item["item_type"] == "note" {
 			sawSnoozeNoteReview = true
@@ -2109,32 +1472,19 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("read export: %v", err)
 	}
 	var exportBody struct {
-		Bookmarks     []map[string]any `json:"bookmarks"`
-		Notes         []map[string]any `json:"notes"`
-		Tags          []map[string]any `json:"tags"`
-		SavedSearches []map[string]any `json:"saved_searches"`
-		ReviewEvents  []map[string]any `json:"review_events"`
-		ItemStates    []map[string]any `json:"item_states"`
-		ItemLinks     []map[string]any `json:"item_links"`
-		Reminders     []map[string]any `json:"reminders"`
-		ActionItems   []map[string]any `json:"action_items"`
+		Version               int              `json:"version"`
+		KnowledgePreservation json.RawMessage  `json:"knowledge_preservation"`
+		Bookmarks             []map[string]any `json:"bookmarks"`
+		Notes                 []map[string]any `json:"notes"`
+		Tags                  []map[string]any `json:"tags"`
+		SavedSearches         []map[string]any `json:"saved_searches"`
+		ReviewEvents          []map[string]any `json:"review_events"`
+		ItemLinks             []map[string]any `json:"item_links"`
 	}
 	_ = json.Unmarshal(exportRaw, &exportBody)
 	exportResp.Body.Close()
-	if len(exportBody.Bookmarks) != 1 || len(exportBody.Notes) == 0 || len(exportBody.ReviewEvents) == 0 {
+	if exportBody.Version != 3 || len(exportBody.KnowledgePreservation) == 0 || len(exportBody.Bookmarks) != 1 || len(exportBody.Notes) == 0 || len(exportBody.ReviewEvents) == 0 {
 		t.Fatalf("export missing second-brain sections: %#v", exportBody)
-	}
-	var sawProcessingState bool
-	for _, state := range exportBody.ItemStates {
-		if state["item_id"] == searchNoteID && state["item_type"] == "note" && state["stage"] == "processed" && state["next_action"] == "Synthesize into the recall project." {
-			sawProcessingState = true
-		}
-		if state["item_id"] == otherNoteID {
-			t.Fatalf("export leaked other user's item state: %#v", exportBody.ItemStates)
-		}
-	}
-	if !sawProcessingState {
-		t.Fatalf("export missing item state: %#v", exportBody.ItemStates)
 	}
 	if len(exportBody.ItemLinks) != 3 {
 		t.Fatalf("export missing item link: %#v", exportBody.ItemLinks)
@@ -2153,39 +1503,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if !sawBookmarkNoteLink || !sawNoteNoteLink || !sawNoteBookmarkLink {
 		t.Fatalf("export missing expected item links: %#v", exportBody.ItemLinks)
-	}
-	var sawBookmarkReminder, sawNoteReminder bool
-	for _, reminder := range exportBody.Reminders {
-		if reminder["item_id"] == "capture" && reminder["note"] == "Use this in planning." {
-			if reminder["timezone"] != "Asia/Kolkata" || reminder["recurrence"] != "weekly" || reminder["notification_channel"] != "email" {
-				t.Fatalf("export missing reminder recurrence fields: %#v", reminder)
-			}
-			sawBookmarkReminder = true
-		}
-		if reminder["item_id"] == searchNoteID && reminder["note"] == "Bring this note back." {
-			sawNoteReminder = true
-		}
-	}
-	if len(exportBody.Reminders) != 2 || !sawBookmarkReminder || !sawNoteReminder {
-		t.Fatalf("export missing reminder: %#v", exportBody.Reminders)
-	}
-	if len(exportBody.ActionItems) != 3 {
-		t.Fatalf("export missing action items: %#v", exportBody.ActionItems)
-	}
-	var sawBookmarkAction, sawNoteAction bool
-	for _, item := range exportBody.ActionItems {
-		if item["item_id"] == "capture" && item["title"] == "Turn this into the launch checklist" {
-			sawBookmarkAction = true
-		}
-		if item["item_id"] == searchNoteID && item["title"] == "Extract the recall heuristic" {
-			sawNoteAction = true
-		}
-		if item["item_id"] == otherNoteID {
-			t.Fatalf("export leaked other user's action item: %#v", exportBody.ActionItems)
-		}
-	}
-	if !sawBookmarkAction || !sawNoteAction {
-		t.Fatalf("export missing expected action items: %#v", exportBody.ActionItems)
 	}
 	bookmarkExport := exportBody.Bookmarks[0]
 	if bookmarkExport["id"] != "capture" || len(bookmarkExport["annotations"].([]any)) == 0 || len(bookmarkExport["notes"].([]any)) == 0 || len(bookmarkExport["tags"].([]any)) == 0 {
@@ -2298,29 +1615,19 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("restored export status = %d body=%s", restoreExportResp.StatusCode, readBody(restoreExportResp))
 	}
 	var restoredExport struct {
-		Bookmarks     []map[string]any `json:"bookmarks"`
-		Notes         []map[string]any `json:"notes"`
-		Tags          []map[string]any `json:"tags"`
-		SavedSearches []map[string]any `json:"saved_searches"`
-		ReviewEvents  []map[string]any `json:"review_events"`
-		ItemStates    []map[string]any `json:"item_states"`
-		ItemLinks     []map[string]any `json:"item_links"`
-		Reminders     []map[string]any `json:"reminders"`
-		ActionItems   []map[string]any `json:"action_items"`
+		Version               int              `json:"version"`
+		KnowledgePreservation json.RawMessage  `json:"knowledge_preservation"`
+		Bookmarks             []map[string]any `json:"bookmarks"`
+		Notes                 []map[string]any `json:"notes"`
+		Tags                  []map[string]any `json:"tags"`
+		SavedSearches         []map[string]any `json:"saved_searches"`
+		ReviewEvents          []map[string]any `json:"review_events"`
+		ItemLinks             []map[string]any `json:"item_links"`
 	}
 	_ = json.NewDecoder(restoreExportResp.Body).Decode(&restoredExport)
 	restoreExportResp.Body.Close()
-	if len(restoredExport.Bookmarks) != 1 || len(restoredExport.Notes) == 0 || len(restoredExport.SavedSearches) == 0 || len(restoredExport.ReviewEvents) == 0 {
+	if restoredExport.Version != 3 || len(restoredExport.KnowledgePreservation) == 0 || len(restoredExport.Bookmarks) != 1 || len(restoredExport.Notes) == 0 || len(restoredExport.SavedSearches) == 0 || len(restoredExport.ReviewEvents) == 0 {
 		t.Fatalf("restored export missing backup sections: %#v", restoredExport)
-	}
-	var sawRestoredProcessingState bool
-	for _, state := range restoredExport.ItemStates {
-		if state["item_type"] == "note" && state["stage"] == "processed" && state["next_action"] == "Synthesize into the recall project." {
-			sawRestoredProcessingState = true
-		}
-	}
-	if !sawRestoredProcessingState {
-		t.Fatalf("restored export missing item state: %#v", restoredExport.ItemStates)
 	}
 	if len(restoredExport.ItemLinks) != 3 {
 		t.Fatalf("restored export missing remapped item link: %#v", restoredExport.ItemLinks)
@@ -2342,42 +1649,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 	}
 	if !restoredBookmarkNoteLink || !restoredNoteNoteLink || !restoredNoteBookmarkLink {
 		t.Fatalf("restored export missing remapped item links: %#v", restoredExport.ItemLinks)
-	}
-	var restoredBookmarkReminder, restoredNoteReminder bool
-	for _, reminder := range restoredExport.Reminders {
-		if reminder["item_id"] == "capture" || reminder["item_id"] == searchNoteID {
-			t.Fatalf("restored export kept original reminder item id: %#v", restoredExport.Reminders)
-		}
-		if reminder["item_type"] == "bookmark" && reminder["note"] == "Use this in planning." {
-			if reminder["timezone"] != "Asia/Kolkata" || reminder["recurrence"] != "weekly" || reminder["notification_channel"] != "email" {
-				t.Fatalf("restored export missing reminder recurrence fields: %#v", reminder)
-			}
-			restoredBookmarkReminder = true
-		}
-		if reminder["item_type"] == "note" && reminder["note"] == "Bring this note back." {
-			restoredNoteReminder = true
-		}
-	}
-	if len(restoredExport.Reminders) != 2 || !restoredBookmarkReminder || !restoredNoteReminder {
-		t.Fatalf("restored export missing remapped reminder: %#v", restoredExport.Reminders)
-	}
-	if len(restoredExport.ActionItems) != 3 {
-		t.Fatalf("restored export missing action items: %#v", restoredExport.ActionItems)
-	}
-	var restoredBookmarkAction, restoredNoteAction bool
-	for _, item := range restoredExport.ActionItems {
-		if item["item_id"] == "capture" || item["item_id"] == searchNoteID || item["item_id"] == otherNoteID {
-			t.Fatalf("restored action item reused or leaked original IDs: %#v", restoredExport.ActionItems)
-		}
-		if item["item_type"] == "bookmark" && item["title"] == "Turn this into the launch checklist" {
-			restoredBookmarkAction = true
-		}
-		if item["item_type"] == "note" && item["title"] == "Extract the recall heuristic" {
-			restoredNoteAction = true
-		}
-	}
-	if !restoredBookmarkAction || !restoredNoteAction {
-		t.Fatalf("restored export missing remapped action items: %#v", restoredExport.ActionItems)
 	}
 	restoredBookmark := restoredExport.Bookmarks[0]
 	if restoredBookmark["id"] == "capture" || len(restoredBookmark["annotations"].([]any)) == 0 || len(restoredBookmark["notes"].([]any)) == 0 || len(restoredBookmark["tags"].([]any)) == 0 {
@@ -2463,196 +1734,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		t.Fatalf("x duplicate restore left %d tweet rows", restoredTweetRows)
 	}
 
-	missingSuggestionsCSRF := httptest.NewRequest(http.MethodPost, "/api/assistant/suggestions", strings.NewReader(`{"mode":"inbox"}`))
-	missingSuggestionsCSRF.Header.Set("Content-Type", "application/json")
-	missingSuggestionsCSRF.AddCookie(accessCookie)
-	missingSuggestionsRec := httptest.NewRecorder()
-	handler.ServeHTTP(missingSuggestionsRec, missingSuggestionsCSRF)
-	missingSuggestionsResp := missingSuggestionsRec.Result()
-	if missingSuggestionsResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("assistant suggestions without csrf status = %d body=%s", missingSuggestionsResp.StatusCode, readBody(missingSuggestionsResp))
-	}
-	missingSuggestionsResp.Body.Close()
-	var assistantActionCount int
-	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM assistant_actions WHERE user_id=?`, userID).Scan(&assistantActionCount); err != nil {
-		t.Fatalf("count assistant actions before suggestions: %v", err)
-	}
-	suggestionsResp := adminRequest(t, handler, http.MethodPost, "/api/assistant/suggestions", `{"mode":"item","item_type":"bookmark","item_id":"capture","limit":4}`, accessCookie, csrfCookie)
-	if suggestionsResp.StatusCode != http.StatusOK {
-		t.Fatalf("assistant suggestions status = %d body=%s", suggestionsResp.StatusCode, readBody(suggestionsResp))
-	}
-	var suggestionsBody struct {
-		Mode        string           `json:"mode"`
-		Inert       bool             `json:"inert"`
-		Suggestions []map[string]any `json:"suggestions"`
-	}
-	_ = json.NewDecoder(suggestionsResp.Body).Decode(&suggestionsBody)
-	suggestionsResp.Body.Close()
-	if suggestionsBody.Mode != "item" || !suggestionsBody.Inert || len(suggestionsBody.Suggestions) == 0 {
-		t.Fatalf("unexpected assistant suggestions: %#v", suggestionsBody)
-	}
-	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM assistant_actions WHERE user_id=?`, userID).Scan(&assistantActionCount); err != nil {
-		t.Fatalf("count assistant actions after suggestions: %v", err)
-	}
-	if assistantActionCount != 0 {
-		t.Fatalf("suggestions wrote assistant actions: %d", assistantActionCount)
-	}
-	firstDraft := suggestionsBody.Suggestions[0]
-	if firstDraft["draft_id"] == "" || firstDraft["action_type"] == "" || firstDraft["payload"] == nil || firstDraft["source"] == nil {
-		t.Fatalf("assistant draft missing reviewable fields: %#v", firstDraft)
-	}
-	payloadBytes, _ := json.Marshal(map[string]any{"action_type": firstDraft["action_type"], "payload": firstDraft["payload"]})
-	queueDraft := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", string(payloadBytes), accessCookie, csrfCookie)
-	if queueDraft.StatusCode != http.StatusOK {
-		t.Fatalf("queue assistant draft status = %d body=%s", queueDraft.StatusCode, readBody(queueDraft))
-	}
-	queueDraft.Body.Close()
-	if err := a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM assistant_actions WHERE user_id=?`, userID).Scan(&assistantActionCount); err != nil {
-		t.Fatalf("count assistant actions after queue: %v", err)
-	}
-	if assistantActionCount != 1 {
-		t.Fatalf("queueing a draft should create one pending action, got %d", assistantActionCount)
-	}
-	searchSuggestionsResp := adminRequest(t, handler, http.MethodPost, "/api/assistant/suggestions", `{"mode":"search","query":"recall","limit":6}`, accessCookie, csrfCookie)
-	if searchSuggestionsResp.StatusCode != http.StatusOK {
-		t.Fatalf("assistant search suggestions status = %d body=%s", searchSuggestionsResp.StatusCode, readBody(searchSuggestionsResp))
-	}
-	var searchSuggestionsBody struct {
-		Suggestions []map[string]any `json:"suggestions"`
-	}
-	_ = json.NewDecoder(searchSuggestionsResp.Body).Decode(&searchSuggestionsBody)
-	searchSuggestionsResp.Body.Close()
-	for _, suggestion := range searchSuggestionsBody.Suggestions {
-		source, _ := suggestion["source"].(map[string]any)
-		if source["item_id"] == otherNoteID {
-			t.Fatalf("assistant search suggestions leaked other user source: %#v", searchSuggestionsBody)
-		}
-	}
-	crossUserSuggestions := adminRequest(t, handler, http.MethodPost, "/api/assistant/suggestions", `{"mode":"item","item_type":"note","item_id":"`+otherNoteID+`"}`, accessCookie, csrfCookie)
-	if crossUserSuggestions.StatusCode != http.StatusBadRequest {
-		t.Fatalf("cross-user assistant suggestions status = %d body=%s", crossUserSuggestions.StatusCode, readBody(crossUserSuggestions))
-	}
-	crossUserSuggestions.Body.Close()
-
-	unsupportedAction := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"delete_item","payload":{}}`, accessCookie, csrfCookie)
-	if unsupportedAction.StatusCode != http.StatusBadRequest {
-		t.Fatalf("unsupported assistant action status = %d body=%s", unsupportedAction.StatusCode, readBody(unsupportedAction))
-	}
-	unsupportedAction.Body.Close()
-
-	crossUserAction := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"create_link","payload":{"from_type":"bookmark","from_id":"capture","to_type":"note","to_id":"`+otherNoteID+`","label":"leak"}}`, accessCookie, csrfCookie)
-	if crossUserAction.StatusCode != http.StatusBadRequest {
-		t.Fatalf("cross-user assistant proposal status = %d body=%s", crossUserAction.StatusCode, readBody(crossUserAction))
-	}
-	crossUserAction.Body.Close()
-
-	proposeLink := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"create_link","payload":{"from_type":"bookmark","from_id":"capture","to_type":"note","to_id":"`+searchNoteID+`","label":"assistant"}}`, accessCookie, csrfCookie)
-	if proposeLink.StatusCode != http.StatusOK {
-		t.Fatalf("propose assistant link status = %d body=%s", proposeLink.StatusCode, readBody(proposeLink))
-	}
-	var proposedLink struct {
-		Action map[string]any `json:"action"`
-	}
-	_ = json.NewDecoder(proposeLink.Body).Decode(&proposedLink)
-	proposeLink.Body.Close()
-	linkActionID, _ := proposedLink.Action["id"].(string)
-	if linkActionID == "" || proposedLink.Action["status"] != "pending" {
-		t.Fatalf("unexpected assistant proposal: %#v", proposedLink)
-	}
-	approveLink := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+linkActionID+"/approve", `{}`, accessCookie, csrfCookie)
-	if approveLink.StatusCode != http.StatusOK {
-		t.Fatalf("approve assistant link status = %d body=%s", approveLink.StatusCode, readBody(approveLink))
-	}
-	var approvedLink struct {
-		Action map[string]any `json:"action"`
-	}
-	_ = json.NewDecoder(approveLink.Body).Decode(&approvedLink)
-	approveLink.Body.Close()
-	if approvedLink.Action["status"] != "executed" {
-		t.Fatalf("assistant link did not execute: %#v", approvedLink)
-	}
-	approveAgain := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+linkActionID+"/approve", `{}`, accessCookie, csrfCookie)
-	if approveAgain.StatusCode != http.StatusNotFound {
-		t.Fatalf("double assistant approval status = %d body=%s", approveAgain.StatusCode, readBody(approveAgain))
-	}
-	approveAgain.Body.Close()
-	var assistantLinks int
-	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM item_links WHERE user_id=? AND source='assistant' AND label='assistant'`, userID).Scan(&assistantLinks)
-	if assistantLinks != 1 {
-		t.Fatalf("double approval created %d assistant links", assistantLinks)
-	}
-
-	proposeTask := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"create_action_item","payload":{"item_type":"bookmark","item_id":"capture","title":"Assistant suggested task"}}`, accessCookie, csrfCookie)
-	if proposeTask.StatusCode != http.StatusOK {
-		t.Fatalf("propose assistant action item status = %d body=%s", proposeTask.StatusCode, readBody(proposeTask))
-	}
-	var proposedTask struct {
-		Action map[string]any `json:"action"`
-	}
-	_ = json.NewDecoder(proposeTask.Body).Decode(&proposedTask)
-	proposeTask.Body.Close()
-	taskActionID, _ := proposedTask.Action["id"].(string)
-	approveTask := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+taskActionID+"/approve", `{}`, accessCookie, csrfCookie)
-	if approveTask.StatusCode != http.StatusOK {
-		t.Fatalf("approve assistant action item status = %d body=%s", approveTask.StatusCode, readBody(approveTask))
-	}
-	approveTask.Body.Close()
-	var assistantTasks int
-	_ = a.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM action_items WHERE user_id=? AND title='Assistant suggested task'`, userID).Scan(&assistantTasks)
-	if assistantTasks != 1 {
-		t.Fatalf("assistant action item count = %d", assistantTasks)
-	}
-
-	proposeReject := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions", `{"action_type":"update_item_state","payload":{"item_type":"bookmark","item_id":"capture","stage":"archived","importance":1,"next_action":"reject me"}}`, accessCookie, csrfCookie)
-	if proposeReject.StatusCode != http.StatusOK {
-		t.Fatalf("propose reject action status = %d body=%s", proposeReject.StatusCode, readBody(proposeReject))
-	}
-	var rejectBody struct {
-		Action map[string]any `json:"action"`
-	}
-	_ = json.NewDecoder(proposeReject.Body).Decode(&rejectBody)
-	proposeReject.Body.Close()
-	rejectActionID, _ := rejectBody.Action["id"].(string)
-	rejectAction := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+rejectActionID+"/reject", `{}`, accessCookie, csrfCookie)
-	if rejectAction.StatusCode != http.StatusOK {
-		t.Fatalf("reject assistant action status = %d body=%s", rejectAction.StatusCode, readBody(rejectAction))
-	}
-	rejectAction.Body.Close()
-	approveRejected := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+rejectActionID+"/approve", `{}`, accessCookie, csrfCookie)
-	if approveRejected.StatusCode != http.StatusNotFound {
-		t.Fatalf("approve rejected assistant action status = %d body=%s", approveRejected.StatusCode, readBody(approveRejected))
-	}
-	approveRejected.Body.Close()
-
-	staleActionID := "stale-assistant-action"
-	if _, err := a.db.ExecContext(context.Background(), `INSERT INTO assistant_actions(id,user_id,action_type,payload_json,status,result_json,created_at) VALUES(?,?,?,?,?,?,?)`, staleActionID, userID, "update_item_state", `{"item_type":"note","item_id":"`+otherNoteID+`","stage":"processed","importance":5,"next_action":"stale"}`, "pending", "{}", now.Format(time.RFC3339)); err != nil {
-		t.Fatalf("insert stale assistant action: %v", err)
-	}
-	approveStale := adminRequest(t, handler, http.MethodPost, "/api/assistant/actions/"+staleActionID+"/approve", `{}`, accessCookie, csrfCookie)
-	if approveStale.StatusCode != http.StatusBadRequest {
-		t.Fatalf("approve stale assistant action status = %d body=%s", approveStale.StatusCode, readBody(approveStale))
-	}
-	approveStale.Body.Close()
-	var staleStatus, staleError string
-	if err := a.db.QueryRowContext(context.Background(), `SELECT status,error FROM assistant_actions WHERE id=?`, staleActionID).Scan(&staleStatus, &staleError); err != nil {
-		t.Fatalf("read stale assistant action: %v", err)
-	}
-	if staleStatus != "failed" || staleError == "" {
-		t.Fatalf("stale assistant action not recorded as failed: status=%q error=%q", staleStatus, staleError)
-	}
-	failedActions := adminRequest(t, handler, http.MethodGet, "/api/assistant/actions?status=failed", "", accessCookie, csrfCookie)
-	if failedActions.StatusCode != http.StatusOK {
-		t.Fatalf("failed assistant actions status = %d body=%s", failedActions.StatusCode, readBody(failedActions))
-	}
-	var failedActionsBody struct {
-		Actions []map[string]any `json:"actions"`
-	}
-	_ = json.NewDecoder(failedActions.Body).Decode(&failedActionsBody)
-	failedActions.Body.Close()
-	if len(failedActionsBody.Actions) != 1 || failedActionsBody.Actions[0]["id"] != staleActionID || failedActionsBody.Actions[0]["error"] == "" {
-		t.Fatalf("failed assistant actions missing stale failure: %#v", failedActionsBody)
-	}
-
 	for _, tc := range []struct {
 		name   string
 		method string
@@ -2665,8 +1746,6 @@ func TestSecondBrainRoutesAreScopedAndCSRFProtected(t *testing.T) {
 		{"other cannot read job", http.MethodGet, "/api/jobs/" + jobID, ""},
 		{"other cannot complete note review", http.MethodPost, "/api/review/note:" + searchNoteID + "/complete", `{}`},
 		{"other cannot complete review", http.MethodPost, "/api/review/bookmark:capture/complete", `{}`},
-		{"other cannot approve assistant action", http.MethodPost, "/api/assistant/actions/" + linkActionID + "/approve", `{}`},
-		{"other cannot reject assistant action", http.MethodPost, "/api/assistant/actions/" + linkActionID + "/reject", `{}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := adminRequest(t, handler, tc.method, tc.path, tc.body, otherAccess, otherCSRF)
@@ -2817,68 +1896,6 @@ func TestImportQueuesJobsWithVisibleProgressID(t *testing.T) {
 	}
 }
 
-func TestReminderEmailJobsAreIdempotent(t *testing.T) {
-	a, err := New(config.Config{
-		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
-		SecretKey:      "test-secret",
-		SignupEnabled:  true,
-		SessionTTL:     time.Hour,
-		RefreshTTL:     time.Hour,
-		ExtensionTTL:   time.Hour,
-		MaxRequestBody: 1 << 20,
-		ResendAPIKey:   "resend-test",
-		ResendFrom:     "noreply@example.com",
-	})
-	if err != nil {
-		t.Fatalf("New() error = %v", err)
-	}
-	defer a.Close()
-	sendCount := 0
-	a.resendHTTP = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		sendCount++
-		if req.URL.String() != "https://api.resend.com/emails" {
-			t.Fatalf("unexpected resend URL: %s", req.URL.String())
-		}
-		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`)), Header: make(http.Header)}, nil
-	})}
-	handler := a.Handler()
-	accessCookie, csrfCookie := signupForCookies(t, handler, "reminder-email@example.com")
-	userID := userIDForEmail(t, a, "reminder-email@example.com")
-	now := time.Now().UTC()
-	insertBookmarkForTest(t, a, userID, "email-reminder", "Email Reminder", now, now, 0, 1)
-	dueAt := now.Add(24 * time.Hour).UTC().Format(time.RFC3339)
-	create := adminRequest(t, handler, http.MethodPost, "/api/reminders", `{"item_type":"bookmark","item_id":"email-reminder","due_at":"`+dueAt+`","notification_channel":"email","note":"Send safely <now>."}`, accessCookie, csrfCookie)
-	if create.StatusCode != http.StatusOK {
-		t.Fatalf("create email reminder status = %d body=%s", create.StatusCode, readBody(create))
-	}
-	var body struct {
-		Reminder map[string]any `json:"reminder"`
-	}
-	_ = json.NewDecoder(create.Body).Decode(&body)
-	create.Body.Close()
-	reminderID, _ := body.Reminder["id"].(string)
-	if reminderID == "" {
-		t.Fatalf("missing reminder id: %#v", body)
-	}
-	payload, _ := json.Marshal(reminderEmailPayload{ReminderID: reminderID, DueAt: dueAt})
-	if err := a.processReminderEmailJob(context.Background(), userID, string(payload)); err != nil {
-		t.Fatalf("process reminder email: %v", err)
-	}
-	if err := a.processReminderEmailJob(context.Background(), userID, string(payload)); err != nil {
-		t.Fatalf("process reminder email twice: %v", err)
-	}
-	if sendCount != 1 {
-		t.Fatalf("expected one email send, got %d", sendCount)
-	}
-	var notified string
-	if err := a.db.QueryRowContext(context.Background(), `SELECT COALESCE(last_notified_at,'') FROM reminders WHERE id=? AND user_id=?`, reminderID, userID).Scan(&notified); err != nil {
-		t.Fatalf("load last_notified_at: %v", err)
-	}
-	if notified == "" {
-		t.Fatalf("last_notified_at not recorded")
-	}
-}
-
 func assertSourceReport(t *testing.T, report []map[string]any, source string, count int) {
 	t.Helper()
 	for _, item := range report {
@@ -2942,7 +1959,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
 	}
-	for _, expected := range []string{`prefix: "/today"`, `async function todayPage(scope)`, `/daily-notes/${date}`, `id="daily-note-form"`, `function localDateKey`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `id="calendar-import-form"`, `function bindCalendarImportPanel`, `/calendar/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `prefix: "/objects"`, `async function openObjectComposer()`, `id="object-composer-form"`, `/objects`, `prefix: "/evolution"`, `async function evolutionPage(scope)`, `/evolution?q=`, `prefix: "/board"`, `async function boardPage(scope)`, `/today-board`, `/action-items`, `/reminders`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `Model Provider`, `ai_provider`, `!user.is_admin`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage(scope, id)`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `data-inbox-select`, `/inbox/bulk`, `function inboxKeyboardTriage`, `async function focusPage(scope)`, `/action-items?status=all`, `/reminders?status=all`, `/today?view=focus&amp;focus=${name}`, `actionItemsPanel("note", note.id, note.action_items || [])`, `reminderForm("note", note.id)`, `function reminderEditForm`, `data-reminder-snooze`, `function snoozeReminder`, `notification_channel`, `id="assistant-suggest-form"`, `/assistant/suggestions`, `function assistantDraftCard`, `data-assistant-draft`, `review_reasons`, `function bindReminderControls(scope)`, `function bindNoteBookmarkLinkForms(scope)`, `function bindNoteLinkForms(scope)`, `function bindLinkDeleteControls(scope)`} {
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage(scope)`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `freshness_score`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `Model Provider`, `ai_provider`, `!user.is_admin`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage(scope, id)`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `review_reasons`, `function bindNoteBookmarkLinkForms(scope)`, `function bindNoteLinkForms(scope)`, `function bindLinkDeleteControls(scope)`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
@@ -3036,7 +2053,7 @@ func TestFrontendAssetsUseCacheValidation(t *testing.T) {
 		t.Fatalf("service worker cache-control = %q", got)
 	}
 	workerBody := readBody(serviceWorker)
-	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v5"`) || !strings.Contains(workerBody, `"/notes"`) || !strings.Contains(workerBody, `"/route-lifecycle.mjs"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, `"/fonts/geist-variable.woff2"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, `cache: "no-cache"`) || !strings.Contains(workerBody, "/api/") {
+	if !strings.Contains(workerBody, `const CACHE = "arivu-shell-v6"`) || !strings.Contains(workerBody, `"/notes"`) || !strings.Contains(workerBody, `"/route-lifecycle.mjs"`) || !strings.Contains(workerBody, `"/service-worker-register.mjs"`) || !strings.Contains(workerBody, `"/fonts/geist-variable.woff2"`) || !strings.Contains(workerBody, "caches.open") || !strings.Contains(workerBody, `cache: "no-cache"`) || !strings.Contains(workerBody, "/api/") {
 		t.Fatalf("service worker missing shell cache/API bypass: %q", workerBody)
 	}
 }

@@ -53,9 +53,6 @@ func (s *Service) CreateBookmark(ctx context.Context, in CreateBookmarkInput) (C
 	if _, err = tx.ExecContext(ctx, `INSERT INTO ai_summaries(id,bookmark_id,user_id,processing_status,created_at,updated_at) VALUES(?,?,?,'pending',?,?)`, ids.New(), bookmarkID, in.UserID, now, now); err != nil {
 		return CreateBookmarkResult{}, err
 	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO item_states(user_id,item_type,item_id,stage,importance,next_action,created_at,updated_at) VALUES(?,'bookmark',?,'inbox',0,?,?,?)`, in.UserID, bookmarkID, strings.TrimSpace(in.Note), now, now); err != nil {
-		return CreateBookmarkResult{}, err
-	}
 	if in.CollectionID != "" {
 		if _, err = tx.ExecContext(ctx, `INSERT INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, in.CollectionID, bookmarkID, in.UserID, now); err != nil {
 			return CreateBookmarkResult{}, err
@@ -214,9 +211,6 @@ func (s *Service) CreateNoteCommand(ctx context.Context, in CreateNoteInput) (st
 	}
 	now, id := nowString(), ids.New()
 	if _, err = tx.ExecContext(ctx, `INSERT INTO notes(id,user_id,title,body,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?)`, id, in.UserID, in.Title, in.Body, "manual", now, now); err != nil {
-		return "", err
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO item_states(user_id,item_type,item_id,stage,importance,next_action,created_at,updated_at) VALUES(?,'note',?,'inbox',0,'',?,?)`, in.UserID, id, now, now); err != nil {
 		return "", err
 	}
 	if in.BookmarkID != "" {
