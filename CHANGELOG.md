@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Restricted Graph relationship reads to selected endpoints without changing
+  edge-family precedence, feedback filtering, or edge limits.
 - Batched search-result feedback by exact item keys, preserving candidate
   selection, scores, and stable ranking ties.
 - Batched Notes-list states, tasks, reminders, links, and endpoint titles while
