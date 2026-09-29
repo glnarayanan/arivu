@@ -157,11 +157,19 @@ func (s *Service) searchIndex(ctx context.Context, userID, query string, values 
 }
 
 func (s *Service) decorateSearchResults(ctx context.Context, userID string, results []map[string]any, surface string) []map[string]any {
+	items := make([]feedbackItem, 0, len(results))
+	for _, result := range results {
+		items = append(items, feedbackItem{
+			itemType: stringValue(result["item_type"]),
+			itemID:   stringValue(result["item_id"]),
+		})
+	}
+	feedbackByItem := s.feedbackStates(ctx, userID, feedbackSurface(surface), items)
 	for index, result := range results {
 		itemType := stringValue(result["item_type"])
 		itemID := stringValue(result["item_id"])
 		freshness := freshnessScore(stringValue(result["updated_at"]))
-		feedback := s.feedbackState(ctx, userID, itemType, itemID, surface)
+		feedback := feedbackByItem[feedbackItem{itemType: itemType, itemID: itemID}]
 		result["freshness_score"] = freshness
 		result["feedback_state"] = feedback
 		result["result_score"] = roundFloat(100-float64(index*2)+freshness+feedbackSearchWeight(feedback), 2)

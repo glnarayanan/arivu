@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Added an atomic preservation foundation for the planned workflow retirement.
+  It retains exact legacy records and can convert useful content into notes
+  without overwriting edits or recreating deleted notes. Conversion is not yet
+  automatic. Full JSON backups now use version 3, include preservation records,
+  remap owned note references on restore, and reject unsupported future versions.
+- Restricted Graph relationship reads to selected endpoints without changing
+  edge-family precedence, feedback filtering, or edge limits.
+- Batched search-result feedback by exact item keys, preserving candidate
+  selection, scores, and stable ranking ties.
+- Batched Notes-list states, tasks, reminders, links, and endpoint titles while
+  preserving response order, per-note limits, and owner isolation.
 - Batched Library capture-status reads, search-index rebuild reads, export
   details, and Insights concept reads. Graph now fetches embeddings only for
   selected nodes and reuses vector norms. Routes, result limits, search swaps,

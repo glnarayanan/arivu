@@ -375,8 +375,8 @@ func TestFullExportRestoreRoundTripsEvidenceAndProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exported["version"] != 2 {
-		t.Fatalf("export version = %#v, want 2", exported["version"])
+	if exported["version"] != 3 {
+		t.Fatalf("export version = %#v, want 3", exported["version"])
 	}
 	bookmarks := mapList(exported["bookmarks"])
 	if len(bookmarks) != 1 {

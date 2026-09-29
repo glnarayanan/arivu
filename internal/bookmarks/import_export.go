@@ -627,6 +627,12 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 	if !ok {
 		return nil, false, nil
 	}
+	if version, exists := backup["version"]; exists {
+		number, valid := version.(float64)
+		if !valid || number < 1 || number > 3 || number != float64(int(number)) {
+			return nil, true, errors.New("unsupported backup version")
+		}
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	jobID := ids.New()
 	oldBookmarks := map[string]string{}
@@ -671,6 +677,9 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 		s.restoreBookmarkChildren(ctx, userID, newID, bookmark, oldNotes, evidenceIDs, now)
 	}
 	s.restoreStandaloneNotes(ctx, userID, backup["notes"], oldNotes, now)
+	if err := s.restorePreservation(ctx, userID, backup["knowledge_preservation"], oldNotes); err != nil {
+		return nil, true, err
+	}
 	s.restoreDailyNotes(ctx, userID, backup["daily_notes"], now)
 	s.restoreKnowledgeObjects(ctx, userID, backup["knowledge_objects"], oldBookmarks, oldNotes, oldObjects, now)
 	s.restoreTags(ctx, userID, backup["tags"], now)
@@ -1175,26 +1184,31 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 	}
 	rows.Close()
 	s.exportBookmarkDetails(ctx, userID, bookmarks)
+	preserved, err := s.exportPreservation(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
 	return map[string]any{
-		"version":             2,
-		"exported_at":         time.Now().UTC().Format(time.RFC3339),
-		"bookmarks":           bookmarks,
-		"notes":               s.exportStandaloneNotes(ctx, userID),
-		"daily_notes":         s.exportDailyNotes(ctx, userID),
-		"knowledge_objects":   s.exportKnowledgeObjects(ctx, userID),
-		"tags":                s.exportTags(ctx, userID),
-		"collections":         s.exportCollections(ctx, userID),
-		"saved_searches":      s.exportSavedSearches(ctx, userID),
-		"import_jobs":         s.exportImportJobs(ctx, userID),
-		"import_sources":      s.exportImportSources(ctx, userID),
-		"review_events":       s.exportReviewEvents(ctx, userID),
-		"item_states":         s.exportItemStates(ctx, userID),
-		"item_links":          s.exportItemLinks(ctx, userID),
-		"reminders":           s.exportReminders(ctx, userID),
-		"action_items":        s.exportActionItems(ctx, userID),
-		"result_feedback":     s.exportResultFeedback(ctx, userID),
-		"knowledge_feedback":  s.exportKnowledgeFeedback(ctx, userID),
-		"insight_impressions": s.exportInsightImpressions(ctx, userID),
+		"version":                3,
+		"knowledge_preservation": preserved,
+		"exported_at":            time.Now().UTC().Format(time.RFC3339),
+		"bookmarks":              bookmarks,
+		"notes":                  s.exportStandaloneNotes(ctx, userID),
+		"daily_notes":            s.exportDailyNotes(ctx, userID),
+		"knowledge_objects":      s.exportKnowledgeObjects(ctx, userID),
+		"tags":                   s.exportTags(ctx, userID),
+		"collections":            s.exportCollections(ctx, userID),
+		"saved_searches":         s.exportSavedSearches(ctx, userID),
+		"import_jobs":            s.exportImportJobs(ctx, userID),
+		"import_sources":         s.exportImportSources(ctx, userID),
+		"review_events":          s.exportReviewEvents(ctx, userID),
+		"item_states":            s.exportItemStates(ctx, userID),
+		"item_links":             s.exportItemLinks(ctx, userID),
+		"reminders":              s.exportReminders(ctx, userID),
+		"action_items":           s.exportActionItems(ctx, userID),
+		"result_feedback":        s.exportResultFeedback(ctx, userID),
+		"knowledge_feedback":     s.exportKnowledgeFeedback(ctx, userID),
+		"insight_impressions":    s.exportInsightImpressions(ctx, userID),
 	}, nil
 }
 
