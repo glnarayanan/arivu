@@ -85,8 +85,8 @@ func scanGraphV2Nodes(rows interface {
 	defer rows.Close()
 	nodes := []graphV2Node{}
 	for rows.Next() {
-		var userID, id, itemType, title, body, source, stage, topic, connection, created, updated, thumbnail string
-		if err := rows.Scan(&userID, &id, &itemType, &title, &body, &source, &stage, &topic, &connection, &created, &updated, &thumbnail); err != nil {
+		var userID, id, itemType, title, body, source, topic, connection, created, updated, thumbnail string
+		if err := rows.Scan(&userID, &id, &itemType, &title, &body, &source, &topic, &connection, &created, &updated, &thumbnail); err != nil {
 			return nil, err
 		}
 		nodes = append(nodes, graphV2Node{ID: graphNodeID(itemType, id), Type: itemType, SourceID: id, Title: knowledgeDisplayTitle(itemType, title, body), Summary: truncateText(body, 240), Source: source, UpdatedAt: updated})
@@ -116,8 +116,7 @@ func graphNodeEligibilitySQL(alias string) string {
 		"EXISTS (SELECT 1 FROM item_links graph_link WHERE graph_link.user_id=" + bookmark + ".user_id AND ((graph_link.from_type='bookmark' AND graph_link.from_id=" + bookmark +
 		".id) OR (graph_link.to_type='bookmark' AND graph_link.to_id=" + bookmark + ".id))) OR " +
 		"EXISTS (SELECT 1 FROM bookmark_notes graph_note WHERE graph_note.user_id=" + bookmark + ".user_id AND graph_note.bookmark_id=" + bookmark + ".id) OR " +
-		"EXISTS (SELECT 1 FROM annotations graph_annotation WHERE graph_annotation.user_id=" + bookmark + ".user_id AND graph_annotation.bookmark_id=" + bookmark + ".id) OR " +
-		"EXISTS (SELECT 1 FROM knowledge_objects graph_object WHERE graph_object.user_id=" + bookmark + ".user_id AND graph_object.source_item_type='bookmark' AND graph_object.source_item_id=" + bookmark + ".id))))"
+		"EXISTS (SELECT 1 FROM annotations graph_annotation WHERE graph_annotation.user_id=" + bookmark + ".user_id AND graph_annotation.bookmark_id=" + bookmark + ".id))))"
 }
 
 func firstGraphNode(nodes []graphV2Node, err error) (graphV2Node, bool) {
@@ -224,12 +223,6 @@ func (s *Service) graphNeighborRefs(ctx context.Context, userID, itemType, itemI
 			refs = append(refs, [2]string{"bookmark", bookmarkID})
 		}
 	}
-	if itemType == "knowledge_object" {
-		var sourceType, sourceID string
-		if s.db.QueryRowContext(ctx, `SELECT source_item_type,source_item_id FROM knowledge_objects WHERE user_id=? AND id=?`, userID, itemID).Scan(&sourceType, &sourceID) == nil && sourceID != "" {
-			refs = append(refs, [2]string{graphSourceType(sourceType), sourceID})
-		}
-	}
 	return refs
 }
 
@@ -245,8 +238,8 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 		hidden = s.hiddenKnowledgeTargets(ctx, userID, "relationship")
 	}
 	edges := []graphV2Edge{}
-	endpointSQL, endpointArgs := graphSelectedEndpointSQL(selected, "from_type", "from_id", false)
-	toEndpointSQL, toEndpointArgs := graphSelectedEndpointSQL(selected, "to_type", "to_id", false)
+	endpointSQL, endpointArgs := graphSelectedEndpointSQL(selected, "from_type", "from_id")
+	toEndpointSQL, toEndpointArgs := graphSelectedEndpointSQL(selected, "to_type", "to_id")
 	args := append([]any{userID}, endpointArgs...)
 	args = append(args, toEndpointArgs...)
 	rows, err := s.db.QueryContext(ctx, `SELECT from_type,from_id,to_type,to_id,source FROM item_links WHERE user_id=? AND (`+endpointSQL+`) AND (`+toEndpointSQL+`) ORDER BY created_at,id`, args...)
@@ -360,29 +353,6 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 		sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
 		return edges
 	}
-	objectSQL, objectArgs := graphSelectedIDsSQL(selected["knowledge_object"], "id")
-	sourceSQL, sourceArgs := graphSelectedEndpointSQL(selected, "source_item_type", "source_item_id", true)
-	args = append([]any{userID}, objectArgs...)
-	args = append(args, sourceArgs...)
-	rows, err = s.db.QueryContext(ctx, `SELECT id,source_item_type,source_item_id FROM knowledge_objects WHERE user_id=? AND source_item_id<>'' AND (`+objectSQL+`) AND (`+sourceSQL+`) ORDER BY id`, args...)
-	if err == nil {
-		for rows.Next() && len(edges) < limit {
-			var id, sourceType, sourceID string
-			_ = rows.Scan(&id, &sourceType, &sourceID)
-			from, to := graphNodeID("knowledge_object", id), graphNodeID(graphSourceType(sourceType), sourceID)
-			if known[from] && known[to] {
-				edge := newGraphV2Edge("source", from, to, "knowledge_objects.source_item_id", 1)
-				if !hidden[edge.ID] {
-					edges = append(edges, edge)
-				}
-			}
-		}
-		rows.Close()
-	}
-	if len(edges) >= limit {
-		sort.Slice(edges, func(i, j int) bool { return edges[i].ID < edges[j].ID })
-		return edges
-	}
 	annotationSQL, annotationArgs := graphSelectedIDsSQL(selected["annotation"], "id")
 	bookmarkSQL, bookmarkArgs = graphSelectedIDsSQL(selected["bookmark"], "bookmark_id")
 	args = append([]any{userID}, annotationArgs...)
@@ -417,7 +387,7 @@ func graphSelectedIDsSQL(ids []string, column string) (string, []any) {
 	return column + " IN (" + strings.TrimRight(strings.Repeat("?,", len(ids)), ",") + ")", args
 }
 
-func graphSelectedEndpointSQL(selected map[string][]string, typeColumn, idColumn string, sourceType bool) (string, []any) {
+func graphSelectedEndpointSQL(selected map[string][]string, typeColumn, idColumn string) (string, []any) {
 	types := make([]string, 0, len(selected))
 	for itemType, ids := range selected {
 		if len(ids) > 0 {
@@ -429,26 +399,14 @@ func graphSelectedEndpointSQL(selected map[string][]string, typeColumn, idColumn
 	args := []any{}
 	for _, itemType := range types {
 		idSQL, idArgs := graphSelectedIDsSQL(selected[itemType], idColumn)
-		if sourceType && itemType == "knowledge_object" {
-			clauses = append(clauses, "("+typeColumn+" IN (?,?) AND "+idSQL+")")
-			args = append(args, "knowledge_object", "object")
-		} else {
-			clauses = append(clauses, "("+typeColumn+"=? AND "+idSQL+")")
-			args = append(args, itemType)
-		}
+		clauses = append(clauses, "("+typeColumn+"=? AND "+idSQL+")")
+		args = append(args, itemType)
 		args = append(args, idArgs...)
 	}
 	if len(clauses) == 0 {
 		return "0", nil
 	}
 	return strings.Join(clauses, " OR "), args
-}
-
-func graphSourceType(itemType string) string {
-	if itemType == "object" {
-		return "knowledge_object"
-	}
-	return itemType
 }
 
 func newGraphV2Edge(kind, from, to, provenance string, confidence float64) graphV2Edge {

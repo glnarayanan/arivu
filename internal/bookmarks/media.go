@@ -72,7 +72,6 @@ func (s *Service) ImportMedia(w http.ResponseWriter, r *http.Request, user auth.
 		writeError(w, http.StatusInternalServerError, "Could not create media note")
 		return
 	}
-	_ = s.upsertItemState(r.Context(), user.ID, "note", id, "inbox", 0, "", now)
 	note, _ := s.note(r.Context(), user.ID, id)
 	s.decorateNote(r.Context(), user.ID, note)
 	s.refreshSearchIndex(r.Context(), user.ID)
