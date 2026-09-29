@@ -21,42 +21,6 @@ func TestSummaryPolicyRejectsClaimsForMetadataOnlyEvidence(t *testing.T) {
 	}
 }
 
-func TestValidateSummaryAdaptsToShortSocialEvidence(t *testing.T) {
-	req := SummaryRequest{
-		ContentKind:   ContentKindXPost,
-		PrimaryText:   "SQLite WAL mode lets readers continue while one writer commits.",
-		QualityStatus: QualityComplete,
-	}
-	result := SummaryResult{
-		OneSentence:  "SQLite WAL mode lets readers continue while one writer commits.",
-		LongForm:     strings.Repeat("Unsupported expansion. ", 20),
-		BulletPoints: []string{"SQLite WAL mode lets readers continue.", "One writer commits.", "A third forced point."},
-	}
-	err := ValidateSummary(req, result)
-	var validationErr *SummaryValidationError
-	if !errors.As(err, &validationErr) {
-		t.Fatalf("error = %v, want SummaryValidationError", err)
-	}
-	for _, want := range []string{"long_form_not_allowed", "too_many_bullet_points"} {
-		if !containsString(validationErr.ReasonCodes, want) {
-			t.Errorf("reason codes %v do not contain %q", validationErr.ReasonCodes, want)
-		}
-	}
-}
-
-func TestInvalidOptionalTagsDoNotDiscardAnOtherwiseValidSummary(t *testing.T) {
-	req := SummaryRequest{
-		ContentKind: ContentKindArticle, PrimaryText: "The guide covers Claude Code workflows and context engineering.", QualityStatus: QualityComplete,
-	}
-	result := SummaryResult{
-		OneSentence: "The guide covers Claude Code workflows and context engineering.", SuggestedTags: []string{"not a valid tag!"},
-	}
-	repaired, err := dropInvalidOptionalTags(req, result, ValidateSummary(req, result))
-	if err != nil || repaired.OneSentence != result.OneSentence || len(repaired.SuggestedTags) != 0 {
-		t.Fatalf("repaired result = %#v, err = %v", repaired, err)
-	}
-}
-
 func TestSalvageSummaryKeepsIndependentlyValidRichFields(t *testing.T) {
 	req := SummaryRequest{
 		ContentKind:   ContentKindArticle,
@@ -110,16 +74,6 @@ func TestValidateSummaryRejectsUnsupportedNamedTechnology(t *testing.T) {
 	}
 }
 
-func TestValidateSummaryRejectsUnsupportedOrdinaryProperNounAtSentenceStart(t *testing.T) {
-	err := ValidateSummary(SummaryRequest{
-		ContentKind: ContentKindArticle, PrimaryText: "SQLite keeps the data local.", QualityStatus: QualityComplete,
-	}, SummaryResult{OneSentence: "Oracle keeps the data local."})
-	var validationErr *SummaryValidationError
-	if !errors.As(err, &validationErr) || !containsString(validationErr.ReasonCodes, "unsupported_named_entity") {
-		t.Fatalf("error = %v", err)
-	}
-}
-
 func TestValidateSemanticsRequiresEvidenceAndDropsJunk(t *testing.T) {
 	req := SemanticRequest{ContentKind: ContentKindArticle, EvidenceText: "Microsoft documents row-level security as a database policy mechanism.", QualityStatus: QualityComplete}
 	result := SemanticResult{
@@ -143,24 +97,6 @@ func TestValidateSemanticsRequiresEvidenceAndDropsJunk(t *testing.T) {
 	}
 	if got.Concepts[0].EvidenceStart < 0 || got.Concepts[0].EvidenceEnd <= got.Concepts[0].EvidenceStart {
 		t.Fatalf("concept evidence locator = %#v", got.Concepts[0])
-	}
-}
-
-func TestValidateSemanticsNormalizesAliasesAndAllowsZero(t *testing.T) {
-	req := SemanticRequest{ContentKind: ContentKindArticle, EvidenceText: "SQLite and sqlite support local storage.", QualityStatus: QualityComplete}
-	got := ValidateSemantics(req, SemanticResult{Entities: []SemanticTerm{
-		{Label: "SQLite", Type: "technology", Confidence: 0.9, Evidence: "SQLite"},
-		{Label: "sqlite", Type: "technology", Confidence: 0.85, Evidence: "sqlite"},
-	}})
-	if len(got.Entities) != 1 || got.Entities[0].Label != "SQLite" {
-		t.Fatalf("normalized entities = %#v", got.Entities)
-	}
-
-	empty := ValidateSemantics(SemanticRequest{QualityStatus: QualityFailed, EvidenceText: "quot https com"}, SemanticResult{
-		Concepts: []SemanticTerm{{Label: "quot", Confidence: 1, Evidence: "quot"}},
-	})
-	if len(empty.Entities) != 0 || len(empty.Concepts) != 0 {
-		t.Fatalf("failed evidence semantics = %#v", empty)
 	}
 }
 

@@ -201,15 +201,6 @@ func (s *Service) knowledgeRelationshipBetween(ctx context.Context, userID, targ
 	return graphV2Edge{}, false
 }
 
-func (s *Service) knowledgeTargetHidden(ctx context.Context, userID, targetType, targetID string) bool {
-	var feedback string
-	var snoozed sql.NullString
-	if err := s.db.QueryRowContext(ctx, `SELECT feedback,snoozed_until FROM knowledge_feedback WHERE user_id=? AND target_type=? AND target_id=?`, userID, targetType, targetID).Scan(&feedback, &snoozed); err != nil {
-		return false
-	}
-	return feedback == "dismiss" || (feedback == "snooze" && (!snoozed.Valid || snoozed.String > time.Now().UTC().Format(time.RFC3339)))
-}
-
 func (s *Service) hiddenKnowledgeTargets(ctx context.Context, userID, targetType string) map[string]bool {
 	rows, err := s.db.QueryContext(ctx, `SELECT target_id,feedback,snoozed_until FROM knowledge_feedback WHERE user_id=? AND target_type=?`, userID, targetType)
 	if err != nil {

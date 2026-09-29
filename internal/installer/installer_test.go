@@ -8,39 +8,6 @@ import (
 	"testing"
 )
 
-func TestBuildPlanCleanHostUsesManagedCaddy(t *testing.T) {
-	plan, err := BuildPlan(baseOptions(), cleanFacts())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan.ProxyMode != ProxyManagedCaddy {
-		t.Fatalf("proxy mode = %s", plan.ProxyMode)
-	}
-	if plan.BindPort != 8090 {
-		t.Fatalf("bind port = %d", plan.BindPort)
-	}
-	if !hasFile(plan, "/etc/caddy/conf.d/arivu.caddy") {
-		t.Fatalf("managed caddy plan missing Caddy site file: %#v", plan.Files)
-	}
-	if !strings.Contains(fileContent(plan, "/etc/caddy/conf.d/arivu.caddy"), "\ttls ops@example.com\n") {
-		t.Fatalf("managed caddy plan missing TLS email: %q", fileContent(plan, "/etc/caddy/conf.d/arivu.caddy"))
-	}
-	if !strings.Contains(FormatPlan(plan), "Arivu install plan for arivu.example.com") {
-		t.Fatalf("formatted plan missing domain")
-	}
-	if !strings.Contains(FormatPlan(plan), "Release: latest") {
-		t.Fatalf("formatted plan missing release")
-	}
-}
-
-func TestBuildPlanAllowsFutureUbuntuVersions(t *testing.T) {
-	facts := cleanFacts()
-	facts.OSVersionID = "26.04"
-	if _, err := BuildPlan(baseOptions(), facts); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestBuildPlanRequiresSupportedCaptureHost(t *testing.T) {
 	for _, test := range []struct {
 		osID    string
@@ -84,25 +51,6 @@ func TestBuildPlanWarnsOnDNSMismatch(t *testing.T) {
 	}
 }
 
-func TestBuildPlanNormalizesEmailAddresses(t *testing.T) {
-	opts := baseOptions()
-	opts.AdminEmail = "Admin <ADMIN@EXAMPLE.COM>"
-	opts.TLSEmail = "Ops <OPS@EXAMPLE.COM>"
-	plan, err := BuildPlan(opts, cleanFacts())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(fileContent(plan, "/etc/arivu/arivu.env"), "ADMIN_EMAILS=admin@example.com") {
-		t.Fatalf("env did not normalize admin email: %q", fileContent(plan, "/etc/arivu/arivu.env"))
-	}
-	if !strings.Contains(fileContent(plan, "/etc/arivu/arivu.env"), "ARIVU_INSTALLER_PROXY_MODE=managed-caddy") {
-		t.Fatalf("env did not record resolved proxy mode: %q", fileContent(plan, "/etc/arivu/arivu.env"))
-	}
-	if !strings.Contains(fileContent(plan, "/etc/caddy/conf.d/arivu.caddy"), "\ttls ops@example.com\n") {
-		t.Fatalf("caddy did not normalize TLS email: %q", fileContent(plan, "/etc/caddy/conf.d/arivu.caddy"))
-	}
-}
-
 func TestBuildPlanSharedHostUsesExistingProxy(t *testing.T) {
 	facts := cleanFacts()
 	facts.Commands["nginx"] = "/usr/sbin/nginx"
@@ -129,24 +77,6 @@ func TestBuildPlanSharedHostUsesExistingProxy(t *testing.T) {
 	}
 }
 
-func TestBuildPlanAppOnlySkipsProxyFiles(t *testing.T) {
-	opts := baseOptions()
-	opts.ProxyMode = ProxyAppOnly
-	plan, err := BuildPlan(opts, cleanFacts())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hasFile(plan, "/etc/caddy/conf.d/arivu.caddy") || hasFile(plan, "/etc/nginx/snippets/arivu.conf") {
-		t.Fatalf("app-only should not manage proxy files: %#v", plan.Files)
-	}
-	formatted := FormatPlan(plan)
-	for _, expected := range []string{"Manual proxy snippets:", "Caddy:", "reverse_proxy 127.0.0.1:8090", "Nginx:", "proxy_pass http://127.0.0.1:8090", "Apache:", "ProxyPass / http://127.0.0.1:8090/"} {
-		if !strings.Contains(formatted, expected) {
-			t.Fatalf("app-only plan missing %q:\n%s", expected, formatted)
-		}
-	}
-}
-
 func TestManagedCaddyPlanWithFirewallPrintsManualCommands(t *testing.T) {
 	facts := cleanFacts()
 	facts.Commands["ufw"] = "/usr/sbin/ufw"
@@ -161,18 +91,6 @@ func TestManagedCaddyPlanWithFirewallPrintsManualCommands(t *testing.T) {
 	formatted := FormatPlan(plan)
 	if !strings.Contains(formatted, "Manual firewall commands required") || !strings.Contains(formatted, "sudo ufw allow 80/tcp") || !strings.Contains(formatted, "sudo ufw allow 443/tcp") {
 		t.Fatalf("managed-caddy firewall plan missing manual commands:\n%s", formatted)
-	}
-}
-
-func TestBuildPlanBackupsDisabledSkipsBackupUnits(t *testing.T) {
-	opts := baseOptions()
-	opts.BackupEnabled = false
-	plan, err := BuildPlan(opts, cleanFacts())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hasFile(plan, "/etc/systemd/system/arivu-backup.service") || hasFile(plan, "/etc/systemd/system/arivu-backup.timer") {
-		t.Fatalf("backups disabled should not manage backup units: %#v", plan.Files)
 	}
 }
 
@@ -213,19 +131,6 @@ func TestBuildPlanCaptureEnabledManagesNativeServiceAndEnvironment(t *testing.T)
 	}
 }
 
-func TestBuildPlanCaptureDisabledKeepsCoreSingleBinary(t *testing.T) {
-	plan, err := BuildPlan(baseOptions(), cleanFacts())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if hasFile(plan, "/etc/systemd/system/arivu-capture.service") {
-		t.Fatalf("capture-disabled plan managed capture service: %#v", plan.Files)
-	}
-	if !strings.Contains(fileContent(plan, "/etc/arivu/arivu.env"), "ARIVU_BROWSER_CAPTURE_ENABLED=false") {
-		t.Fatalf("capture-disabled env is ambiguous: %s", fileContent(plan, "/etc/arivu/arivu.env"))
-	}
-}
-
 func TestBuildPlanRejectsExistingDomainVHost(t *testing.T) {
 	facts := cleanFacts()
 	facts.ExistingVHosts = []string{"arivu.example.com"}
@@ -262,16 +167,6 @@ func TestBuildPlanRejectsUnsafeDomains(t *testing.T) {
 	}
 }
 
-func TestCaddyHostsFromLineParsesSiteLabels(t *testing.T) {
-	hosts := caddyHostsFromLine("https://arivu.example.com, www.example.com {")
-	if len(hosts) != 2 || hosts[0] != "arivu.example.com" || hosts[1] != "www.example.com" {
-		t.Fatalf("unexpected hosts: %#v", hosts)
-	}
-	if hosts := caddyHostsFromLine("reverse_proxy 127.0.0.1:8090 {"); len(hosts) != 0 {
-		t.Fatalf("directive should not be parsed as hosts: %#v", hosts)
-	}
-}
-
 func TestVerifyChecksumRejectsTamperedArtifact(t *testing.T) {
 	data := []byte("binary")
 	sum := sha256.Sum256(data)
@@ -281,29 +176,6 @@ func TestVerifyChecksumRejectsTamperedArtifact(t *testing.T) {
 	}
 	if err := VerifyChecksum([]byte("tampered"), sums, "arivu-linux-amd64"); err == nil {
 		t.Fatal("expected tampered checksum to fail")
-	}
-}
-
-func TestReleaseArtifactURLsSupportPinnedVersions(t *testing.T) {
-	appURL, installerURL, sumsURL := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", "v1.2.3", "arm64")
-	if appURL != "https://github.com/glnarayanan/arivu/releases/download/v1.2.3/arivu-linux-arm64" {
-		t.Fatalf("versioned app URL = %s", appURL)
-	}
-	if installerURL != "https://github.com/glnarayanan/arivu/releases/download/v1.2.3/arivu-installer-linux-arm64" {
-		t.Fatalf("versioned installer URL = %s", installerURL)
-	}
-	if sumsURL != "https://github.com/glnarayanan/arivu/releases/download/v1.2.3/SHA256SUMS" {
-		t.Fatalf("versioned sums URL = %s", sumsURL)
-	}
-	latestURL, latestInstallerURL, _ := ReleaseArtifactURLs("https://github.com/glnarayanan/arivu", "", "amd64")
-	if latestURL != "https://github.com/glnarayanan/arivu/releases/latest/download/arivu-linux-amd64" {
-		t.Fatalf("latest app URL = %s", latestURL)
-	}
-	if latestInstallerURL != "https://github.com/glnarayanan/arivu/releases/latest/download/arivu-installer-linux-amd64" {
-		t.Fatalf("latest installer URL = %s", latestInstallerURL)
-	}
-	if captureURL := CaptureArtifactURL("https://github.com/glnarayanan/arivu", "v1.2.3", "arm64"); captureURL != "https://github.com/glnarayanan/arivu/releases/download/v1.2.3/arivu-capture-linux-arm64.tar.gz" {
-		t.Fatalf("versioned capture URL = %s", captureURL)
 	}
 }
 

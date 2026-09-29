@@ -110,17 +110,19 @@ func (s *Service) Insights(w http.ResponseWriter, r *http.Request, user auth.Use
 
 func (s *Service) deterministicInsights(ctx context.Context, userID string, hideFeedback bool) []deterministicInsight {
 	now := time.Now().UTC()
+	concepts, sources := s.insightConceptSources(ctx, userID)
 	insights := []deterministicInsight{}
-	insights = append(insights, s.emergingThemeInsights(ctx, userID, now)...)
-	insights = append(insights, s.recurringConnectionInsights(ctx, userID)...)
+	insights = append(insights, emergingThemeInsights(concepts, sources, now)...)
+	insights = append(insights, recurringConnectionInsights(concepts, sources)...)
 	insights = append(insights, s.changedThinkingInsights(ctx, userID)...)
 	insights = append(insights, s.forgottenValueInsights(ctx, userID, now)...)
 	insights = append(insights, s.knowledgeGapInsights(ctx, userID)...)
-	insights = append(insights, s.serendipitousInsights(ctx, userID)...)
+	insights = append(insights, s.serendipitousInsights(ctx, userID, concepts, sources)...)
 	if hideFeedback {
+		hidden := s.hiddenKnowledgeTargets(ctx, userID, "insight")
 		filtered := insights[:0]
 		for _, insight := range insights {
-			if !s.knowledgeTargetHidden(ctx, userID, "insight", insight.ID) {
+			if !hidden[insight.ID] {
 				filtered = append(filtered, insight)
 			}
 		}
@@ -169,57 +171,42 @@ func (s *Service) changedThinkingInsights(ctx context.Context, userID string) []
 
 type conceptSource struct{ id, title, publishedAt, publisher string }
 
-func (s *Service) conceptSources(ctx context.Context, userID, concept string) []conceptSource {
+func (s *Service) insightConceptSources(ctx context.Context, userID string) ([]string, map[string][]conceptSource) {
 	rows, err := s.db.QueryContext(ctx, `SELECT b.id,COALESCE(NULLIF(b.title,''),b.url),COALESCE(b.source_published_at,''),
-		COALESCE(NULLIF(b.source_publisher_key,''),NULLIF(b.source_author_id,''),NULLIF(b.domain,''),b.id)
+		COALESCE(NULLIF(b.source_publisher_key,''),NULLIF(b.source_author_id,''),NULLIF(b.domain,''),b.id),c.concept
 		FROM bookmark_concepts c
 		JOIN bookmarks b ON b.user_id=c.user_id AND b.id=c.bookmark_id
 		JOIN bookmark_evidence e ON e.id=c.evidence_id AND e.bookmark_id=c.bookmark_id AND e.user_id=c.user_id AND e.is_selected=1
-		WHERE c.user_id=? AND c.concept=? AND c.confidence>=0.65 AND c.enrichment_version=?
-			AND c.evidence_text<>'' AND c.evidence_end>c.evidence_start AND instr(lower(e.content_text),lower(c.evidence_text))>0 AND e.quality_status='complete'
-		ORDER BY COALESCE(b.source_published_at,'') DESC,b.id`, userID, concept, providers.SemanticVersion)
-	if err != nil {
-		return nil
-	}
-	defer rows.Close()
-	result := []conceptSource{}
-	for rows.Next() {
-		var source conceptSource
-		if rows.Scan(&source.id, &source.title, &source.publishedAt, &source.publisher) == nil {
-			result = append(result, source)
-		}
-	}
-	return result
-}
-
-func (s *Service) conceptNames(ctx context.Context, userID string) []string {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT c.concept FROM bookmark_concepts c
-		JOIN bookmark_evidence e ON e.id=c.evidence_id AND e.bookmark_id=c.bookmark_id AND e.user_id=c.user_id AND e.is_selected=1
 		WHERE c.user_id=? AND c.confidence>=0.65 AND c.enrichment_version=?
 			AND c.evidence_text<>'' AND c.evidence_end>c.evidence_start AND instr(lower(e.content_text),lower(c.evidence_text))>0 AND e.quality_status='complete'
-		ORDER BY c.concept`, userID, providers.SemanticVersion)
+		ORDER BY c.concept,COALESCE(b.source_published_at,'') DESC,b.id`, userID, providers.SemanticVersion)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	defer rows.Close()
-	var result []string
+	var concepts []string
+	result := map[string][]conceptSource{}
 	for rows.Next() {
+		var source conceptSource
 		var concept string
-		if rows.Scan(&concept) == nil {
-			result = append(result, concept)
+		if rows.Scan(&source.id, &source.title, &source.publishedAt, &source.publisher, &concept) == nil {
+			if _, exists := result[concept]; !exists {
+				concepts = append(concepts, concept)
+			}
+			result[concept] = append(result[concept], source)
 		}
 	}
-	return result
+	return concepts, result
 }
 
-func (s *Service) emergingThemeInsights(ctx context.Context, userID string, now time.Time) []deterministicInsight {
+func emergingThemeInsights(concepts []string, sourcesByConcept map[string][]conceptSource, now time.Time) []deterministicInsight {
 	recentStart, priorStart := now.AddDate(0, 0, -30), now.AddDate(0, 0, -60)
 	result := []deterministicInsight{}
-	for _, concept := range s.conceptNames(ctx, userID) {
+	for _, concept := range concepts {
 		if !validInsightConcept(concept) {
 			continue
 		}
-		sources := s.conceptSources(ctx, userID, concept)
+		sources := sourcesByConcept[concept]
 		var recent, prior []conceptSource
 		publishers := map[string]bool{}
 		for _, source := range sources {
@@ -250,13 +237,13 @@ func (s *Service) emergingThemeInsights(ctx context.Context, userID string, now 
 	return result
 }
 
-func (s *Service) recurringConnectionInsights(ctx context.Context, userID string) []deterministicInsight {
+func recurringConnectionInsights(concepts []string, sourcesByConcept map[string][]conceptSource) []deterministicInsight {
 	result := []deterministicInsight{}
-	for _, concept := range s.conceptNames(ctx, userID) {
+	for _, concept := range concepts {
 		if !validInsightConcept(concept) {
 			continue
 		}
-		sources := s.conceptSources(ctx, userID, concept)
+		sources := sourcesByConcept[concept]
 		publishers := map[string]bool{}
 		publishedDates := map[string]bool{}
 		for _, source := range sources {
@@ -329,14 +316,14 @@ func (s *Service) knowledgeGapInsights(ctx context.Context, userID string) []det
 	return result
 }
 
-func (s *Service) serendipitousInsights(ctx context.Context, userID string) []deterministicInsight {
+func (s *Service) serendipitousInsights(ctx context.Context, userID string, concepts []string, sourcesByConcept map[string][]conceptSource) []deterministicInsight {
 	result := []deterministicInsight{}
 	explicitLinks := s.explicitBookmarkLinks(ctx, userID)
-	for _, concept := range s.conceptNames(ctx, userID) {
+	for _, concept := range concepts {
 		if !validInsightConcept(concept) {
 			continue
 		}
-		sources := s.conceptSources(ctx, userID, concept)
+		sources := sourcesByConcept[concept]
 		for left := 0; left < len(sources); left++ {
 			for right := left + 1; right < len(sources); right++ {
 				if sources[left].publisher == sources[right].publisher || explicitLinks[bookmarkPairKey(sources[left].id, sources[right].id)] {

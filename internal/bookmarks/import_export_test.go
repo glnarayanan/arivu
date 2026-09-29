@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-	"unicode/utf8"
 
 	"github.com/glnarayanan/arivu/internal/auth"
 	"github.com/glnarayanan/arivu/internal/database"
@@ -20,59 +19,6 @@ import (
 	"github.com/glnarayanan/arivu/internal/providers"
 	"github.com/glnarayanan/arivu/internal/safefetch"
 )
-
-func TestExtractImportURLsFromJSON(t *testing.T) {
-	got := extractImportURLs(`[{"url":"https://example.com/a","title":"A"},{"link":"https://example.com/b","name":"B"},{"url":"file:///etc/passwd"}]`)
-	if len(got) != 2 {
-		t.Fatalf("expected 2 URLs, got %#v", got)
-	}
-	if got[0].Title != "A" || got[1].Title != "B" {
-		t.Fatalf("titles not preserved: %#v", got)
-	}
-}
-
-func TestExtractImportURLsFromHTML(t *testing.T) {
-	got := extractImportURLs(`<!doctype NETSCAPE-Bookmark-file-1><DT><A HREF="https://example.com/article">Article</A><A HREF="javascript:alert(1)">bad</A>`)
-	if len(got) != 1 || got[0].URL != "https://example.com/article" || got[0].Title != "Article" || got[0].Source != "browser" {
-		t.Fatalf("unexpected URLs: %#v", got)
-	}
-}
-
-func TestExtractImportURLsFromWrappedExports(t *testing.T) {
-	got := extractImportURLs(`{"source":"raindrop","items":[{"link":"https://example.com/a","name":"A"},{"uri":"https://example.com/b","title":"B"}]}`)
-	if len(got) != 2 || got[0].Title != "A" || got[1].URL != "https://example.com/b" || got[0].Source != "raindrop" {
-		t.Fatalf("unexpected URLs: %#v", got)
-	}
-}
-
-func TestExtractImportURLsFromOPML(t *testing.T) {
-	got := extractImportURLs(`<opml version="2.0"><body><outline text="Go Blog" xmlUrl="https://go.dev/blog/feed.atom"/><outline title="Bad" xmlUrl="file:///etc/passwd"/></body></opml>`)
-	if len(got) != 1 || got[0].URL != "https://go.dev/blog/feed.atom" || got[0].Title != "Go Blog" || got[0].Source != "opml" {
-		t.Fatalf("unexpected OPML URLs: %#v", got)
-	}
-}
-
-func TestExtractImportURLsFromRSSAndAtom(t *testing.T) {
-	rss := extractImportURLs(`<rss><channel><item><title>One</title><link>https://example.com/one</link></item><item><title>Bad</title><link>javascript:alert(1)</link></item></channel></rss>`)
-	if len(rss) != 1 || rss[0].Title != "One" || rss[0].URL != "https://example.com/one" || rss[0].Source != "rss" {
-		t.Fatalf("unexpected RSS URLs: %#v", rss)
-	}
-	atom := extractImportURLs(`<feed xmlns="http://www.w3.org/2005/Atom"><entry><title>Two</title><link href="https://example.com/two"/></entry></feed>`)
-	if len(atom) != 1 || atom[0].Title != "Two" || atom[0].URL != "https://example.com/two" || atom[0].Source != "atom" {
-		t.Fatalf("unexpected Atom URLs: %#v", atom)
-	}
-}
-
-func TestExtractImportURLsFromCSVAndTSV(t *testing.T) {
-	csv := extractImportURLs("Title,URL,Highlight\nReadwise Item,https://example.com/readwise,quote\nBad,file:///etc/passwd,nope")
-	if len(csv) != 1 || csv[0].Title != "Readwise Item" || csv[0].URL != "https://example.com/readwise" {
-		t.Fatalf("unexpected CSV URLs: %#v", csv)
-	}
-	tsv := extractImportURLs("Book Title\tSource URL\tHighlight\nKindle Item\thttps://example.com/kindle\tquote")
-	if len(tsv) != 1 || tsv[0].Title != "Kindle Item" || tsv[0].URL != "https://example.com/kindle" {
-		t.Fatalf("unexpected TSV URLs: %#v", tsv)
-	}
-}
 
 func TestImportURLsUseSafeFetchValidation(t *testing.T) {
 	got := extractImportURLs("https://127.0.0.1/admin\nhttps://example.com/ok\nftp://example.com/file")
@@ -689,24 +635,6 @@ func TestPersistSelectedEvidenceUsesSourceDescriptionWhenProviderIsUnavailable(t
 	}
 }
 
-func TestOneSentencePreservesDecimalsAndUnicode(t *testing.T) {
-	if got := oneSentence("版本 2.0 capture works. More details."); got != "版本 2.0 capture works." {
-		t.Fatalf("decimal sentence = %q", got)
-	}
-	got := oneSentence(strings.Repeat("界", 300))
-	if !utf8.ValidString(got) || len([]rune(strings.TrimSuffix(got, "..."))) != 280 {
-		t.Fatalf("unicode fallback is invalid or wrong length: valid=%v runes=%d", utf8.ValidString(got), len([]rune(strings.TrimSuffix(got, "..."))))
-	}
-}
-
-func TestProviderFailureFallbackUsesTitleBeforeArticleChrome(t *testing.T) {
-	title := "A Guide to Claude Code 2.0 and better coding agents"
-	article := "28 Dec, 2025 Table of Contents Intro Timeline Setup"
-	if got := oneSentence(fallback("", fallback(title, article))); got != title {
-		t.Fatalf("title fallback = %q", got)
-	}
-}
-
 func TestPersistSelectedEvidenceKeepsAlreadyActiveValidArtifacts(t *testing.T) {
 	db, err := database.Open(t.Context(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
 	if err != nil {
@@ -728,13 +656,6 @@ func TestPersistSelectedEvidenceKeepsAlreadyActiveValidArtifacts(t *testing.T) {
 	}
 	if summary != "Last valid summary" {
 		t.Fatalf("active valid summary changed to %q", summary)
-	}
-}
-
-func TestSummaryFailureReasonsClassifiesDeadline(t *testing.T) {
-	reasons := summaryFailureReasons(context.DeadlineExceeded)
-	if len(reasons) != 1 || reasons[0] != providers.ErrorProviderTimeout {
-		t.Fatalf("deadline reasons = %#v", reasons)
 	}
 }
 

@@ -1174,14 +1174,7 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		return nil, err
 	}
 	rows.Close()
-	for _, bookmark := range bookmarks {
-		id, _ := bookmark["id"].(string)
-		bookmark["ai_summary"] = s.summary(ctx, userID, id)
-		bookmark["tags"] = s.bookmarkTags(ctx, userID, id)
-		bookmark["annotations"] = s.bookmarkAnnotations(ctx, userID, id)
-		bookmark["notes"] = s.bookmarkNotes(ctx, userID, id)
-		bookmark["evidence"] = s.exportBookmarkEvidence(ctx, userID, id)
-	}
+	s.exportBookmarkDetails(ctx, userID, bookmarks)
 	return map[string]any{
 		"version":             2,
 		"exported_at":         time.Now().UTC().Format(time.RFC3339),
@@ -1206,33 +1199,23 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 }
 
 func (s *Service) exportCollections(ctx context.Context, userID string) []map[string]any {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,name,description,color,parent_id,sibling_order,created_at,updated_at FROM collections WHERE user_id=? ORDER BY COALESCE(parent_id,''),sibling_order,name`, userID)
+	rows, err := s.db.QueryContext(ctx, `SELECT c.id,c.name,c.description,c.color,c.parent_id,c.sibling_order,c.created_at,c.updated_at,COALESCE((SELECT json_group_array(bookmark_id) FROM (SELECT bookmark_id FROM collection_bookmarks WHERE collection_id=c.id AND user_id=c.user_id ORDER BY added_at)),'[]') FROM collections c WHERE c.user_id=? ORDER BY COALESCE(c.parent_id,''),c.sibling_order,c.name`, userID)
 	if err != nil {
 		return []map[string]any{}
 	}
 	result := []map[string]any{}
 	for rows.Next() {
 		var id, name, description, color, created, updated string
+		var membershipsJSON string
 		var parent sql.NullString
 		var order int
-		if rows.Scan(&id, &name, &description, &color, &parent, &order, &created, &updated) == nil {
-			result = append(result, map[string]any{"id": id, "name": name, "description": description, "color": color, "parent_id": nullString(parent), "sibling_order": order, "bookmark_ids": []string{}, "created_at": created, "updated_at": updated})
+		if rows.Scan(&id, &name, &description, &color, &parent, &order, &created, &updated, &membershipsJSON) == nil {
+			memberships := []string{}
+			_ = json.Unmarshal([]byte(membershipsJSON), &memberships)
+			result = append(result, map[string]any{"id": id, "name": name, "description": description, "color": color, "parent_id": nullString(parent), "sibling_order": order, "bookmark_ids": memberships, "created_at": created, "updated_at": updated})
 		}
 	}
 	rows.Close()
-	for _, collection := range result {
-		memberships := []string{}
-		members, _ := s.db.QueryContext(ctx, `SELECT bookmark_id FROM collection_bookmarks WHERE collection_id=? AND user_id=? ORDER BY added_at`, collection["id"], userID)
-		if members != nil {
-			for members.Next() {
-				var bookmark string
-				_ = members.Scan(&bookmark)
-				memberships = append(memberships, bookmark)
-			}
-			members.Close()
-		}
-		collection["bookmark_ids"] = memberships
-	}
 	return result
 }
 
@@ -1279,24 +1262,97 @@ func (s *Service) restoreCollections(ctx context.Context, userID string, raw any
 	}
 }
 
-func (s *Service) exportBookmarkEvidence(ctx context.Context, userID, bookmarkID string) []map[string]any {
-	evidence, err := s.Evidence(ctx, userID, bookmarkID)
-	if err != nil {
-		return []map[string]any{}
+func (s *Service) exportBookmarkDetails(ctx context.Context, userID string, bookmarks []map[string]any) {
+	byID := make(map[string]map[string]any, len(bookmarks))
+	for _, bookmark := range bookmarks {
+		byID[stringValue(bookmark["id"])] = bookmark
+		bookmark["ai_summary"] = map[string]any{"processing_status": "pending"}
+		for _, field := range []string{"tags", "annotations", "notes"} {
+			bookmark[field] = []map[string]any(nil)
+		}
+		bookmark["evidence"] = []map[string]any{}
 	}
-	result := make([]map[string]any, 0, len(evidence))
-	for _, item := range evidence {
-		result = append(result, map[string]any{
-			"id": item.ID, "kind": item.Kind, "origin": item.Origin, "authority": item.Authority,
-			"text": item.Text, "sanitized_html": portableReaderHTML(item.SanitizedHTML), "canonical_url": item.CanonicalURL,
-			"author_id": item.AuthorID, "publisher_key": item.PublisherKey, "published_at": nullableExportString(item.PublishedAt),
-			"extraction_method": item.ExtractionMethod, "content_hash": item.ContentHash,
-			"quality_status": item.QualityStatus, "quality_score": item.QualityScore, "quality_reasons": item.QualityReasons,
-			"extractor_version": item.ExtractorVersion, "selected": item.Selected,
-			"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
-		})
+	// Share row decoders with detail views, but fetch each relation once per
+	// export. Keep the existing per-bookmark limits and null/empty distinctions.
+	for _, relation := range []struct {
+		field, query string
+		limit        int
+		read         func(*sql.Rows) (string, map[string]any)
+	}{
+		{"ai_summary", `SELECT one_sentence,bullet_points_json,long_form,highlights_json,suggested_tags_json,processing_status,provider,model,prompt_version,validator_version,evidence_hash,validation_status,validation_reasons_json,highlight_spans_json,generated_at,bookmark_id FROM ai_summaries WHERE user_id=?`, 0, func(rows *sql.Rows) (string, map[string]any) {
+			var id string
+			item := scanSummary(rows, &id)
+			return id, item
+		}},
+		{"tags", `SELECT t.id,t.name,t.slug,bt.source,bt.created_at,bt.bookmark_id FROM tags t JOIN bookmark_tags bt ON bt.tag_id=t.id AND bt.user_id=t.user_id WHERE bt.user_id=? ORDER BY bt.bookmark_id,t.name COLLATE NOCASE`, 0, func(rows *sql.Rows) (string, map[string]any) {
+			var id string
+			item := scanBookmarkTag(rows, &id)
+			return id, item
+		}},
+		{"annotations", annotationSelect + ` WHERE a.user_id=? ORDER BY a.bookmark_id,a.created_at DESC`, 100, func(rows *sql.Rows) (string, map[string]any) {
+			item, _ := scanAnnotation(rows)
+			return stringValue(item["bookmark_id"]), item
+		}},
+		{"notes", `SELECT n.id,n.title,n.body,n.source,n.created_at,n.updated_at,bn.bookmark_id FROM notes n JOIN bookmark_notes bn ON bn.note_id=n.id AND bn.user_id=n.user_id WHERE bn.user_id=? ORDER BY bn.bookmark_id,n.updated_at DESC`, 100, func(rows *sql.Rows) (string, map[string]any) {
+			item := scanNote(rows)
+			return stringValue(item["bookmark_id"]), item
+		}},
+		{"evidence", `SELECT id,bookmark_id,evidence_kind,evidence_origin,authority,content_text,sanitized_html,canonical_url,author_id,publisher_key,COALESCE(published_at,''),extraction_method,content_hash,quality_status,quality_score,quality_reasons_json,extractor_version,is_selected,created_at,updated_at FROM bookmark_evidence WHERE user_id=? ORDER BY bookmark_id,is_selected DESC,authority DESC,created_at ASC,id ASC`, 0, func(rows *sql.Rows) (string, map[string]any) {
+			item, err := scanEvidence(rows)
+			if err != nil {
+				return item.BookmarkID, nil
+			}
+			return item.BookmarkID, map[string]any{
+				"id": item.ID, "kind": item.Kind, "origin": item.Origin, "authority": item.Authority,
+				"text": item.Text, "sanitized_html": portableReaderHTML(item.SanitizedHTML), "canonical_url": item.CanonicalURL,
+				"author_id": item.AuthorID, "publisher_key": item.PublisherKey, "published_at": nullableExportString(item.PublishedAt),
+				"extraction_method": item.ExtractionMethod, "content_hash": item.ContentHash,
+				"quality_status": item.QualityStatus, "quality_score": item.QualityScore, "quality_reasons": item.QualityReasons,
+				"extractor_version": item.ExtractorVersion, "selected": item.Selected,
+				"created_at": item.CreatedAt, "updated_at": item.UpdatedAt,
+			}
+		}},
+	} {
+		rows, err := s.db.QueryContext(ctx, relation.query, userID)
+		if err != nil {
+			if relation.field != "ai_summary" {
+				for _, bookmark := range bookmarks {
+					bookmark[relation.field] = []map[string]any{}
+				}
+			}
+			continue
+		}
+		invalidEvidence := map[string]bool{}
+		for rows.Next() {
+			id, item := relation.read(rows)
+			bookmark := byID[id]
+			if bookmark == nil || invalidEvidence[id] {
+				continue
+			}
+			if item == nil {
+				if relation.field == "evidence" {
+					// Evidence reads are all-or-nothing for each bookmark.
+					bookmark[relation.field] = []map[string]any{}
+					invalidEvidence[id] = true
+				}
+				continue
+			}
+			if relation.field == "ai_summary" {
+				bookmark[relation.field] = item
+				continue
+			}
+			items := bookmark[relation.field].([]map[string]any)
+			if relation.limit == 0 || len(items) < relation.limit {
+				bookmark[relation.field] = append(items, item)
+			}
+		}
+		if rows.Err() != nil && relation.field == "evidence" {
+			for _, bookmark := range bookmarks {
+				bookmark[relation.field] = []map[string]any{}
+			}
+		}
+		rows.Close()
 	}
-	return result
 }
 
 func nullableExportString(value string) any {

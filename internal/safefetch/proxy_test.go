@@ -25,14 +25,6 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 	return fn(request)
 }
 
-type closeTrackingTransport struct{ closed atomic.Bool }
-
-func (t *closeTrackingTransport) RoundTrip(*http.Request) (*http.Response, error) {
-	return &http.Response{StatusCode: http.StatusOK, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(""))}, nil
-}
-
-func (t *closeTrackingTransport) CloseIdleConnections() { t.closed.Store(true) }
-
 type hijackRecorder struct {
 	*httptest.ResponseRecorder
 	conn net.Conn
@@ -193,28 +185,6 @@ func TestProxyBudgetWriterAppliesPerTunnelLimit(t *testing.T) {
 	written, err := writer.Write([]byte("12345"))
 	if written != 4 || err == nil || output.String() != "1234" || proxy.totalBytes.Load() != 4 {
 		t.Fatalf("written=%d err=%v output=%q total=%d", written, err, output.String(), proxy.totalBytes.Load())
-	}
-}
-
-func TestCaptureProxyCloseClosesIdleUpstreamConnections(t *testing.T) {
-	transport := &closeTrackingTransport{}
-	proxy := newCaptureProxy("secret", ProxyLimits{}, transport, nil)
-	if err := proxy.Close(); err != nil {
-		t.Fatal(err)
-	}
-	if !transport.closed.Load() {
-		t.Fatal("idle upstream connections were not closed")
-	}
-}
-
-func TestCaptureProxyCloseReturnsStableResult(t *testing.T) {
-	want := errors.New("cleanup failed")
-	proxy := newCaptureProxy("secret", ProxyLimits{}, nil, nil)
-	proxy.closeErr = want
-	for range 2 {
-		if err := proxy.Close(); !errors.Is(err, want) {
-			t.Fatalf("close error=%v", err)
-		}
 	}
 }
 

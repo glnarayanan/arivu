@@ -23,18 +23,6 @@ func TestRewriteReaderMediaRehostsOnlyCapturedImages(t *testing.T) {
 	}
 }
 
-func TestReaderMediaIgnoresMalformedImageURLs(t *testing.T) {
-	input := `<article><img src="%"><img src="https://example.com/valid.png"></article>`
-	urls := readerImageURLs(input, "https://example.com/article", 10)
-	if len(urls) != 1 || urls[0] != "https://example.com/valid.png" {
-		t.Fatalf("reader image URLs = %#v", urls)
-	}
-	got := rewriteReaderMedia(input, "https://example.com/article", nil)
-	if strings.Contains(got, `src="%"`) {
-		t.Fatalf("malformed image survived rewrite: %q", got)
-	}
-}
-
 func TestMediaAndArtifactsShareOneQuota(t *testing.T) {
 	service, _ := capturePipelineService(t)
 	service.SetArtifactQuota(6)

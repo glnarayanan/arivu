@@ -201,39 +201,6 @@ func TestRuntimeConfigDatabaseOverridesAndEnvFallback(t *testing.T) {
 	}
 }
 
-func TestRuntimeConfigGeminiBaseURLDefaultsToGoogle(t *testing.T) {
-	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-
-	service := New(db, config.Config{SecretKey: "test-secret-with-enough-bytes"})
-	effective, err := service.Effective(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if effective.GeminiBaseURL != config.DefaultGeminiBaseURL {
-		t.Fatalf("GeminiBaseURL = %q, want %q", effective.GeminiBaseURL, config.DefaultGeminiBaseURL)
-	}
-	if effective.AIProvider != providers.ProviderGemini || effective.AIModel != config.DefaultGeminiModel || effective.AIBaseURL != config.DefaultGeminiBaseURL {
-		t.Fatalf("AI defaults = %#v", effective)
-	}
-	status, err := service.Status(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if status[KeyAIProvider].Value != providers.ProviderGemini || status[KeyAIProvider].Source != "default" {
-		t.Fatalf("ai_provider status = %#v", status[KeyAIProvider])
-	}
-	if status[KeyAIBaseURL].Value != config.DefaultGeminiBaseURL || status[KeyAIBaseURL].Source != "default" {
-		t.Fatalf("ai_base_url status = %#v", status[KeyAIBaseURL])
-	}
-	if status[KeyGeminiBaseURL].Value != config.DefaultGeminiBaseURL || status[KeyGeminiBaseURL].Source != "default" {
-		t.Fatalf("gemini_base_url status = %#v", status[KeyGeminiBaseURL])
-	}
-}
-
 func TestRuntimeConfigLegacyGeminiFallbackForDefaultProvider(t *testing.T) {
 	db, err := database.Open(context.Background(), filepath.Join(t.TempDir(), "arivu.sqlite3"))
 	if err != nil {

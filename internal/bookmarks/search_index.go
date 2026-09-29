@@ -53,86 +53,58 @@ func (s *Service) rebuildSearchIndex(ctx context.Context, userID string) (int, e
 
 func (s *Service) rebuildSearchIndexLocked(ctx context.Context, userID string) (int, error) {
 	// Build the replacement before touching the currently searchable projection.
-	rows, err := s.db.QueryContext(ctx, `SELECT id,url,COALESCE(title,''),COALESCE(description,''),COALESCE(domain,''),COALESCE(text_content,''),COALESCE(source,''),updated_at FROM bookmarks WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	// Ordered subqueries retain the same per-item limits and text order without
+	// issuing five additional database round trips for each bookmark.
+	rows, err := s.db.QueryContext(ctx, `WITH note_text AS MATERIALIZED (
+		SELECT bookmark_id,group_concat(value,' ' ORDER BY rank) body FROM (
+			SELECT bn.bookmark_id,n.title||' '||n.body||' '||n.source value,
+				row_number() OVER (PARTITION BY bn.bookmark_id ORDER BY n.updated_at DESC) rank
+			FROM bookmark_notes bn JOIN notes n ON bn.note_id=n.id AND bn.user_id=n.user_id WHERE bn.user_id=?1
+		) WHERE rank<=100 GROUP BY bookmark_id
+	), link_values AS MATERIALIZED (
+		SELECT from_type,from_id,to_type,to_id,created_at,
+			from_type||' '||from_id||' '||to_type||' '||to_id||' '||label||' '||source||' '||
+			CASE from_type WHEN 'bookmark' THEN COALESCE((SELECT NULLIF(title,'') FROM bookmarks WHERE id=from_id AND user_id=item_links.user_id),(SELECT url FROM bookmarks WHERE id=from_id AND user_id=item_links.user_id),'') WHEN 'note' THEN COALESCE((SELECT NULLIF(title,'') FROM notes WHERE id=from_id AND user_id=item_links.user_id),'Untitled note') ELSE '' END||' '||
+			CASE to_type WHEN 'bookmark' THEN COALESCE((SELECT NULLIF(title,'') FROM bookmarks WHERE id=to_id AND user_id=item_links.user_id),(SELECT url FROM bookmarks WHERE id=to_id AND user_id=item_links.user_id),'') WHEN 'note' THEN COALESCE((SELECT NULLIF(title,'') FROM notes WHERE id=to_id AND user_id=item_links.user_id),'Untitled note') ELSE '' END value
+		FROM item_links WHERE user_id=?1
+	), link_text AS MATERIALIZED (
+		SELECT item_type,item_id,group_concat(value,' ' ORDER BY rank) body FROM (
+			SELECT *,row_number() OVER (PARTITION BY item_type,item_id ORDER BY created_at DESC) rank FROM (
+				SELECT from_type item_type,from_id item_id,created_at,value FROM link_values
+				UNION ALL SELECT to_type,to_id,created_at,value FROM link_values WHERE from_type<>to_type OR from_id<>to_id
+			)
+		) WHERE rank<=200 GROUP BY item_type,item_id
+	), items AS (
+		SELECT 'bookmark' item_type,b.id,COALESCE(b.title,'') title,
+			b.url||' '||COALESCE(b.domain,'')||' '||COALESCE(b.description,'')||' '||COALESCE(b.text_content,'')||' '||
+			COALESCE((SELECT COALESCE(one_sentence,'')||' '||COALESCE(bullet_points_json,'')||' '||COALESCE(long_form,'')||' '||COALESCE(highlights_json,'')||' '||COALESCE(suggested_tags_json,'') FROM ai_summaries WHERE user_id=?1 AND bookmark_id=b.id),'')||' '||
+			COALESCE((SELECT group_concat(value,' ') FROM (SELECT quote||' '||note||' '||selector_json||' '||tags_json value FROM annotations WHERE user_id=?1 AND bookmark_id=b.id ORDER BY created_at DESC LIMIT 100)),'')||' '||
+			COALESCE(nt.body,'') body,
+			COALESCE((SELECT group_concat(name,' ') FROM (SELECT t.name FROM tags t JOIN bookmark_tags bt ON bt.tag_id=t.id AND bt.user_id=t.user_id WHERE bt.user_id=?1 AND bt.bookmark_id=b.id ORDER BY t.name COLLATE NOCASE)),'') tags,
+			COALESCE(b.source,'') source,b.updated_at
+		FROM bookmarks b LEFT JOIN note_text nt ON nt.bookmark_id=b.id WHERE b.user_id=?1
+		UNION ALL SELECT 'note',id,COALESCE(title,''),COALESCE(body,''),'',COALESCE(source,''),updated_at FROM notes WHERE user_id=?1
+	)
+	SELECT i.item_type,i.id,i.title,i.body,i.tags,COALESCE(lt.body,''),i.source,i.updated_at
+	FROM items i LEFT JOIN link_text lt ON lt.item_type=i.item_type AND lt.item_id=i.id ORDER BY i.item_type,i.updated_at DESC`, userID)
 	if err != nil {
 		return 0, err
 	}
-	var bookmarks []map[string]string
+	type projectionRow struct{ itemType, itemID, title, body, tags, links, source, updated string }
+	var projection []projectionRow
 	for rows.Next() {
-		var id, rawURL, title, description, domain, text, source, updated string
-		if err := rows.Scan(&id, &rawURL, &title, &description, &domain, &text, &source, &updated); err != nil {
+		var row projectionRow
+		if err := rows.Scan(&row.itemType, &row.itemID, &row.title, &row.body, &row.tags, &row.links, &row.source, &row.updated); err != nil {
 			rows.Close()
 			return 0, err
 		}
-		bookmarks = append(bookmarks, map[string]string{"id": id, "url": rawURL, "title": title, "description": description, "domain": domain, "text": text, "source": source, "updated": updated})
+		projection = append(projection, row)
 	}
 	if err := rows.Err(); err != nil {
 		rows.Close()
 		return 0, err
 	}
 	rows.Close()
-	type projectionRow struct{ itemType, itemID, title, body, tags, links, source, updated string }
-	var projection []projectionRow
-	count := 0
-	for _, bookmark := range bookmarks {
-		tags, err := s.searchBookmarkTags(ctx, userID, bookmark["id"])
-		if err != nil {
-			return 0, err
-		}
-		summary, err := s.searchBookmarkSummary(ctx, userID, bookmark["id"])
-		if err != nil {
-			return 0, err
-		}
-		annotations, err := s.searchBookmarkAnnotations(ctx, userID, bookmark["id"])
-		if err != nil {
-			return 0, err
-		}
-		notes, err := s.searchBookmarkNotes(ctx, userID, bookmark["id"])
-		if err != nil {
-			return 0, err
-		}
-		body := strings.Join([]string{
-			bookmark["url"],
-			bookmark["domain"],
-			bookmark["description"],
-			bookmark["text"],
-			summary,
-			annotations,
-			notes,
-		}, " ")
-		links, err := s.searchItemLinks(ctx, userID, "bookmark", bookmark["id"])
-		if err != nil {
-			return 0, err
-		}
-		projection = append(projection, projectionRow{"bookmark", bookmark["id"], bookmark["title"], body, tags, links, bookmark["source"], bookmark["updated"]})
-		count++
-	}
-	noteRows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(title,''),COALESCE(body,''),COALESCE(source,''),updated_at FROM notes WHERE user_id=? ORDER BY updated_at DESC`, userID)
-	if err != nil {
-		return 0, err
-	}
-	var notes []map[string]string
-	for noteRows.Next() {
-		var id, title, body, source, updated string
-		if err := noteRows.Scan(&id, &title, &body, &source, &updated); err != nil {
-			noteRows.Close()
-			return 0, err
-		}
-		notes = append(notes, map[string]string{"id": id, "title": title, "body": body, "source": source, "updated": updated})
-	}
-	if err := noteRows.Err(); err != nil {
-		noteRows.Close()
-		return 0, err
-	}
-	noteRows.Close()
-	for _, note := range notes {
-		links, err := s.searchItemLinks(ctx, userID, "note", note["id"])
-		if err != nil {
-			return 0, err
-		}
-		projection = append(projection, projectionRow{"note", note["id"], note["title"], note["body"], "", links, note["source"], note["updated"]})
-		count++
-	}
 	var ftsTableCount int
 	if err = s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='search_fts'`).Scan(&ftsTableCount); err != nil {
 		return 0, err
@@ -151,12 +123,18 @@ func (s *Service) rebuildSearchIndexLocked(ctx context.Context, userID string) (
 			return 0, err
 		}
 	}
-	for _, row := range projection {
-		if _, err = tx.ExecContext(ctx, `INSERT INTO search_index(user_id,item_type,item_id,title,body,tags,links,source,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, userID, row.itemType, row.itemID, row.title, row.body, row.tags, row.links, row.source, row.updated); err != nil {
+	tables := []string{"search_index"}
+	if ftsEnabled {
+		tables = append(tables, "search_fts")
+	}
+	for _, table := range tables {
+		stmt, err := tx.PrepareContext(ctx, `INSERT INTO `+table+`(user_id,item_type,item_id,title,body,tags,links,source,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`)
+		if err != nil {
 			return 0, err
 		}
-		if ftsEnabled {
-			if _, err = tx.ExecContext(ctx, `INSERT INTO search_fts(user_id,item_type,item_id,title,body,tags,links,source,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, userID, row.itemType, row.itemID, row.title, row.body, row.tags, row.links, row.source, row.updated); err != nil {
+		defer stmt.Close()
+		for _, row := range projection {
+			if _, err := stmt.ExecContext(ctx, userID, row.itemType, row.itemID, row.title, row.body, row.tags, row.links, row.source, row.updated); err != nil {
 				return 0, err
 			}
 		}
@@ -164,72 +142,7 @@ func (s *Service) rebuildSearchIndexLocked(ctx context.Context, userID string) (
 	if err = tx.Commit(); err != nil {
 		return 0, err
 	}
-	return count, nil
-}
-
-func (s *Service) searchBookmarkTags(ctx context.Context, userID, bookmarkID string) (string, error) {
-	return querySearchStrings(ctx, s.db, `SELECT t.name FROM tags t JOIN bookmark_tags bt ON bt.tag_id=t.id AND bt.user_id=t.user_id WHERE bt.user_id=? AND bt.bookmark_id=? ORDER BY t.name COLLATE NOCASE`, userID, bookmarkID)
-}
-
-func (s *Service) searchBookmarkSummary(ctx context.Context, userID, bookmarkID string) (string, error) {
-	var one, bullets, long, highlights, tags string
-	err := s.db.QueryRowContext(ctx, `SELECT COALESCE(one_sentence,''),COALESCE(bullet_points_json,''),COALESCE(long_form,''),COALESCE(highlights_json,''),COALESCE(suggested_tags_json,'') FROM ai_summaries WHERE bookmark_id=? AND user_id=?`, bookmarkID, userID).Scan(&one, &bullets, &long, &highlights, &tags)
-	if err == sql.ErrNoRows {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	return strings.Join([]string{one, bullets, long, highlights, tags}, " "), nil
-}
-
-func (s *Service) searchBookmarkAnnotations(ctx context.Context, userID, bookmarkID string) (string, error) {
-	return querySearchStrings(ctx, s.db, `SELECT quote || ' ' || note || ' ' || selector_json || ' ' || tags_json FROM annotations WHERE user_id=? AND bookmark_id=? ORDER BY created_at DESC LIMIT 100`, userID, bookmarkID)
-}
-
-func (s *Service) searchBookmarkNotes(ctx context.Context, userID, bookmarkID string) (string, error) {
-	return querySearchStrings(ctx, s.db, `SELECT n.title || ' ' || n.body || ' ' || n.source FROM notes n JOIN bookmark_notes bn ON bn.note_id=n.id AND bn.user_id=n.user_id WHERE bn.user_id=? AND bn.bookmark_id=? ORDER BY n.updated_at DESC LIMIT 100`, userID, bookmarkID)
-}
-
-func (s *Service) searchItemLinks(ctx context.Context, userID, itemType, itemID string) (string, error) {
-	return querySearchStrings(ctx, s.db, `SELECT from_type || ' ' || from_id || ' ' || to_type || ' ' || to_id || ' ' || label || ' ' || source || ' ' ||
-		CASE from_type WHEN 'bookmark' THEN COALESCE((SELECT NULLIF(title,'') FROM bookmarks WHERE id=from_id AND user_id=item_links.user_id),(SELECT url FROM bookmarks WHERE id=from_id AND user_id=item_links.user_id),'') WHEN 'note' THEN COALESCE((SELECT NULLIF(title,'') FROM notes WHERE id=from_id AND user_id=item_links.user_id),'Untitled note') ELSE '' END || ' ' ||
-		CASE to_type WHEN 'bookmark' THEN COALESCE((SELECT NULLIF(title,'') FROM bookmarks WHERE id=to_id AND user_id=item_links.user_id),(SELECT url FROM bookmarks WHERE id=to_id AND user_id=item_links.user_id),'') WHEN 'note' THEN COALESCE((SELECT NULLIF(title,'') FROM notes WHERE id=to_id AND user_id=item_links.user_id),'Untitled note') ELSE '' END
-		FROM item_links WHERE user_id=? AND ((from_type=? AND from_id=?) OR (to_type=? AND to_id=?)) ORDER BY created_at DESC LIMIT 200`, userID, itemType, itemID, itemType, itemID)
-}
-
-type searchStringQuerier interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}
-
-func querySearchStrings(ctx context.Context, db searchStringQuerier, query string, args ...any) (string, error) {
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return "", err
-	}
-	defer rows.Close()
-	var values []string
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			return "", err
-		}
-		values = append(values, value)
-	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	return strings.Join(values, " "), nil
-}
-
-func (s *Service) insertSearchRow(ctx context.Context, ftsEnabled bool, userID, itemType, itemID, title, body, tags, links, source, updated string) error {
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO search_index(user_id,item_type,item_id,title,body,tags,links,source,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, userID, itemType, itemID, title, body, tags, links, source, updated); err != nil {
-		return err
-	}
-	if ftsEnabled {
-		_, _ = s.db.ExecContext(ctx, `INSERT INTO search_fts(user_id,item_type,item_id,title,body,tags,links,source,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, userID, itemType, itemID, title, body, tags, links, source, updated)
-	}
-	return nil
+	return len(projection), nil
 }
 
 func (s *Service) searchIndex(ctx context.Context, userID, query string, values url.Values, limit int) ([]map[string]any, string, error) {
@@ -385,48 +298,6 @@ func feedbackSearchWeight(feedback string) float64 {
 	default:
 		return 0
 	}
-}
-
-func searchMapText(item map[string]any) string {
-	var parts []string
-	for _, value := range item {
-		parts = appendSearchValue(parts, value)
-	}
-	return strings.Join(parts, " ")
-}
-
-func searchMapListText(items []map[string]any) string {
-	var parts []string
-	for _, item := range items {
-		for _, value := range item {
-			parts = appendSearchValue(parts, value)
-		}
-	}
-	return strings.Join(parts, " ")
-}
-
-func appendSearchValue(parts []string, value any) []string {
-	switch typed := value.(type) {
-	case string:
-		return append(parts, typed)
-	case []any:
-		for _, item := range typed {
-			parts = appendSearchValue(parts, item)
-		}
-	case []string:
-		parts = append(parts, strings.Join(typed, " "))
-	}
-	return parts
-}
-
-func searchLinksText(links map[string]any) string {
-	var parts []string
-	for _, side := range []string{"outgoing", "incoming"} {
-		if items, ok := links[side].([]map[string]any); ok {
-			parts = append(parts, searchMapListText(items))
-		}
-	}
-	return strings.Join(parts, " ")
 }
 
 func ftsQuery(query string) string {

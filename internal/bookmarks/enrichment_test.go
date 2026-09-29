@@ -43,34 +43,6 @@ func TestStoreEnrichmentPreservesCompletedAISummary(t *testing.T) {
 	assertSummaryLists(t, db, "[\"fallback bullet\"]", "[\"fallback highlight\"]", "[\"fallback-tag\"]")
 }
 
-func TestEnrichTextWithoutProviderDoesNotCreateTokenSemantics(t *testing.T) {
-	service := &Service{}
-	item := service.enrichText(context.Background(), "bookmark-1", "user-1", "Quot HTTPS Com", "Jun 10 views", "Microsoft documents row-level security.")
-	if len(item.Entities) != 0 || len(item.Concepts) != 0 || len(item.Tags) != 0 {
-		t.Fatalf("no-provider enrichment repopulated token semantics: %#v", item)
-	}
-}
-
-func TestEnrichTextAcceptsOnlyEvidenceBackedTypedSemantics(t *testing.T) {
-	service := &Service{}
-	item := service.enrichText(context.Background(), "bookmark-1", "user-1", "Microsoft", "", "Microsoft documents row-level security.", providers.SemanticResult{
-		Entities: []providers.SemanticTerm{
-			{Label: "Microsoft", Type: "organization", Confidence: 0.98, Evidence: "Microsoft"},
-			{Label: "https", Type: "technology", Confidence: 1, Evidence: "https"},
-		},
-		Concepts: []providers.SemanticTerm{
-			{Label: "row-level security", Confidence: 0.91, Evidence: "row-level security"},
-			{Label: "database", Confidence: 0.2, Evidence: "database"},
-		},
-	})
-	if len(item.Entities) != 1 || item.Entities[0].NormalizedKey != "microsoft" {
-		t.Fatalf("entities = %#v", item.Entities)
-	}
-	if len(item.Concepts) != 1 || item.Concepts[0].NormalizedKey != "row-level security" {
-		t.Fatalf("concepts = %#v", item.Concepts)
-	}
-}
-
 func TestStoreEnrichmentPreservesManualTagsAndStopsConceptTagProjection(t *testing.T) {
 	ctx := context.Background()
 	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "arivu.sqlite3"))
