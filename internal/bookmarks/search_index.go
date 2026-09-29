@@ -16,6 +16,35 @@ import (
 
 const maxSearchResults = 50
 
+// IndexPreservedNotes repairs upgrade-created notes before serving requests.
+// A failed rebuild leaves the missing projection discoverable on the next boot.
+func (s *Service) IndexPreservedNotes(ctx context.Context) error {
+	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT p.user_id FROM knowledge_preservation p JOIN notes n ON n.id=p.note_id AND n.user_id=p.user_id WHERE NOT EXISTS(SELECT 1 FROM search_index i WHERE i.user_id=p.user_id AND i.item_type='note' AND i.item_id=p.note_id)`)
+	if err != nil {
+		return err
+	}
+	var owners []string
+	for rows.Next() {
+		var owner string
+		if err := rows.Scan(&owner); err != nil {
+			rows.Close()
+			return err
+		}
+		owners = append(owners, owner)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, owner := range owners {
+		if _, err := s.rebuildSearchIndex(ctx, owner); err != nil {
+			return fmt.Errorf("index preserved notes: %w", err)
+		}
+	}
+	return nil
+}
+
 func (s *Service) SearchItems(w http.ResponseWriter, r *http.Request, user auth.User) {
 	query := strings.TrimSpace(firstNonEmpty(r.URL.Query().Get("q"), r.URL.Query().Get("query")))
 	if len(query) < 2 || len(query) > maxSearchLen {
