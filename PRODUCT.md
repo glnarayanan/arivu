@@ -1,123 +1,47 @@
 # Arivu Product
 
-Arivu is a self-hosted second brain that turns captured material into connected
-knowledge and visible learning patterns. It is private by default, runs from a
-single Go binary with SQLite, and remains useful without an AI provider.
+Arivu is a self-hosted second brain for saved sources and personal notes. It runs
+from one Go binary with SQLite and remains useful without an AI provider.
 
-## Core Loop
+## Core loop
 
-**Capture -> Connect -> Discover -> Learn**
+Capture, understand, remember, and reuse.
 
-- **Capture:** save a link, note, quote, or file without choosing a folder,
-  taxonomy, or provider first.
-- **Connect:** add explicit links and backlinks; review locally derived concept,
-  entity, source, and similarity relationships.
-- **Discover:** search across saved material or explore a bounded knowledge
-  graph with provenance and confidence.
-- **Learn:** revisit useful material and act on deterministic, evidence-backed
-  patterns such as emerging themes, recurring connections, forgotten value,
-  knowledge gaps, and serendipitous connections.
+- Save links, notes, quotes, and files without choosing a folder or provider.
+- Read preserved sources, write notes, and follow explicit links and backlinks.
+- Search saved material and revisit useful items without a task queue.
+- Inspect derived connections in the secondary Graph view.
 
-Explicit user links are canonical. Derived relationships and insights are
-rebuildable. Feedback about those derivatives is durable and user-scoped.
-
-Source evidence is the captured or fetched material used to derive reader text,
-summaries, semantics, and insights. A summary may paraphrase that evidence; a
-highlight is an extractive source span. Entities are typed named things,
-concepts are supported ideas, and analytical insights require qualifying
-multi-item evidence. Forgotten-value and knowledge-gap cards are
-recommendations, not analytical confidence claims.
-
-## Primary Experience
-
-The authenticated interface has five primary destinations:
-
-- **Home** (`/today`) is a knowledge pulse: daily note, active work, new
-  material, useful memories, and contextual Focus, Review, and Board views.
-- **Library** (`/library`) browses bookmarks, notes, daily notes, annotations,
-  and knowledge objects by default. Generated entities and concepts remain
-  available in a separate Library view and in Graph, rather than competing with
-  saved material in the primary list. Library supports cursor pagination and
-  filters for type, topic, source, stage, date, and connection state.
-- **Notes** (`/notes`) is the primary writing workspace for standalone notes,
-  note details, tasks, reminders, and explicit connections to saved material.
-- **Graph** (`/graph`) renders a bounded, focusable map from typed graph nodes
-  and edges. It includes provenance, confidence, an inspector, and an
-  equivalent keyboard and screen-reader-friendly node list.
-- **Insights** (`/insights`) explains deterministic learning patterns, cites
-  owned evidence, exposes detector confidence and time windows, and accepts
-  Useful, Not useful, Snooze, and Dismiss feedback.
-
-Capture and Search / Ask are globally available. Search has the canonical route
-`/search`; cited answers continue to use only saved Arivu content.
-
-Existing deep links remain compatibility entry points and preserve query state:
-
-- `/dashboard` -> Library capture
-- `/knowledge-graph` -> Graph
-- `/analytics` -> Insights
-- `/inbox` -> filtered Library
-- `/focus`, `/review`, `/board` -> contextual Home views
-- `/assistant` -> Search / Ask action review
-- `/objects` -> knowledge objects in Library
-- `/evolution` -> the corresponding Insights context
-- `/duplicates` -> Library maintenance
-
-Bookmark and note detail URLs, settings, administration, imports, exports,
-extension routes, CLI routes, and agent routes remain stable.
-
-## Users And Progressive Depth
-
-Arivu serves individual self-hosters, readers, researchers, and operators,
-including multi-user private instances. Beginners can capture and retrieve
-without setup. Regular users can develop notes and explicit connections.
-Advanced users can focus the graph, inspect provenance, and investigate
-patterns. Tasks and reminders support knowledge work but do not define it.
-
-## Product Guarantees
-
-- Capture never requires AI, classification, tags, folders, or graph upkeep.
-- Local extraction, text search, explicit links, deterministic enrichment,
-  graph structure, and deterministic insights continue without a provider.
-- Optional providers may improve summaries, embeddings, explanations, and
-  synthesis; they must not invent unsupported evidence.
-- Short or incomplete evidence may produce a short summary or no generated
-  summary. Failed and metadata-only evidence never produces synthetic claims.
-- Source-native evidence outranks generic scraping and remains separate from
-  linked-article evidence. Capture, publication, processing, and update times
-  remain distinct.
-- Every query and derivative is scoped to the authenticated user.
-- Archived HTML is sanitized server-side and outbound fetching remains
-  SSRF-shielded.
-- Web, CLI, and extension sessions remain audience-isolated.
-- Existing data, backups, imports, exports, PWA share capture, offline capture,
-  browser extension behavior, CLI behavior, and administration remain intact.
-- The shipped frontend stays dependency-free and native-browser-first.
-
-## Current Knowledge Model
-
-The unified Library and Graph project existing durable content into nodes:
-bookmark, note, daily note, annotation, knowledge object, entity, and concept.
-Graph edges include explicit links, source relationships, shared concepts,
-shared entities, and semantic similarity when embeddings exist. Responses carry
-stable IDs, types, provenance, and confidence where relevant.
-
-`knowledge_feedback` stores user feedback for insight and relationship targets.
-Dismissed or snoozed derivatives are hidden from subsequent responses.
-Confirming a relationship creates a durable explicit link only when both
-endpoints are owned bookmark or note items and the submitted edge matches the
-server-owned relationship.
+Home, Library, Notes, and Search are the primary destinations. Review and Graph
+sit under More. Library separates saved content from derived entities and
+concepts. Capture remains available throughout the app.
 
 ## Boundaries
 
-Real-time collaboration, social publishing, a plugin marketplace, native mobile
-apps, and full project management are outside the current product. Arivu remains
-self-hosted, privacy-first, dependency-light, and centered on personal
-knowledge even on multi-user instances.
+Arivu is not a task manager or an autonomous agent. Board, Focus, recurring
+reminders, priority/stage/next-action controls, typed objects, calendar import,
+and the standalone Insights dashboard are retired. Existing writing and useful
+context become ordinary notes; exact legacy records remain in full backups.
+Authenticated legacy API calls return `410 Gone`, rather than accepting work
+that will never run. Queued reminder emails no longer send.
 
-The visual and interaction system is defined in `DESIGN.md`.
+See the [knowledge and learning plan](openwiki/plans/knowledge-learning.md) for
+the next source-grounded conversation and optional quiz slices. These are not
+yet shipped by the retirement slice.
 
-The Brightlight-derived presentation is a look-and-feel layer only. Arivu is
-light-only, and the visual overhaul does not change routes, navigation or menu
-options, information architecture, or product behavior. The Astro/Tailwind
-reference implementation and its assets are not part of the shipped product.
+## Guarantees
+
+- AI is optional. Reading, capture, notes, search, and links work without it.
+- A generated summary is not original source evidence. Unsupported claims must
+  not become source facts; incomplete captures may have no generated summary.
+- Queries, sources, notes, and derivatives belong to the signed-in user.
+- Server-side HTML sanitization, SSRF checks, CSRF, and separate web, CLI, and
+  extension session audiences remain in force.
+- Capture channels, offline capture queues, full export, and self-hosting stay.
+- Editing or deleting a converted note survives restart and repeat import.
+- Explicit links are durable. Derived connections can be rebuilt; their
+  provenance and user feedback remain inspectable.
+- The embedded frontend stays dependency-free, accessible, and light-only.
+
+The visual system lives in [DESIGN.md](DESIGN.md). The detailed retirement and
+backup contract lives in the [implementation plan](openwiki/plans/knowledge-learning.md).

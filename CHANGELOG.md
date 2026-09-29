@@ -4,10 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Focused navigation on Home, Library, Notes, and Search, with Review and Graph
+  under More. Retired planning controls, tasks, recurring reminders, typed
+  objects, calendar import, and the standalone Insights page. Useful legacy
+  content now becomes editable notes at startup and enters search immediately.
+  Full backups retain exact legacy records; repeat imports preserve note edits
+  and deletions, including mixed-format version-3 backups. Old workflow APIs
+  return authenticated `410 Gone`; queued reminder emails no longer send.
 - Added an atomic preservation foundation for the planned workflow retirement.
   It retains exact legacy records and can convert useful content into notes
-  without overwriting edits or recreating deleted notes. Conversion is not yet
-  automatic. Full JSON backups now use version 3, include preservation records,
+  without overwriting edits or recreating deleted notes.
+  Full JSON backups now use version 3, include preservation records,
   remap owned note references on restore, and reject unsupported future versions.
 - Restricted Graph relationship reads to selected endpoints without changing
   edge-family precedence, feedback filtering, or edge limits.

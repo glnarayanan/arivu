@@ -104,3 +104,142 @@ func TestPreservationRejectsForeignNotesAndFutureBackups(t *testing.T) {
 		t.Fatalf("unsupported backup wrote jobs=%d err=%v", count, err)
 	}
 }
+
+func TestLegacyRetirementImportsAreInertAndIdempotentPerOwner(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "preservation.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES
+		('one','one@example.test','One','now','now'),('two','two@example.test','Two','now','now'),('three','three@example.test','Three','now','now')`); err != nil {
+		t.Fatal(err)
+	}
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+
+	for i, owner := range []string{"one", "two", "three"} {
+		version := i + 1
+		backup := map[string]any{
+			"version":           version,
+			"bookmarks":         []any{},
+			"action_items":      []any{map[string]any{"id": "task", "title": "Legacy task", "status": "pending"}},
+			"reminders":         []any{map[string]any{"id": "reminder", "note": "Legacy reminder", "due_at": "2026-10-01T09:00:00Z", "status": "pending"}},
+			"assistant_actions": []any{map[string]any{"id": "proposal", "action_type": "create_reminder", "payload": map[string]any{"note": "never execute"}}},
+		}
+		raw, err := json.Marshal(backup)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, recognized, err := service.restoreFullExport(ctx, owner, raw); err != nil || !recognized {
+			t.Fatalf("v%d first import recognized=%v err=%v", version, recognized, err)
+		}
+
+		var taskNote, reminderNote string
+		if err := db.QueryRow(`SELECT note_id FROM knowledge_preservation WHERE user_id=? AND kind='action_items' AND legacy_id='task'`, owner).Scan(&taskNote); err != nil {
+			t.Fatalf("v%d task conversion: %v", version, err)
+		}
+		if err := db.QueryRow(`SELECT note_id FROM knowledge_preservation WHERE user_id=? AND kind='reminders' AND legacy_id='reminder'`, owner).Scan(&reminderNote); err != nil {
+			t.Fatalf("v%d reminder conversion: %v", version, err)
+		}
+		if _, err := db.Exec(`UPDATE notes SET body='owner edit' WHERE id=? AND user_id=?; DELETE FROM notes WHERE id=? AND user_id=?`, taskNote, owner, reminderNote, owner); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := service.restoreFullExport(ctx, owner, raw); err != nil {
+			t.Fatalf("v%d repeat import: %v", version, err)
+		}
+
+		var snapshots, notes, deleted, active int
+		if err := db.QueryRow(`SELECT count(*) FROM knowledge_preservation WHERE user_id=?`, owner).Scan(&snapshots); err != nil || snapshots != 3 {
+			t.Fatalf("v%d snapshots=%d err=%v", version, snapshots, err)
+		}
+		if err := db.QueryRow(`SELECT count(*) FROM notes WHERE user_id=? AND source='preserved'`, owner).Scan(&notes); err != nil || notes != 1 {
+			t.Fatalf("v%d preserved notes=%d err=%v", version, notes, err)
+		}
+		if err := db.QueryRow(`SELECT count(*) FROM notes WHERE id=?`, reminderNote).Scan(&deleted); err != nil || deleted != 0 {
+			t.Fatalf("v%d deleted converted note recreated=%d err=%v", version, deleted, err)
+		}
+		var edited string
+		if err := db.QueryRow(`SELECT body FROM notes WHERE id=? AND user_id=?`, taskNote, owner).Scan(&edited); err != nil || edited != "owner edit" {
+			t.Fatalf("v%d edited converted note=%q err=%v", version, edited, err)
+		}
+		if err := db.QueryRow(`SELECT (SELECT count(*) FROM reminders WHERE user_id=? AND status='pending') + (SELECT count(*) FROM jobs WHERE user_id=? AND status IN ('queued','leased'))`, owner, owner).Scan(&active); err != nil || active != 0 {
+			t.Fatalf("v%d activated reminders/jobs=%d err=%v", version, active, err)
+		}
+	}
+}
+
+func TestV3RepeatImportKeepsBookmarkLinkedConvertedNoteDeleted(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Open(ctx, filepath.Join(t.TempDir(), "preservation.sqlite3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('one','one@example.test','One','now','now')`); err != nil {
+		t.Fatal(err)
+	}
+	noteID := "converted-note"
+	backup := map[string]any{
+		"version":                3,
+		"bookmarks":              []any{map[string]any{"id": "bookmark", "url": "https://example.com/retired", "notes": []any{map[string]any{"id": noteID, "title": "Saved task", "body": "legacy body", "source": "preserved"}}}},
+		"notes":                  []any{map[string]any{"id": noteID, "title": "Saved task", "body": "legacy body", "source": "preserved"}},
+		"knowledge_preservation": []any{map[string]any{"kind": "action_items", "legacy_id": "task", "payload": map[string]any{"id": "task"}, "note_id": noteID, "created_at": "2026-09-28T00:00:00Z"}},
+		"action_items":           []any{map[string]any{"id": "task", "title": "Must not duplicate converted note"}},
+		"item_links":             []any{map[string]any{"from_type": "note", "from_id": noteID, "to_type": "bookmark", "to_id": "bookmark", "label": "Preserved context"}},
+	}
+	raw, err := json.Marshal(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+	if _, _, err := service.restoreFullExport(ctx, "one", raw); err != nil {
+		t.Fatal(err)
+	}
+	var links int
+	if err := db.QueryRow(`SELECT count(*) FROM item_links WHERE user_id='one' AND from_id=? AND to_type='bookmark'`, noteID).Scan(&links); err != nil || links != 1 {
+		t.Fatalf("bookmark-linked fixture links=%d err=%v", links, err)
+	}
+	if _, err := db.Exec(`DELETE FROM notes WHERE id=? AND user_id='one'`, noteID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := service.restoreFullExport(ctx, "one", raw); err != nil {
+		t.Fatalf("repeat import: %v", err)
+	}
+	var notes int
+	if err := db.QueryRow(`SELECT count(*) FROM notes WHERE id=? AND user_id='one'`, noteID).Scan(&notes); err != nil || notes != 0 {
+		t.Fatalf("deleted bookmark-linked converted note recreated=%d err=%v", notes, err)
+	}
+}
+
+func TestRetirementImportPreflightRejectsMalformedDataWithoutWrites(t *testing.T) {
+	fixtures := []struct {
+		name string
+		raw  string
+	}{
+		{"v1 duplicate identity", `{"version":1,"bookmarks":[],"reminders":[{"id":"same"},{"id":"same"}]}`},
+		{"v2 invalid records", `{"version":2,"bookmarks":[],"action_items":{"id":"not-a-list"}}`},
+		{"v3 invalid preservation", `{"version":3,"bookmarks":[],"knowledge_preservation":[{"kind":"reminders","legacy_id":"r1","payload":null,"created_at":"now"}]}`},
+	}
+	for _, fixture := range fixtures {
+		t.Run(fixture.name, func(t *testing.T) {
+			ctx := context.Background()
+			db, err := database.Open(ctx, filepath.Join(t.TempDir(), "preservation.sqlite3"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			if _, err := db.Exec(`INSERT INTO users(id,email,name,created_at,updated_at) VALUES('one','one@example.test','One','now','now')`); err != nil {
+				t.Fatal(err)
+			}
+			service := New(db, jobs.New(db), safefetch.New(), providers.GeminiClient{})
+			if _, recognized, err := service.restoreFullExport(ctx, "one", []byte(fixture.raw)); !recognized || err == nil {
+				t.Fatalf("recognized=%v err=%v", recognized, err)
+			}
+			var writes int
+			if err := db.QueryRow(`SELECT (SELECT count(*) FROM import_jobs) + (SELECT count(*) FROM knowledge_preservation) + (SELECT count(*) FROM notes) + (SELECT count(*) FROM jobs)`).Scan(&writes); err != nil || writes != 0 {
+				t.Fatalf("malformed preflight wrote rows=%d err=%v", writes, err)
+			}
+		})
+	}
+}
