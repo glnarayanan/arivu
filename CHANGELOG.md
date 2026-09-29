@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Added an atomic preservation foundation for the planned workflow retirement.
+  It retains exact legacy records and can convert useful content into notes
+  without overwriting edits or recreating deleted notes. Conversion is not yet
+  automatic. Full JSON backups now use version 3, include preservation records,
+  remap owned note references on restore, and reject unsupported future versions.
 - Restricted Graph relationship reads to selected endpoints without changing
   edge-family precedence, feedback filtering, or edge limits.
 - Batched search-result feedback by exact item keys, preserving candidate
