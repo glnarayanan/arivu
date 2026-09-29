@@ -1,4 +1,4 @@
-const CACHE = "arivu-shell-v6";
+const CACHE = "arivu-shell-v7";
 const SHELL = ["/", "/today", "/library", "/notes", "/graph", "/review", "/search", "/dashboard", "/app.js", "/route-lifecycle.mjs", "/service-worker-register.mjs", "/styles.css", "/fonts/geist-variable.woff2", "/fonts/geist-mono-variable.woff2", "/fonts/noto-serif-variable-latin.woff2", "/favicon.svg", "/manifest.webmanifest"];
 
 self.addEventListener("install", (event) => {

@@ -69,3 +69,42 @@ jobs. This does not make all older restore helpers atomic.
 - Marketing claims distinguish measured local retrieval from provider latency.
 - Keep migration, routes, and frontend integration in one checkout. Helpers may
   own isolated fixtures or provider code after contracts are fixed.
+
+## Conversation and quiz contract
+
+`/learn` lists saved sessions and finds passages by topic. Reader and note
+actions start with one source; Library supports up to eight selected sources.
+The preview saves up to 16 exact passages, each at most 1,500 bytes, from the
+selected original capture or a non-AI note. Search snippets and summaries may
+help find candidates but never become evidence. Review remains optional
+resurfacing, not a mandatory study queue.
+
+Generation sends those passages to the configured provider only after explicit
+consent. The preview names the provider, host, and model; a destination change
+requires fresh consent. Before each request, Arivu checks source ownership,
+content hashes, and every passage against the current text. Imported sessions
+receive the same checks. Self-hosting does not mean local model processing.
+
+Conversations allow six exchanges and include up to 12,000 bytes of recent
+full turns as context, not evidence. Every claim must cite an exact quote, or
+the response must state insufficient evidence. Exact-quote checks do not prove
+that a claim follows from the quote. The UI labels generated content and asks
+users to check it. Models have no tool or action interface.
+
+Quizzes contain three questions with four options each. Normal API responses
+withhold correct answers, explanations, and citations until all choices are
+submitted. Full owner backups retain them. AI answers saved to Notes carry an
+`ai:answer` marker and cannot feed later sessions as original evidence.
+Saved passages and answers retain quoted text and owned source links.
+
+Sessions live in owner-scoped `learning_sessions`. Revision checks prevent
+concurrent results from overwriting one another; concurrent provider requests
+may still both run. Deleting a session removes its excerpts but not notes
+already saved from it. Deleting a source blocks further generation, but does
+not erase prior session excerpts. Full backups include sessions and restore
+source references; identical snapshots deduplicate while distinct snapshots
+remain separate. Restore preserves exact note text, including whitespace.
+
+The web routes retain CSRF and audience checks. Generation is limited to 30
+requests per hour, with a 40-second provider timeout and bounded input/output.
+Provider-free reading, search, capture, and passage saving remain available.

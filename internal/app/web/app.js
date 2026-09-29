@@ -39,6 +39,8 @@ const routes = [
   { prefix: "/library", page: libraryPage, access: "protected" },
   { prefix: "/graph", page: graphPage, access: "protected" },
   { prefix: "/search", page: searchPage, access: "protected" },
+  { prefix: "/learn/", page: learningPage, access: "protected" },
+  { prefix: "/learn", page: learningPage, access: "protected" },
   { prefix: "/dashboard", page: () => compatibilityRedirect("/library", { view: "capture" }), access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
   { prefix: "/inbox", page: () => navigate("/library", true), access: "protected" },
@@ -856,12 +858,25 @@ async function libraryPage(scope) {
       ${["q", "type", "connection", "topic", "source", "date_from", "date_to", "collection_id", "collection"].some((key) => params.get(key)) ? `<p class="library-filter-status">Filters are active. <a href="/library${contentScope === "derived" ? "?scope=derived" : ""}">Clear filters</a></p>` : ""}
     </form>
     ${collectionBrowser(collections, params.get("collection_id") || params.get("collection"))}
+    ${contentScope === "content" && items.length ? `<details class="panel disclosure-panel"><summary>Chat or quiz with selected sources</summary>
+      <form class="form disclosure-body" id="learning-selection">
+        <p class="meta">Choose up to eight sources. You will review the passages and provider before sending.</p>
+        ${items.filter((item) => ["bookmark", "note"].includes(item.type) && !String(item.source).startsWith("ai:")).map((item) => `<label class="learning-choice"><input type="checkbox" name="source" value="${escapeHTML(item.type + ":" + item.id)}">${escapeHTML(item.title || "Untitled")}</label>`).join("")}
+        <div class="button-row"><button type="submit" value="chat" class="secondary">Chat with selected</button><button type="submit" value="quiz" class="secondary">Quiz me</button></div>
+        <p class="form-message" data-form-message hidden></p>
+      </form></details>` : ""}
     <section class="library-list density-${escapeHTML(density)}" aria-label="Library items">
       ${items.map(libraryItem).join("") || emptyState({ eyebrow: "A clear desk", title: "Your library is ready", body: "Capture a link, note, quote, or file. Arivu will keep it even before enrichment or organization.", tag: "section" })}
     </section>
     ${result.next_cursor ? `<p class="pagination"><a class="button secondary" href="/library?${escapeHTML(libraryNextParams(params, result.next_cursor))}">Load more</a></p>` : ""}
   `));
   document.querySelector("#library-capture")?.addEventListener("click", openCaptureComposer);
+  document.querySelector("#learning-selection")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const sources = [...new FormData(event.currentTarget).getAll("source")].map((value) => { const split = value.indexOf(":"); return { type: value.slice(0, split), id: value.slice(split + 1) }; });
+    if (!sources.length || sources.length > 8) return setFormMessage(event.currentTarget, "Choose one to eight sources.");
+    await startLearning(scope, event.submitter, sources, event.submitter.value, "", event.currentTarget);
+  });
   localStorage.setItem("arivu-library-density", density);
   document.querySelector("#library-filter-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -969,9 +984,12 @@ async function searchPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
   const query = params.get("q") || params.get("search") || "";
-  const ask = params.get("mode") === "ask" || params.get("answer") === "1";
+  if (params.get("mode") === "ask" || params.get("answer") === "1") {
+    navigate(`/learn?q=${encodeURIComponent(query)}`, true);
+    return;
+  }
   let result = { results: [] };
-  if (query) result = await api(`${ask ? "/search/answer" : "/search/items"}?q=${encodeURIComponent(query)}`);
+  if (query) result = await api(`/search/items?q=${encodeURIComponent(query)}`);
   const results = result.results || result.items || result.citations || [];
   setRoot(scope, shell("Search / Ask", `
     <form class="search-workspace" role="search" id="knowledge-search-form">
@@ -981,9 +999,8 @@ async function searchPage(scope) {
         <button type="submit" name="mode" value="search" class="secondary">Search</button>
         <button type="submit" name="mode" value="ask">Ask</button>
       </div>
-      <p class="meta">Ask answers only from material saved in this Arivu instance and keeps links back to the evidence.</p>
+      <p class="meta">Search stays local. Ask opens a source preview before sending passages to your configured AI provider. <a href="/learn">Past conversations and quizzes</a></p>
     </form>
-    ${ask && result.answer ? `<section class="answer-surface"><h2>Answer</h2><p>${escapeHTML(result.answer)}</p></section>` : ""}
     <section class="search-results" aria-live="polite" aria-label="Search results">
       ${results.map(searchResultItem).join("") || (query ? emptyState({ eyebrow: "No match", title: "Try a broader phrase", body: "Search checks titles, saved text, notes, tags, and explicit link context.", tag: "section" }) : emptyState({ eyebrow: "Ready", title: "Start with what you remember", body: "A phrase, source, person, or question is enough.", tag: "section" }))}
     </section>
@@ -992,7 +1009,114 @@ async function searchPage(scope) {
     event.preventDefault();
     const value = document.querySelector("#knowledge-search").value.trim();
     const mode = event.submitter?.value || "search";
-    navigate(`/search?q=${encodeURIComponent(value)}${mode === "ask" ? "&mode=ask" : ""}`);
+    navigate(`/${mode === "ask" ? "learn" : "search"}?q=${encodeURIComponent(value)}`);
+  });
+}
+
+async function startLearning(scope, button, sources, kind, question, form) {
+  const done = setButtonBusy(button, "Finding passages");
+  if (form) setFormMessage(form);
+  try {
+    const session = await api("/learning", { method: "POST", body: JSON.stringify({ sources, kind, question }) });
+    scope.assertCurrent();
+    navigate(`/learn/${encodeURIComponent(session.id)}`);
+  } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+    if (form) setFormMessage(form, err.message); else ui.toast(err.message, "error");
+  } finally { if (scope.isCurrent()) done(); }
+}
+
+function learningSourceActions(type, id) {
+  return `<div class="button-row learning-source-actions"><button type="button" class="secondary" data-learn-kind="chat" data-learn-type="${escapeHTML(type)}" data-learn-id="${escapeHTML(id)}">Chat with this source</button><button type="button" class="secondary" data-learn-kind="quiz" data-learn-type="${escapeHTML(type)}" data-learn-id="${escapeHTML(id)}">Quiz me</button></div>`;
+}
+
+function bindLearningSources(scope) {
+  document.querySelectorAll("[data-learn-kind]").forEach((button) => button.addEventListener("click", () => startLearning(scope, button, [{ type: button.dataset.learnType, id: button.dataset.learnId }], button.dataset.learnKind, "")));
+}
+
+async function learningPage(scope) {
+  await requireUser();
+  const id = location.pathname.split("/")[2];
+  if (id) return learningSessionPage(scope, decodeURIComponent(id));
+  const data = await api("/learning");
+  const query = new URLSearchParams(location.search).get("q") || "";
+  setRoot(scope, shell("Ask your sources", `<section class="learning-workspace">
+    <form class="panel form" id="learning-start"><h2>What would you like to understand?</h2>
+      <p>Find passages in your library, then ask a question or try three short quiz questions. Nothing goes to an AI provider until you review the sources.</p>
+      <div class="field"><label for="learning-topic">Question or topic</label><textarea id="learning-topic" name="topic" rows="3" maxlength="2000" required>${escapeHTML(query)}</textarea></div>
+      <p class="meta">For a specific page, use “Chat with this source” in its reader. For several sources, select them in <a href="/library">Library</a>.</p>
+      <div class="button-row"><button type="submit" value="chat">Find passages</button><button type="submit" value="quiz" class="secondary">Prepare a quiz</button></div>
+      <p class="form-message" data-form-message hidden></p>
+      ${!data.provider.available ? `<p class="meta">No AI provider is configured. You can still preview and save passages, read, and search. <a href="/settings">Open settings</a>.</p>` : ""}
+    </form>
+    <section class="stack"><h2>Conversations and quizzes</h2>${(data.items || []).map((item) => `<article class="search-result"><p class="meta">${item.kind === "quiz" ? "Quiz" : "Conversation"} · ${escapeHTML(formatDate(item.updated_at))}</p><h3><a href="/learn/${encodeURIComponent(item.id)}">${escapeHTML(item.question || (item.kind === "quiz" ? "Source quiz" : "Source conversation"))}</a></h3></article>`).join("") || `<p class="meta">Your saved sessions will appear here. There is no study schedule to keep up with.</p>`}</section>
+  </section>`));
+  document.querySelector("#learning-start").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    await startLearning(scope, event.submitter, [], event.submitter.value, document.querySelector("#learning-topic").value.trim(), event.currentTarget);
+  });
+}
+
+function learningCitations(citations, passages) {
+  return (citations || []).map((citation) => {
+    const passage = passages.find((item) => item.id === citation.passage_id);
+    return `<details class="learning-citation"><summary>${escapeHTML(passage?.title || "Source passage")} · ${escapeHTML(citation.passage_id)}</summary><blockquote>${escapeHTML(citation.quote)}</blockquote>${passage ? `<a href="${knowledgeItemHref(passage.source.type, passage.source.id, passage.title)}">Open source</a>` : ""}</details>`;
+  }).join("");
+}
+
+async function learningSessionPage(scope, id) {
+  const session = await api(`/learning/${encodeURIComponent(id)}`);
+  const passages = session.passages || [], exchanges = session.exchanges || [], questions = session.questions || [];
+  const quiz = session.kind === "quiz", revealed = questions.length > 0 && questions[0].correct !== undefined;
+  const destination = session.provider;
+  const canGenerate = quiz ? questions.length === 0 : exchanges.length < 6;
+  setRoot(scope, shell(quiz ? "Source quiz" : "Source conversation", `<div class="learning-workspace">
+    <div class="button-row"><a class="text-link" href="/learn">All sessions</a><button type="button" class="secondary" id="learning-delete">Delete session</button></div>
+    <details class="panel learning-evidence" ${!exchanges.length && !questions.length ? "open" : ""}><summary><strong>${passages.length} source passages</strong> · inspect what AI can use</summary>
+      <div class="disclosure-body">
+      <p class="meta">These saved excerpts stay fixed for this session. They are not your whole library. Follow-ups use these passages and recent conversation turns. Deleting a source blocks further generation; delete this session to remove its saved excerpts.</p>
+      ${passages.map((passage) => `<article class="learning-passage"><h3>${escapeHTML(passage.title || "Untitled source")} <span class="meta">${escapeHTML(passage.id)}</span></h3><p class="meta">${passage.source.type === "note" ? "Personal note" : "Captured source text"}</p><blockquote>${escapeHTML(passage.text)}</blockquote><div class="button-row"><a class="text-link" href="${knowledgeItemHref(passage.source.type, passage.source.id, passage.title)}">Open source</a><button type="button" class="secondary" data-save-passage="${escapeHTML(passage.id)}">Save passage to Notes</button></div></article>`).join("")}
+      </div>
+    </details>
+    <section class="stack" aria-label="Conversation">${exchanges.map((exchange, index) => `<article class="learning-exchange"><p class="meta">You asked</p><h2>${escapeHTML(exchange.question)}</h2><p class="meta">AI-generated · ${escapeHTML(exchange.provider)}. Check the cited passages.</p>${exchange.answer.insufficient ? `<p>These passages do not contain enough evidence to answer. Try another question or start with different sources.</p>` : (exchange.answer.claims || []).map((claim) => `<div class="learning-claim"><p>${escapeHTML(claim.text)}</p>${learningCitations(claim.citations, passages)}</div>`).join("") + `<button type="button" class="secondary" data-save-exchange="${index}">Save answer to Notes</button>`}</article>`).join("")}</section>
+    ${questions.length ? `<form class="form panel" id="learning-quiz"><h2>${revealed ? `${questions.filter((q) => q.correct === q.choice).length} of 3 correct` : "Try recalling before checking"}</h2><p class="meta">Optional practice, not a grade. AI can make mistakes; explanations link to the source.</p>${questions.map((question, index) => `<fieldset class="learning-question"><legend>${index + 1}. ${escapeHTML(question.question)}</legend>${question.options.map((option, choice) => `<label class="learning-choice"><input type="radio" name="q${index}" value="${choice}" required ${revealed ? "disabled" : ""} ${question.choice === choice ? "checked" : ""}>${escapeHTML(option)}</label>`).join("")}${revealed ? `<p><strong>${question.correct === question.choice ? "Correct" : `Correct answer: ${escapeHTML(question.options[question.correct])}`}</strong></p><p>${escapeHTML(question.explanation)}</p>${learningCitations(question.citations, passages)}` : ""}</fieldset>`).join("")}${!revealed ? `<button type="submit">Check answers</button>` : `<a href="/learn">Choose another topic</a>`}<p class="form-message" data-form-message hidden></p></form>` : ""}
+    ${canGenerate ? `<form class="panel form" id="learning-generate"><h2>${quiz ? "Three questions, no study queue" : exchanges.length ? "Ask a follow-up" : "Ask about these passages"}</h2>
+      ${!quiz ? `<div class="field"><label for="learning-question">Your question</label><textarea id="learning-question" name="question" rows="3" maxlength="2000" required>${escapeHTML(exchanges.length ? "" : session.question)}</textarea></div>` : ""}
+      ${destination.available ? `<p class="meta">Sends the passages${quiz ? "" : ", your question, and recent conversation turns"} to <strong>${escapeHTML(destination.name)}</strong> at <strong>${escapeHTML(destination.host)}</strong>, model ${escapeHTML(destination.model)}. Self-hosted Arivu does not mean local AI processing.</p><label class="learning-choice"><input id="learning-consent" name="consent" type="checkbox" required>Send this content to the provider shown above.</label>` : `<p>No AI provider is configured. Reading, search, and saving passages still work. <a href="/settings">Open settings</a>.</p>`}
+      <button type="submit" ${destination.available ? "" : "disabled"}>${quiz ? "Generate quiz" : "Send question"}</button><p class="form-message" data-form-message hidden></p>
+    </form>` : !quiz ? `<p class="meta">This session has six answers. <a href="/learn">Start a new conversation</a> to explore more.</p>` : ""}
+  </div>`));
+  document.querySelector("#learning-generate")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget, done = setButtonBusy(event.submitter, quiz ? "Creating questions" : "Reading your sources");
+    setFormMessage(form);
+    try {
+      await api(`/learning/${encodeURIComponent(id)}/generate`, { method: "POST", body: JSON.stringify({ question: quiz ? session.question || "Quiz these sources" : document.querySelector("#learning-question").value.trim(), consent: document.querySelector("#learning-consent").checked ? destination.consent : "", revision: session.revision }) });
+      scope.assertCurrent(); render();
+    } catch (err) { if (scope.isCurrent()) setFormMessage(form, err.message); }
+    finally { if (scope.isCurrent()) done(); }
+  });
+  document.querySelector("#learning-quiz")?.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = event.currentTarget, done = setButtonBusy(event.submitter, "Checking answers"), data = new FormData(form);
+    try {
+      await api(`/learning/${encodeURIComponent(id)}/submit`, { method: "POST", body: JSON.stringify({ choices: questions.map((_, index) => Number(data.get(`q${index}`))), revision: session.revision }) });
+      scope.assertCurrent(); render();
+    } catch (err) { if (scope.isCurrent()) setFormMessage(form, err.message); }
+    finally { if (scope.isCurrent()) done(); }
+  });
+  document.querySelectorAll("[data-save-exchange], [data-save-passage]").forEach((button) => button.addEventListener("click", async () => {
+    const done = setButtonBusy(button, "Saving note");
+    try {
+      const note = await api(`/learning/${encodeURIComponent(id)}/note`, { method: "POST", body: JSON.stringify(button.dataset.savePassage ? { passage: button.dataset.savePassage } : { exchange: Number(button.dataset.saveExchange) }) });
+      scope.assertCurrent(); navigate(`/notes/${encodeURIComponent(note.id)}`);
+    } catch (err) { if (scope.isCurrent()) ui.toast(err.message, "error"); }
+    finally { if (scope.isCurrent()) done(); }
+  }));
+  document.querySelector("#learning-delete").addEventListener("click", async () => {
+    if (!await ui.confirmDestructive({ title: "Delete this session?", body: "This removes its conversation, quiz, and saved excerpts. Notes you saved from it remain.", confirm: "Delete session" })) return;
+    try { await api(`/learning/${encodeURIComponent(id)}`, { method: "DELETE" }); scope.assertCurrent(); navigate("/learn"); }
+    catch (err) { if (scope.isCurrent()) ui.toast(err.message, "error"); }
   });
 }
 
@@ -1117,6 +1241,7 @@ async function openCommandPalette() {
           ["/library", "Library"],
           ["/notes", "Notes"],
           ["/search", "Search"],
+          ["/learn", "Conversations & quizzes"],
           ["/graph", "Graph"],
           ["/review", "Review"],
         ].map(([href, label]) => `<button type="button" class="secondary" data-command-nav="${href}">${label}</button>`).join("")}
@@ -1140,7 +1265,7 @@ async function openCommandPalette() {
       <div class="field"><label for="command-query">Query</label><input id="command-query" type="search"></div>
       <div class="button-row">
         <button type="submit" data-command-search-type="search">Search</button>
-        <button type="submit" class="secondary" data-command-search-type="answer">Cited answer</button>
+        <button type="submit" class="secondary" data-command-search-type="answer">Ask sources</button>
       </div>
     </form>
     <form class="form" data-command-current ${current ? "" : "hidden"}>
@@ -1288,7 +1413,6 @@ async function dashboardPage(scope) {
         </section>
       </section>
     </details>
-    <section class="panel" id="answer-panel" hidden></section>
     <section class="grid" aria-label="Bookmarks">
       ${bookmarkList.map(bookmarkCard).join("") || workflowEmptyState()}
     </section>
@@ -1332,27 +1456,14 @@ async function dashboardPage(scope) {
     event.preventDefault();
     navigate(`/dashboard${dashboardQueryString()}`);
   });
-  document.querySelector("#answer-button").addEventListener("click", async (event) => {
+  document.querySelector("#answer-button").addEventListener("click", () => {
     scope.assertCurrent();
     const query = document.querySelector("#search").value.trim();
     if (!query) {
       ui.toast("Enter a search query first", "error");
       return;
     }
-    const done = setButtonBusy(event.currentTarget, "Answering");
-    const panel = document.querySelector("#answer-panel");
-    try {
-      const answer = await api(`/search/answer${dashboardQueryString("q")}`);
-      scope.assertCurrent();
-      panel.hidden = false;
-      panel.innerHTML = answerPanel(answer);
-      bindFeedbackControls(scope);
-    } catch (err) {
-      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
-      ui.toast(err.message, "error");
-    } finally {
-      if (scope.isCurrent()) done();
-    }
+    navigate(`/learn?q=${encodeURIComponent(query)}`);
   });
   if (params.get("answer") === "1" && document.querySelector("#search").value.trim()) {
     document.querySelector("#answer-button").click();
@@ -1444,22 +1555,6 @@ function savedSearchList(items) {
     }
     return `<a class="text-link" href="/dashboard?${params.toString()}">${escapeHTML(item.name)}</a>`;
   }).join("")}</div>`;
-}
-
-function answerPanel(answer) {
-  const citations = answer.citations || [];
-  return `<h2>Cited answer</h2>
-    <p>${escapeHTML(answer.answer || "")}</p>
-    <div class="stack">${citations.map((item, index) => {
-      const itemID = encodeURIComponent(item.id || "");
-      return `<article class="annotation">
-      <p><strong>[${index + 1}] ${escapeHTML(item.title || item.url)}</strong> <span class="meta">${escapeHTML(item.type || "bookmark")} · ${escapeHTML(item.domain || "")}</span></p>
-      <p>${escapeHTML(item.snippet || "")}</p>
-      ${feedbackControls(item.type || "bookmark", item.id || "", "answer", item.feedback_state)}
-      ${item.why_shown?.length ? `<p class="meta">Why shown: ${item.why_shown.map(escapeHTML).join(" · ")} · freshness ${Number(item.freshness_score || 0)}</p>` : ""}
-      <a class="text-link" href="${item.type === "note" ? `/notes/${itemID}` : `/bookmark/${itemID}`}">Open citation</a>
-    </article>`;
-    }).join("") || `<p class="meta">No citations found.</p>`}</div>`;
 }
 
 function sharedCaptureParams() {
@@ -1820,8 +1915,10 @@ async function noteDetailPage(scope, id) {
     api("/link-targets?type=bookmark&limit=100").catch(() => ({ targets: [] })),
   ]);
   setRoot(scope, shell(note.title || "Note", `
+    ${String(note.source || "").startsWith("ai:") ? `<p class="meta">AI-generated note. Check its saved source evidence before reusing it.</p>` : learningSourceActions("note", note.id)}
     ${standaloneNoteCard(note, noteTargets.targets || [], bookmarkTargets.targets || [])}
   `));
+  bindLearningSources(scope);
   document.querySelectorAll("[data-note-save]").forEach((button) => {
     button.addEventListener("click", () => updateStandaloneNote(scope, button));
   });
@@ -1915,6 +2012,7 @@ async function bookmarkPage(scope) {
         <button type="button" class="danger" id="delete-bookmark">Delete bookmark</button>
       </p>
       <p id="job-status" hidden></p>
+      ${learningSourceActions("bookmark", bookmark.id)}
       <div class="reading-progress"><label for="reading-progress">Reading progress</label><progress id="reading-progress" max="100" value="${Math.round(Number(bookmark.reading_progress || 0) * 100)}"></progress><span id="reading-progress-value">${Math.round(Number(bookmark.reading_progress || 0) * 100)}%</span></div>
       ${tagList(bookmark.tags || [])}
       ${summaryPanel(summary)}
@@ -2138,6 +2236,7 @@ async function bookmarkPage(scope) {
   });
   bindLinkDeleteControls(scope);
   bindVoiceCapture();
+  bindLearningSources(scope);
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
     if (!confirmed) return;

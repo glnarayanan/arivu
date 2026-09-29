@@ -791,3 +791,14 @@ CREATE TABLE IF NOT EXISTS quality_reprocess_items (
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_quality_reprocess_items_job ON quality_reprocess_items(job_id) WHERE job_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_quality_reprocess_items_status ON quality_reprocess_items(run_id, status, updated_at);
+
+CREATE TABLE IF NOT EXISTS learning_sessions (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  payload_json TEXT NOT NULL,
+  revision INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(id, user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_learning_sessions_owner ON learning_sessions(user_id, updated_at DESC);
