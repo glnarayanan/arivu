@@ -8,53 +8,86 @@ const publicShare = await readFile(new URL("../web/public-share.js", import.meta
 const publicShareStyles = await readFile(new URL("../web/public-share.css", import.meta.url), "utf8");
 const shareHandlers = await readFile(new URL("../../bookmarks/shares.go", import.meta.url), "utf8");
 
-test("declares the simplified primary knowledge destinations", () => {
+test("declares the five canonical knowledge destinations", () => {
   assert.ok(app.includes(`const nav = [
     ["/today", "Home"],
     ["/library", "Library"],
     ["/notes", "Notes"],
-    ["/search", "Search"],
+    ["/graph", "Graph"],
+    ["/insights", "Insights"],
   ];`));
   for (const contract of [
     '{ prefix: "/today", page: todayPage',
     '{ prefix: "/library", page: libraryPage',
-    '{ prefix: "/notes", page: notesPage',
+    '{ prefix: "/graph", page: graphPage',
+    '{ prefix: "/insights", page: insightsPage',
     '{ prefix: "/search", page: searchPage',
+    '["/today", "Home"]',
+    '["/library", "Library"]',
+    '["/notes", "Notes"]',
+    '["/graph", "Graph"]',
+    '["/insights", "Insights"]',
   ]) assert.ok(app.includes(contract), `missing frontend contract: ${contract}`);
-  assert.ok(!app.includes('["/insights", "Insights"]'));
-  assert.ok(app.includes('["/graph", "Graph"]'), "Graph remains reachable from More");
+  assert.ok(!app.includes('{ label: "Notes", action: () => navigate("/notes") }'));
 });
 
-test("redirects retired URLs to their settled destinations without obsolete filters", () => {
-  for (const route of ["analytics", "inbox", "focus", "board", "assistant", "objects", "evolution", "insights"])
-    assert.match(app, new RegExp(`prefix: ["']/${route}["']`));
-  assert.ok(app.includes('{ prefix: "/inbox", page: () => navigate("/library", true)'));
-  assert.ok(app.includes('{ prefix: "/objects", page: () => navigate("/notes", true)'));
-  assert.ok(app.includes('{ prefix: "/assistant", page: () => navigate("/search", true)'));
-  assert.ok(app.includes('{ prefix: "/review", page: reviewPage'));
-  assert.ok(!app.includes("focusCompatibilityRedirect"));
+test("keeps legacy deep links as explicit query-preserving aliases", () => {
+  for (const route of ["dashboard", "knowledge-graph", "analytics", "inbox", "focus", "review", "board", "assistant", "objects", "evolution", "duplicates"])
+    assert.match(app, new RegExp(`prefix: ["']/${route.replace("-", "\\-")}["']`));
+  assert.ok(app.includes("function compatibilityRedirect"));
+  assert.ok(app.includes("new URLSearchParams(location.search)"));
+  assert.ok(app.includes("function focusCompatibilityRedirect()"));
+  assert.ok(app.includes('params.set("focus", legacyFilter)'));
+  assert.ok(app.includes('page: () => homeViewRedirect("review")'));
+  assert.ok(app.includes('page: () => homeViewRedirect("board")'));
 });
 
-test("Home is a calm recall surface without planning APIs", () => {
+test("keeps Home navigation and purpose-built layouts across every view", () => {
+  for (const active of ["pulse", "focus", "review", "board"])
+    assert.ok(app.includes(`homeViewTabs("${active}")`), `missing Home tabs for ${active}`);
   for (const contract of [
-    'id="home-search-form"',
-    'todayList("Recent Library items"',
-    'todayList("Worth revisiting"',
-    'class="panel home-recent-notes"',
-    'api("/library/items?scope=content&limit=8")',
-  ]) assert.ok(app.includes(contract), `missing Home contract: ${contract}`);
-  for (const retired of ["/daily-notes/", "/action-items", "/reminders", "/today-board", "homeViewTabs("])
-    assert.ok(!app.includes(retired), `retired Home workflow remains: ${retired}`);
+    '["pulse", "Pulse", "/today"]',
+    '["focus", "Focus", "/today?view=focus"]',
+    '["review", "Review", "/today?view=review"]',
+    '["board", "Board", "/today?view=board"]',
+  ]) assert.ok(app.includes(contract), `missing Home tab contract: ${contract}`);
+  assert.ok(app.includes('params.get("focus")'));
+  assert.ok(app.includes('href="/today?view=focus&amp;focus=${name}"'));
+  assert.ok(app.includes('class="review-grid" aria-label="Review queue"'));
+  assert.ok(app.includes('class="board-scroller" role="region" aria-label="Knowledge workflow board" tabindex="0"'));
+  assert.ok(app.includes('class="home-pulse-columns"'));
+  assert.ok(app.includes('"pulse-captures"'));
+  assert.ok(app.includes('class="panel pulse-summary"'));
+  assert.ok(app.includes('class="review-followup"'));
+  assert.ok(app.includes('item.id !== memoryID'));
+  assert.ok(app.includes('shell("Board", `<div class="home-view board-view">'));
+  assert.ok(app.includes('`, { wide: true }))'));
+  assert.match(styles, /\.review-grid \{\s+display: grid;\s+grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(styles, /\.board-grid \{[\s\S]*?grid-auto-flow: column;[\s\S]*?grid-auto-columns: minmax\(280px, 320px\);/);
+  assert.match(styles, /\.home-pulse-columns \{\s+display: grid;\s+grid-template-columns: minmax\(0, 1\.35fr\) minmax\(280px, 0\.65fr\);/);
+  assert.match(styles, /@media \(min-width: 1760px\) \{[\s\S]*?\.board-scroller \{[\s\S]*?overflow-x: visible;[\s\S]*?\.board-grid \{[\s\S]*?grid-template-columns: repeat\(5, minmax\(0, 1fr\)\);/);
+  assert.match(styles, /@media \(max-width: 760px\) \{[\s\S]*?\.home-view > \.view-tabs a \{[\s\S]*?min-height: 44px;[\s\S]*?\.home-pulse-primary,[\s\S]*?display: contents;[\s\S]*?\.pulse-summary \{[\s\S]*?order: 2;/);
 });
 
-test("Library keeps saved and generated views without workflow filters", () => {
+test("uses additive knowledge APIs and approachable object fields", () => {
   assert.ok(app.includes('/library/items?'));
   assert.ok(app.includes('request.set("scope", "content")'));
   assert.ok(app.includes('href="/library?scope=derived"'));
-  assert.ok(app.includes('const typeOptions = contentScope === "derived" ? ["entity", "concept"] : ["bookmark", "note", "annotation"]'));
-  assert.ok(!app.includes('id="library-stage"'));
-  assert.ok(!app.includes("openObjectComposer"));
+  assert.ok(app.includes("Concepts &amp; entities"));
   assert.ok(app.includes('/knowledge-graph/v2?'));
+  assert.ok(app.includes('insightQuery.set("family", family)'));
+  assert.ok(app.includes('api(`/insights?${insightQuery}`)'));
+  assert.ok(app.includes('state === "not_enough_history"'));
+  assert.ok(app.includes('state === "reprocessing_required"'));
+  assert.ok(app.includes('insight.kind === "recommendation"'));
+  assert.ok(app.includes('target_type: "relationship"'));
+  assert.ok(app.includes('target_type: "insight"'));
+  assert.ok(app.includes('target_type: "insight_impression"'));
+  assert.ok(app.includes('cursor: button.dataset.cursor'));
+  assert.ok(app.includes("result.restart_required"));
+  assert.ok(app.includes('data-insight-reason'));
+  assert.ok(!app.includes("Fields JSON"));
+  assert.ok(!app.includes("Fields JSON must be an object."));
 });
 
 test("keeps administration failure logs readable and supports bounded bulk retry", () => {
@@ -142,8 +175,6 @@ test("keeps imports inside Settings and uses legible interactive states", () => 
   assert.ok(!app.includes('{ label: "Imports and exports", action:'));
   assert.ok(app.includes('{ label: "Settings", action: () => navigate("/settings") }'));
   assert.ok(app.includes('["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."]'));
-  assert.ok(!app.includes("calendar-import-form"));
-  assert.ok(!app.includes("/calendar/import"));
   assert.ok(styles.includes('background: var(--accent-hover);\n    color: var(--accent-ink);'));
   assert.ok(styles.includes('--interactive-hover-bg: var(--accent-50);'));
   assert.ok(styles.includes('--interactive-hover-ink: var(--accent-800);'));
@@ -161,11 +192,12 @@ test("keeps imports inside Settings and uses legible interactive states", () => 
   assert.ok(styles.includes("background: var(--sand-200);\n  color: var(--sand-950);"));
 });
 
-test("library and graph keep accessible composition", () => {
+test("library, graph, and insights keep accessible composition", () => {
   assert.ok(app.includes('<summary>More filters</summary>'));
   assert.ok(app.includes("if (!(collections || []).length && !selected) return \"\""));
   assert.ok(app.includes('Clear filters'));
   assert.ok(app.includes('class="graph-hit"'));
+  assert.ok(app.includes('data-insight-next="capture-note"'));
   assert.ok(styles.includes(".graph-node .graph-hit"));
 });
 

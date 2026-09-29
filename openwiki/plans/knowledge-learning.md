@@ -43,19 +43,12 @@ source links in one transaction. Existing rows remain untouched. A retained
 mapping prevents repeated conversion from overwriting edited notes or
 recreating deleted ones.
 
-The retirement slice activates conversion at startup and indexes the converted
-notes before serving requests. It removes planning controls and returns an
-authenticated `410 Gone` for old workflow APIs. Old reminder jobs finish without
-sending mail. Home, Library, Notes, and Search are primary; Review and Graph are
-secondary. Daily writing now uses ordinary notes.
-
-Full JSON exports use version 3 and include inert snapshots. Restore
+The foundation does not activate conversion at startup or remove workflows.
+Full JSON exports use version 3 and include these inert snapshots. Restore
 remaps converted note references to the receiving account and retains deleted
 note mappings. Unknown future backup versions fail before writes. Versions 1
-and 2 remain accepted. Foundation-stage version-3 files may contain both legacy
-rows and preservation records; existing preservation identities take precedence.
-Legacy imports create notes and snapshots, never active workflows or reminder
-jobs. This does not make all older restore helpers atomic.
+and 2 remain accepted. This does not make all older restore helpers atomic;
+retirement must also stop old backups from scheduling reminder jobs.
 
 ## Acceptance boundaries
 

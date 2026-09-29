@@ -59,7 +59,14 @@ var (
 	quotaBookmarkPreview  = mutationQuota{name: "bookmarks.preview", limit: 30, window: 10 * time.Minute}
 	quotaBookmarkImport   = mutationQuota{name: "bookmarks.import", limit: 3, window: time.Hour}
 	quotaNotesWrite       = mutationQuota{name: "notes.write", limit: 240, window: time.Hour}
+	quotaInboxUpdate      = mutationQuota{name: "inbox.update", limit: 600, window: time.Hour}
 	quotaLinksCreate      = mutationQuota{name: "links.create", limit: 300, window: time.Hour}
+	quotaRemindersCreate  = mutationQuota{name: "reminders.create", limit: 120, window: time.Hour}
+	quotaRemindersUpdate  = mutationQuota{name: "reminders.update", limit: 240, window: time.Hour}
+	quotaActionItemCreate = mutationQuota{name: "action_items.create", limit: 240, window: time.Hour}
+	quotaAssistantSuggest = mutationQuota{name: "assistant.suggest", limit: 60, window: time.Hour}
+	quotaAssistantPropose = mutationQuota{name: "assistant.propose", limit: 60, window: time.Hour}
+	quotaAssistantApprove = mutationQuota{name: "assistant.approve", limit: 60, window: time.Hour}
 	quotaSearchRebuild    = mutationQuota{name: "search.rebuild", limit: 12, window: time.Hour}
 	quotaFeedback         = mutationQuota{name: "feedback.write", limit: 600, window: time.Hour}
 	quotaCollectionsWrite = mutationQuota{name: "collections.write", limit: 240, window: time.Hour}
@@ -83,10 +90,6 @@ func New(cfg config.Config) (*App, error) {
 	a.fetcher = safefetch.NewWithUserAgent(cfg.FetchUserAgent)
 	initialAI := runtimeconfig.FromConfig(cfg)
 	a.bookmarks = bookmarks.New(db, a.jobs, a.fetcher, providers.GeminiClient{Provider: initialAI.AIProvider, APIKey: initialAI.AIAPIKey, Model: initialAI.AIModel, BaseURL: initialAI.AIBaseURL})
-	if err := a.bookmarks.IndexPreservedNotes(context.Background()); err != nil {
-		_ = db.Close()
-		return nil, err
-	}
 	assetStore, err := assets.New(cfg.DBPath, safefetch.MaxBodyBytes)
 	if err != nil {
 		_ = db.Close()
@@ -181,12 +184,20 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("POST /api/subscriptions", a.withUser(a.bookmarks.CreateSubscription))
 	mux.HandleFunc("PATCH /api/subscriptions/{id}", a.withUser(a.bookmarks.UpdateSubscription))
 	mux.HandleFunc("DELETE /api/subscriptions/{id}", a.withUser(a.bookmarks.DeleteSubscription))
+	mux.HandleFunc("GET /api/daily-notes/{date}", a.withUser(a.bookmarks.GetDailyNote))
+	mux.HandleFunc("PUT /api/daily-notes/{date}", a.withUserQuota(quotaNotesWrite, a.bookmarks.SaveDailyNote))
 	mux.HandleFunc("GET /api/notes", a.withUser(a.bookmarks.Notes))
 	mux.HandleFunc("POST /api/notes", a.withUserQuota(quotaNotesWrite, a.bookmarks.CreateNote))
 	mux.HandleFunc("POST /api/media/import", a.withUserQuota(quotaNotesWrite, a.bookmarks.ImportMedia))
 	mux.HandleFunc("GET /api/notes/{id}", a.withUser(a.bookmarks.GetNote))
 	mux.HandleFunc("PATCH /api/notes/{id}", a.withUserQuota(quotaNotesWrite, a.bookmarks.UpdateNote))
 	mux.HandleFunc("DELETE /api/notes/{id}", a.withUser(a.bookmarks.DeleteNote))
+	mux.HandleFunc("GET /api/objects", a.withUser(a.bookmarks.Objects))
+	mux.HandleFunc("POST /api/objects", a.withUserQuota(quotaNotesWrite, a.bookmarks.CreateObject))
+	mux.HandleFunc("GET /api/objects/{id}", a.withUser(a.bookmarks.GetObject))
+	mux.HandleFunc("POST /api/calendar/import", a.withUserQuota(quotaNotesWrite, a.bookmarks.CalendarImport))
+	mux.HandleFunc("GET /api/evolution", a.withUser(a.bookmarks.Evolution))
+	mux.HandleFunc("GET /api/today-board", a.withUser(a.bookmarks.TodayBoard))
 	mux.HandleFunc("PATCH /api/annotations/{id}", a.withUser(a.bookmarks.UpdateAnnotation))
 	mux.HandleFunc("DELETE /api/annotations/{id}", a.withUser(a.bookmarks.DeleteAnnotation))
 	mux.HandleFunc("GET /api/tags", a.withUser(a.bookmarks.Tags))
@@ -197,14 +208,28 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/review", a.withUser(a.bookmarks.Review))
 	mux.HandleFunc("POST /api/review/{item_id}/complete", a.withUser(a.bookmarks.CompleteReview))
 	mux.HandleFunc("POST /api/review/{item_id}/snooze", a.withUser(a.bookmarks.SnoozeReview))
+	mux.HandleFunc("GET /api/inbox", a.withUser(a.bookmarks.Inbox))
+	mux.HandleFunc("PATCH /api/inbox/{item_id}", a.withUserQuota(quotaInboxUpdate, a.bookmarks.UpdateInboxItem))
+	mux.HandleFunc("POST /api/inbox/bulk", a.withUserQuota(quotaInboxUpdate, a.bookmarks.BulkUpdateInboxItems))
 	mux.HandleFunc("GET /api/links", a.withUser(a.bookmarks.Links))
 	mux.HandleFunc("GET /api/link-targets", a.withUser(a.bookmarks.LinkTargets))
 	mux.HandleFunc("POST /api/links", a.withUserQuota(quotaLinksCreate, a.bookmarks.CreateLink))
 	mux.HandleFunc("DELETE /api/links/{id}", a.withUser(a.bookmarks.DeleteLink))
-	for _, path := range []string{"daily-notes", "objects", "calendar", "evolution", "today-board", "inbox", "reminders", "action-items", "assistant"} {
-		mux.HandleFunc("/api/"+path, a.withUser(retiredWorkflow))
-		mux.HandleFunc("/api/"+path+"/", a.withUser(retiredWorkflow))
-	}
+	mux.HandleFunc("GET /api/reminders", a.withUser(a.bookmarks.Reminders))
+	mux.HandleFunc("POST /api/reminders", a.withUserQuota(quotaRemindersCreate, a.bookmarks.CreateReminder))
+	mux.HandleFunc("PATCH /api/reminders/{id}", a.withUserQuota(quotaRemindersUpdate, a.bookmarks.UpdateReminder))
+	mux.HandleFunc("POST /api/reminders/{id}/snooze", a.withUserQuota(quotaRemindersUpdate, a.bookmarks.SnoozeReminder))
+	mux.HandleFunc("POST /api/reminders/{id}/complete", a.withUser(a.bookmarks.CompleteReminder))
+	mux.HandleFunc("DELETE /api/reminders/{id}", a.withUser(a.bookmarks.DeleteReminder))
+	mux.HandleFunc("GET /api/action-items", a.withUser(a.bookmarks.ActionItems))
+	mux.HandleFunc("POST /api/action-items", a.withUserQuota(quotaActionItemCreate, a.bookmarks.CreateActionItem))
+	mux.HandleFunc("POST /api/action-items/{id}/complete", a.withUser(a.bookmarks.CompleteActionItem))
+	mux.HandleFunc("DELETE /api/action-items/{id}", a.withUser(a.bookmarks.DeleteActionItem))
+	mux.HandleFunc("GET /api/assistant/actions", a.withUser(a.bookmarks.AssistantActions))
+	mux.HandleFunc("POST /api/assistant/suggestions", a.withUserQuota(quotaAssistantSuggest, a.bookmarks.AssistantSuggestions))
+	mux.HandleFunc("POST /api/assistant/actions", a.withUserQuota(quotaAssistantPropose, a.bookmarks.ProposeAssistantAction))
+	mux.HandleFunc("POST /api/assistant/actions/{id}/approve", a.withUserQuota(quotaAssistantApprove, a.bookmarks.ApproveAssistantAction))
+	mux.HandleFunc("POST /api/assistant/actions/{id}/reject", a.withUser(a.bookmarks.RejectAssistantAction))
 	mux.HandleFunc("GET /api/cli/bookmarks", a.withAudience("cli", a.bookmarks.List))
 	mux.HandleFunc("POST /api/cli/bookmarks", a.withAudienceQuota("cli", quotaBookmarkCreate, a.bookmarks.Create))
 	mux.HandleFunc("POST /api/cli/bookmarks/preview", a.withAudienceQuota("cli", quotaBookmarkPreview, a.bookmarks.Preview))
@@ -216,9 +241,9 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("GET /api/agent/bookmarks/{id}", a.withAudience("cli", a.bookmarks.Get))
 	mux.HandleFunc("GET /api/agent/notes/{id}", a.withAudience("cli", a.bookmarks.GetNote))
 	mux.HandleFunc("POST /api/agent/notes", a.withAudienceQuota("cli", quotaNotesWrite, a.bookmarks.CreateNote))
-	for _, path := range []string{"action-items", "reminders", "decisions"} {
-		mux.HandleFunc("/api/agent/"+path, a.withAudience("cli", retiredWorkflow))
-	}
+	mux.HandleFunc("POST /api/agent/action-items", a.withAudienceQuota("cli", quotaActionItemCreate, a.bookmarks.CreateActionItem))
+	mux.HandleFunc("POST /api/agent/reminders", a.withAudienceQuota("cli", quotaRemindersCreate, a.bookmarks.CreateReminder))
+	mux.HandleFunc("POST /api/agent/decisions", a.withAudienceQuota("cli", quotaNotesWrite, a.bookmarks.AgentRecordDecision))
 	mux.HandleFunc("GET /api/agent/collections", a.withAudience("cli", a.bookmarks.Collections))
 	mux.HandleFunc("POST /api/agent/collections", a.withAudienceQuota("cli", quotaCollectionsWrite, a.bookmarks.CreateCollection))
 	mux.HandleFunc("PATCH /api/agent/collections/{id}", a.withAudienceQuota("cli", quotaCollectionsWrite, a.bookmarks.UpdateCollection))

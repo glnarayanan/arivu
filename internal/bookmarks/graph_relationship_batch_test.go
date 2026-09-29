@@ -29,6 +29,7 @@ func TestGraphV2EdgesSelectedRelationshipParity(t *testing.T) {
 		`INSERT INTO item_links(id,user_id,from_type,from_id,to_type,to_id,source,created_at) VALUES('selected','owner','bookmark','b1','bookmark','b2','import','2026-01-01')`,
 		`INSERT INTO item_links(id,user_id,from_type,from_id,to_type,to_id,source,created_at) VALUES('foreign-link','other','bookmark','foreign','bookmark','b1','manual','2024-01-01')`,
 		`INSERT INTO bookmark_notes(bookmark_id,note_id,user_id,created_at) VALUES('b1','n1','owner','2026-01-01')`,
+		`INSERT INTO knowledge_objects(id,user_id,object_type,source_item_type,source_item_id,created_at,updated_at) VALUES('ko1','owner','test','object','ko2','2026-01-01','2026-01-01'),('ko2','owner','test','odd','x','2026-01-01','2026-01-01')`,
 		`INSERT INTO annotations(id,user_id,bookmark_id,created_at,updated_at) VALUES('a1','owner','b1','2026-01-01','2026-01-01')`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
@@ -38,7 +39,8 @@ func TestGraphV2EdgesSelectedRelationshipParity(t *testing.T) {
 	nodes := []graphV2Node{
 		{ID: "bookmark:b1", Type: "bookmark", SourceID: "b1"}, {ID: "bookmark:b2", Type: "bookmark", SourceID: "b2"},
 		{ID: "note:n1", Type: "note", SourceID: "n1"}, {ID: "concept:Selected concept", Type: "concept", SourceID: "Selected concept"},
-		{ID: "entity:Selected entity", Type: "entity", SourceID: "Selected entity"},
+		{ID: "entity:Selected entity", Type: "entity", SourceID: "Selected entity"}, {ID: "knowledge_object:ko1", Type: "knowledge_object", SourceID: "ko1"},
+		{ID: "knowledge_object:ko2", Type: "knowledge_object", SourceID: "ko2"}, {ID: "odd:x", Type: "odd", SourceID: "x"},
 		{ID: "annotation:a1", Type: "annotation", SourceID: "a1"},
 		{ID: "bookmark:foreign", Type: "bookmark", SourceID: "foreign"},
 	}
@@ -53,6 +55,8 @@ func TestGraphV2EdgesSelectedRelationshipParity(t *testing.T) {
 		newGraphV2Edge("explicit", "bookmark:b1", "note:n1", "bookmark_notes", 1),
 		newGraphV2Edge("shared_concept", "bookmark:b1", "concept:Selected concept", "bookmark_concepts", .9),
 		newGraphV2Edge("shared_entity", "bookmark:b1", "entity:Selected entity", "bookmark_entities", .9),
+		newGraphV2Edge("source", "knowledge_object:ko1", "knowledge_object:ko2", "knowledge_objects.source_item_id", 1),
+		newGraphV2Edge("source", "knowledge_object:ko2", "odd:x", "knowledge_objects.source_item_id", 1),
 		newGraphV2Edge("source", "annotation:a1", "bookmark:b1", "annotations.bookmark_id", 1),
 	}
 	sort.Slice(want, func(i, j int) bool { return want[i].ID < want[j].ID })

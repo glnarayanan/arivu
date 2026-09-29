@@ -13,9 +13,10 @@ page field.
 Arivu is light-only. `color-scheme: light` is an intentional product decision;
 do not add a dark palette or follow `prefers-color-scheme` for colors.
 
-The knowledge-focused product pass changes navigation and retires planning
-workflows as described in `PRODUCT.md`. It retains this visual system and the
-existing shared interaction primitives.
+This overhaul does not redefine the product. Routes, navigation destinations,
+menu layout and options, content hierarchy, interactions, and functionality
+remain unchanged. When applying the system to another surface, restyle the
+existing markup and behavior rather than reorganizing it.
 
 Brightlight is a licensed design reference, not a runtime dependency. Its
 Astro components, Tailwind setup, scripts, font files, and image assets are not
@@ -82,16 +83,15 @@ existing reader measure.
 
 ## Application Shell
 
-The knowledge-focused shell uses:
+The existing shell is intentionally unchanged:
 
 - **Desktop:** left rail, central workspace, and contextual right inspector
   where the surface already needs one.
 - **Tablet:** compact rail; graph inspector moves below the canvas.
-- **Mobile:** fixed four-item bottom navigation, persistent Capture and Search
-  actions, and dialogs/inspectors that fit safe areas.
+- **Mobile:** fixed five-item bottom navigation, persistent Capture and Search /
+  Ask actions, and dialogs/inspectors that fit safe areas.
 
-Primary navigation is Home, Library, Notes, and Search. Graph and Review are
-secondary destinations under More. There is no standalone Insights page.
+Primary navigation remains exactly Home, Library, Notes, Graph, and Insights.
 Imports/exports, settings, administration, and account actions remain under the
 profile or contextual controls. The command palette remains under More and
 `Cmd/Ctrl+K`.
@@ -118,12 +118,14 @@ success, and error treatment as applicable.
 - Destructive actions name the outcome and require confirmation.
 - Forms retain labels, inline errors, `aria-describedby`, native validity, and
   specific busy labels.
+- Object creation uses type-specific native fields. Raw JSON is not a normal
+  creation or editing control.
 
 ## Graph Semantics
 
 Node color is a secondary cue; labels and accessible type names remain present.
-Current semantic roles cover bookmarks, notes, annotations, entities, and
-concepts. Solid edges indicate explicit
+Current semantic roles cover bookmarks, notes, daily notes, annotations,
+knowledge objects, entities, and concepts. Solid edges indicate explicit
 relationships; derived relationships use a quieter or dashed treatment.
 
 The graph is intentionally bounded. The current browser requests at most 48
@@ -156,7 +158,7 @@ alternative; content must be visible before animation.
 
 ## Quality Checks
 
-At minimum, validate authenticated Home, Library, Notes, Search, Graph, Review,
+At minimum, validate authenticated Home, Library, Notes, Search / Ask, Graph, Insights,
 bookmark detail, note detail, Settings, and legacy route aliases at desktop,
 tablet, and 390x844 mobile sizes. Validate the light-only palette even when the
 operating system requests dark appearance. Check keyboard-only operation,

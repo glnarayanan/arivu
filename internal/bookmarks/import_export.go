@@ -633,19 +633,11 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 			return nil, true, errors.New("unsupported backup version")
 		}
 	}
-	version := intValueDefault(backup["version"], 1)
-	if err := validatePreservationImport(backup); err != nil {
-		return nil, true, err
-	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	jobID := ids.New()
 	oldBookmarks := map[string]string{}
 	oldNotes := map[string]string{}
-	if version >= 3 {
-		if err := s.preparePreservationNoteMappings(ctx, userID, backup["knowledge_preservation"], oldNotes); err != nil {
-			return nil, true, err
-		}
-	}
+	oldObjects := map[string]string{}
 	restored := 0
 	_, _ = s.db.ExecContext(ctx, `INSERT INTO import_jobs(id,user_id,total_bookmarks,content_fetched,ai_processed,failed,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, jobID, userID, len(bookmarksRaw), 0, 0, 0, "processing", now, now)
 	for _, rawBookmark := range bookmarksRaw {
@@ -685,21 +677,19 @@ func (s *Service) restoreFullExport(ctx context.Context, userID string, raw []by
 		s.restoreBookmarkChildren(ctx, userID, newID, bookmark, oldNotes, evidenceIDs, now)
 	}
 	s.restoreStandaloneNotes(ctx, userID, backup["notes"], oldNotes, now)
-	if version >= 3 {
-		if err := s.restorePreservation(ctx, userID, backup["knowledge_preservation"], oldNotes); err != nil {
-			return nil, true, err
-		}
-	}
-	// Foundation v3 backups can contain legacy rows before startup conversion.
-	// Existing preservation identities (including tombstones) take precedence.
-	if err := s.restoreLegacyPreservation(ctx, userID, backup, oldBookmarks, oldNotes, now); err != nil {
+	if err := s.restorePreservation(ctx, userID, backup["knowledge_preservation"], oldNotes); err != nil {
 		return nil, true, err
 	}
+	s.restoreDailyNotes(ctx, userID, backup["daily_notes"], now)
+	s.restoreKnowledgeObjects(ctx, userID, backup["knowledge_objects"], oldBookmarks, oldNotes, oldObjects, now)
 	s.restoreTags(ctx, userID, backup["tags"], now)
 	s.restoreCollections(ctx, userID, backup["collections"], oldBookmarks, now)
 	s.restoreSavedSearches(ctx, userID, backup["saved_searches"], now)
 	s.restoreReviewEvents(ctx, userID, backup["review_events"], oldBookmarks, oldNotes, now)
+	s.restoreItemStates(ctx, userID, backup["item_states"], oldBookmarks, oldNotes, now)
 	s.restoreItemLinks(ctx, userID, backup["item_links"], oldBookmarks, oldNotes, now)
+	s.restoreReminders(ctx, userID, backup["reminders"], oldBookmarks, oldNotes, now)
+	s.restoreActionItems(ctx, userID, backup["action_items"], oldBookmarks, oldNotes, now)
 	s.restoreResultFeedback(ctx, userID, backup["result_feedback"], oldBookmarks, oldNotes, now)
 	s.restoreKnowledgeFeedback(ctx, userID, backup["knowledge_feedback"], now)
 	s.restoreInsightImpressions(ctx, userID, backup["insight_impressions"], now)
@@ -816,8 +806,8 @@ func (s *Service) restoreBookmarkChildren(ctx context.Context, userID, bookmarkI
 	for _, rawNote := range listValue(bookmark["notes"]) {
 		if note, ok := rawNote.(map[string]any); ok {
 			oldID := stringValue(note["id"])
-			noteID, mapped := oldNotes[oldID]
-			if !mapped {
+			noteID := oldNotes[oldID]
+			if noteID == "" {
 				noteID = s.restoreNote(ctx, userID, note, now)
 			}
 			if noteID != "" {
@@ -851,13 +841,85 @@ func (s *Service) restoreStandaloneNotes(ctx context.Context, userID string, raw
 	for _, rawNote := range listValue(raw) {
 		if note, ok := rawNote.(map[string]any); ok {
 			oldID := stringValue(note["id"])
-			if _, mapped := oldNotes[oldID]; mapped {
+			if oldNotes[oldID] != "" {
 				continue
 			}
 			if noteID := s.restoreNote(ctx, userID, note, now); noteID != "" {
 				oldNotes[oldID] = noteID
 			}
 		}
+	}
+}
+
+func (s *Service) restoreDailyNotes(ctx context.Context, userID string, raw any, now string) {
+	for _, rawNote := range listValue(raw) {
+		note, ok := rawNote.(map[string]any)
+		if !ok {
+			continue
+		}
+		date, valid := dailyNoteDate(stringValue(note["date"]))
+		if !valid {
+			continue
+		}
+		body := strings.TrimSpace(stringValue(note["body"]))
+		if len(body) > maxNoteBody {
+			body = body[:maxNoteBody]
+		}
+		created := fallback(stringValue(note["created_at"]), now)
+		updated := fallback(stringValue(note["updated_at"]), now)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO daily_notes(user_id,note_date,body,created_at,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id,note_date) DO UPDATE SET body=excluded.body,updated_at=excluded.updated_at`, userID, date, body, created, updated)
+	}
+}
+
+func (s *Service) restoreKnowledgeObjects(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes, oldObjects map[string]string, now string) {
+	type pendingSource struct {
+		id         string
+		sourceType string
+		sourceID   string
+	}
+	pending := []pendingSource{}
+	for _, rawObject := range listValue(raw) {
+		object, ok := rawObject.(map[string]any)
+		if !ok {
+			continue
+		}
+		objectType := normalizeObjectType(stringValue(object["object_type"]))
+		title := strings.TrimSpace(stringValue(object["title"]))
+		description := strings.TrimSpace(stringValue(object["description"]))
+		if objectType == "" || title == "" && description == "" {
+			continue
+		}
+		fields := jsonString(object["fields"])
+		oldID := stringValue(object["id"])
+		id := fallback(oldID, ids.New())
+		res, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO knowledge_objects(id,user_id,object_type,title,description,fields_json,source_item_type,source_item_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, userID, objectType, title, description, fields, "", "", fallback(stringValue(object["created_at"]), now), fallback(stringValue(object["updated_at"]), now))
+		if err != nil {
+			continue
+		}
+		if rows, _ := res.RowsAffected(); rows == 0 {
+			if oldID == "" {
+				continue
+			}
+			id = ids.New()
+			if _, err := s.db.ExecContext(ctx, `INSERT OR IGNORE INTO knowledge_objects(id,user_id,object_type,title,description,fields_json,source_item_type,source_item_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`, id, userID, objectType, title, description, fields, "", "", fallback(stringValue(object["created_at"]), now), fallback(stringValue(object["updated_at"]), now)); err != nil {
+				continue
+			}
+		}
+		if oldID != "" {
+			oldObjects[oldID] = id
+		}
+		sourceType := normalizeSourceItemType(stringValue(object["source_item_type"]))
+		sourceID := stringValue(object["source_item_id"])
+		if sourceType != "" && sourceID != "" {
+			pending = append(pending, pendingSource{id: id, sourceType: sourceType, sourceID: sourceID})
+		}
+	}
+	for _, item := range pending {
+		sourceID := remapObjectSourceID(item.sourceType, item.sourceID, oldBookmarks, oldNotes, oldObjects)
+		if sourceID == "" || !s.sourceItemExists(ctx, userID, item.sourceType, sourceID) {
+			continue
+		}
+		_, _ = s.db.ExecContext(ctx, `UPDATE knowledge_objects SET source_item_type=?,source_item_id=? WHERE id=? AND user_id=?`, item.sourceType, sourceID, item.id, userID)
 	}
 }
 
@@ -1132,13 +1194,18 @@ func (s *Service) fullExport(ctx context.Context, userID string) (map[string]any
 		"exported_at":            time.Now().UTC().Format(time.RFC3339),
 		"bookmarks":              bookmarks,
 		"notes":                  s.exportStandaloneNotes(ctx, userID),
+		"daily_notes":            s.exportDailyNotes(ctx, userID),
+		"knowledge_objects":      s.exportKnowledgeObjects(ctx, userID),
 		"tags":                   s.exportTags(ctx, userID),
 		"collections":            s.exportCollections(ctx, userID),
 		"saved_searches":         s.exportSavedSearches(ctx, userID),
 		"import_jobs":            s.exportImportJobs(ctx, userID),
 		"import_sources":         s.exportImportSources(ctx, userID),
 		"review_events":          s.exportReviewEvents(ctx, userID),
+		"item_states":            s.exportItemStates(ctx, userID),
 		"item_links":             s.exportItemLinks(ctx, userID),
+		"reminders":              s.exportReminders(ctx, userID),
+		"action_items":           s.exportActionItems(ctx, userID),
 		"result_feedback":        s.exportResultFeedback(ctx, userID),
 		"knowledge_feedback":     s.exportKnowledgeFeedback(ctx, userID),
 		"insight_impressions":    s.exportInsightImpressions(ctx, userID),
@@ -1322,6 +1389,37 @@ func (s *Service) exportStandaloneNotes(ctx context.Context, userID string) []ma
 	return notes
 }
 
+func (s *Service) exportDailyNotes(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT note_date,body,created_at,updated_at FROM daily_notes WHERE user_id=? ORDER BY note_date DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	notes := []map[string]any{}
+	for rows.Next() {
+		var date, body, created, updated string
+		_ = rows.Scan(&date, &body, &created, &updated)
+		notes = append(notes, map[string]any{"date": date, "body": body, "created_at": created, "updated_at": updated})
+	}
+	return notes
+}
+
+func (s *Service) exportKnowledgeObjects(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,object_type,title,description,fields_json,source_item_type,source_item_id,created_at,updated_at FROM knowledge_objects WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	objects := []map[string]any{}
+	for rows.Next() {
+		object, err := scanObject(rows.Scan)
+		if err == nil {
+			objects = append(objects, object)
+		}
+	}
+	return objects
+}
+
 func (s *Service) exportTags(ctx context.Context, userID string) []map[string]any {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,name,slug,source,created_at,updated_at FROM tags WHERE user_id=? ORDER BY name COLLATE NOCASE`, userID)
 	if err != nil {
@@ -1426,6 +1524,22 @@ func (s *Service) exportReviewEvents(ctx context.Context, userID string) []map[s
 	return events
 }
 
+func (s *Service) exportItemStates(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT item_type,item_id,stage,importance,next_action,created_at,updated_at FROM item_states WHERE user_id=? ORDER BY updated_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	defer rows.Close()
+	states := []map[string]any{}
+	for rows.Next() {
+		var itemType, itemID, stage, nextAction, created, updated string
+		var importance int
+		_ = rows.Scan(&itemType, &itemID, &stage, &importance, &nextAction, &created, &updated)
+		states = append(states, map[string]any{"item_type": itemType, "item_id": itemID, "stage": stage, "importance": importance, "next_action": nextAction, "created_at": created, "updated_at": updated})
+	}
+	return states
+}
+
 func (s *Service) exportItemLinks(ctx context.Context, userID string) []map[string]any {
 	rows, err := s.db.QueryContext(ctx, `SELECT id,from_type,from_id,to_type,to_id,label,source,created_at FROM item_links WHERE user_id=? ORDER BY created_at DESC`, userID)
 	if err != nil {
@@ -1437,6 +1551,30 @@ func (s *Service) exportItemLinks(ctx context.Context, userID string) []map[stri
 		links = append(links, scanLink(rows))
 	}
 	return links
+}
+
+func (s *Service) exportReminders(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,COALESCE(completed_at,''),COALESCE(last_notified_at,''),COALESCE(last_completed_at,'') FROM reminders WHERE user_id=? ORDER BY due_at ASC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	reminders, err := s.scanReminders(ctx, userID, rows)
+	if err != nil {
+		return []map[string]any{}
+	}
+	return reminders
+}
+
+func (s *Service) exportActionItems(ctx context.Context, userID string) []map[string]any {
+	rows, err := s.db.QueryContext(ctx, `SELECT id,item_type,item_id,title,status,created_at,COALESCE(completed_at,'') FROM action_items WHERE user_id=? ORDER BY created_at DESC`, userID)
+	if err != nil {
+		return []map[string]any{}
+	}
+	items, err := s.scanActionItems(ctx, userID, rows)
+	if err != nil {
+		return []map[string]any{}
+	}
+	return items
 }
 
 func (s *Service) exportResultFeedback(ctx context.Context, userID string) []map[string]any {
@@ -1529,6 +1667,35 @@ func (s *Service) restoreInsightImpressions(ctx context.Context, userID string, 
 	}
 }
 
+func (s *Service) restoreItemStates(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawState := range listValue(raw) {
+		state, ok := rawState.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(state["item_type"])
+		itemID := stringValue(state["item_id"])
+		if itemType == "bookmark" {
+			itemID = oldBookmarks[itemID]
+		} else if itemType == "note" {
+			itemID = oldNotes[itemID]
+		}
+		stage := stringValue(state["stage"])
+		if itemID == "" || !validItemStage(stage) {
+			continue
+		}
+		importance := intValue(state["importance"])
+		if importance < 0 || importance > 5 {
+			importance = 0
+		}
+		nextAction := strings.TrimSpace(stringValue(state["next_action"]))
+		if len(nextAction) > 500 {
+			nextAction = nextAction[:500]
+		}
+		_ = s.upsertItemState(ctx, userID, itemType, itemID, stage, importance, nextAction, fallback(stringValue(state["updated_at"]), now))
+	}
+}
+
 func (s *Service) restoreResultFeedback(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
 	for _, rawItem := range listValue(raw) {
 		item, ok := rawItem.(map[string]any)
@@ -1545,6 +1712,80 @@ func (s *Service) restoreResultFeedback(ctx context.Context, userID string, raw 
 		created := fallback(stringValue(item["created_at"]), now)
 		updated := fallback(stringValue(item["updated_at"]), now)
 		_, _ = s.db.ExecContext(ctx, `INSERT INTO result_feedback(user_id,item_type,item_id,surface,feedback,created_at,updated_at) VALUES(?,?,?,?,?,?,?) ON CONFLICT(user_id,item_type,item_id,surface) DO UPDATE SET feedback=excluded.feedback,updated_at=excluded.updated_at`, userID, itemType, itemID, surface, feedback, created, updated)
+	}
+}
+
+func (s *Service) restoreReminders(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawReminder := range listValue(raw) {
+		reminder, ok := rawReminder.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(reminder["item_type"])
+		itemID := remapItemID(itemType, stringValue(reminder["item_id"]), oldBookmarks, oldNotes)
+		due, err := time.Parse(time.RFC3339, stringValue(reminder["due_at"]))
+		if itemID == "" || err != nil || !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			continue
+		}
+		status := stringValue(reminder["status"])
+		if status != "completed" {
+			status = "pending"
+		}
+		note := strings.TrimSpace(stringValue(reminder["note"]))
+		if len(note) > 500 {
+			note = note[:500]
+		}
+		timezoneName := fallback(stringValue(reminder["timezone"]), "UTC")
+		if _, err := time.LoadLocation(timezoneName); err != nil {
+			timezoneName = "UTC"
+		}
+		recurrence := fallback(stringValue(reminder["recurrence"]), "none")
+		if !validReminderRecurrence(recurrence) {
+			recurrence = "none"
+		}
+		interval := intValue(reminder["recurrence_interval_days"])
+		if recurrence != "custom" || interval < 1 || interval > 365 {
+			interval = 0
+		}
+		channel := fallback(stringValue(reminder["notification_channel"]), "in_app")
+		if channel != "email" {
+			channel = "in_app"
+		}
+		completed := nullableStringValue(stringValue(reminder["completed_at"]))
+		lastCompleted := nullableStringValue(stringValue(reminder["last_completed_at"]))
+		reminderID := ids.New()
+		dueUTC := due.UTC().Format(time.RFC3339)
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO reminders(id,user_id,item_type,item_id,due_at,timezone,recurrence,recurrence_interval_days,notification_channel,note,status,created_at,completed_at,last_completed_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, reminderID, userID, itemType, itemID, dueUTC, timezoneName, recurrence, interval, channel, note, status, fallback(stringValue(reminder["created_at"]), now), completed, lastCompleted)
+		if status == "pending" && channel == "email" && due.After(time.Now().UTC()) {
+			s.scheduleReminderNotification(ctx, userID, reminderID, dueUTC, channel)
+		}
+	}
+}
+
+func (s *Service) restoreActionItems(ctx context.Context, userID string, raw any, oldBookmarks, oldNotes map[string]string, now string) {
+	for _, rawItem := range listValue(raw) {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		itemType := stringValue(item["item_type"])
+		itemID := remapItemID(itemType, stringValue(item["item_id"]), oldBookmarks, oldNotes)
+		if itemID == "" || !s.reviewItemExists(ctx, userID, itemType, itemID) {
+			continue
+		}
+		title := strings.TrimSpace(stringValue(item["title"]))
+		if title == "" {
+			continue
+		}
+		if len(title) > 300 {
+			title = title[:300]
+		}
+		status := stringValue(item["status"])
+		if status != "completed" {
+			status = "pending"
+		}
+		completed := nullableStringValue(stringValue(item["completed_at"]))
+		_, _ = s.db.ExecContext(ctx, `INSERT INTO action_items(id,user_id,item_type,item_id,title,status,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?)`, ids.New(), userID, itemType, itemID, title, status, fallback(stringValue(item["created_at"]), now), completed)
 	}
 }
 
@@ -1574,6 +1815,13 @@ func remapItemID(itemType, itemID string, oldBookmarks, oldNotes map[string]stri
 		return oldNotes[itemID]
 	}
 	return ""
+}
+
+func remapObjectSourceID(itemType, itemID string, oldBookmarks, oldNotes, oldObjects map[string]string) string {
+	if itemType == "object" {
+		return oldObjects[itemID]
+	}
+	return remapItemID(itemType, itemID, oldBookmarks, oldNotes)
 }
 
 type obsidianItem struct {

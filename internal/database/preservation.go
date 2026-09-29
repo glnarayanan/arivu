@@ -12,7 +12,7 @@ import (
 )
 
 // PreserveKnowledgeWorkflows makes editable notes without destroying the exact
-// legacy records. Migrate invokes it when opening the database.
+// legacy records. It is explicit until the workflow-retirement migration lands.
 // The preservation row doubles as a tombstone: deleting or editing a converted
 // note must never cause the next migration to recreate or overwrite it.
 func PreserveKnowledgeWorkflows(ctx context.Context, db *sql.DB) error {
@@ -31,13 +31,7 @@ func PreserveKnowledgeWorkflows(ctx context.Context, db *sql.DB) error {
 
 func preserveWorkflow(ctx context.Context, tx *sql.Tx, kind string) error {
 	// kind is an internal allowlisted table name, never input from a request.
-	identity := "legacy.id"
-	if kind == "daily_notes" {
-		identity = "legacy.note_date"
-	} else if kind == "item_states" {
-		identity = "legacy.item_type || ':' || legacy.item_id"
-	}
-	rows, err := tx.QueryContext(ctx, `SELECT legacy.* FROM `+kind+` legacy WHERE NOT EXISTS(SELECT 1 FROM knowledge_preservation p WHERE p.user_id=legacy.user_id AND p.kind=? AND p.legacy_id=`+identity+`)`, kind)
+	rows, err := tx.QueryContext(ctx, `SELECT * FROM `+kind)
 	if err != nil {
 		return err
 	}

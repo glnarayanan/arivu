@@ -147,9 +147,6 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := execSchemaStatements(ctx, db, indexes); err != nil {
 		return err
 	}
-	if err := PreserveKnowledgeWorkflows(ctx, db); err != nil {
-		return fmt.Errorf("preserve retired knowledge workflows: %w", err)
-	}
 	return nil
 }
 

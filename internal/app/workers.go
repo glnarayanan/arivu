@@ -62,7 +62,7 @@ func (a *App) runOneJob(ctx context.Context) {
 	}
 	switch job.Type {
 	case "reminder.email":
-		// Old queued jobs complete without sending mail after workflow retirement.
+		err = a.processReminderEmailJob(ctx, job.UserID, job.Payload)
 	default:
 		err = a.bookmarks.ProcessJob(ctx, job.Type, job.Payload)
 	}

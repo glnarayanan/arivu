@@ -232,6 +232,10 @@ func (s *Service) CreateExtensionAnnotation(w http.ResponseWriter, r *http.Reque
 				writeError(w, http.StatusInternalServerError, "Could not save annotation")
 				return
 			}
+			if _, err := tx.ExecContext(r.Context(), `INSERT INTO item_states(user_id,item_type,item_id,stage,importance,next_action,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)`, user.ID, "bookmark", bookmarkID, "inbox", 0, "", now, now); err != nil {
+				writeError(w, http.StatusInternalServerError, "Could not save annotation")
+				return
+			}
 		}
 	}
 
@@ -359,7 +363,10 @@ func (s *Service) Get(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bm["tags"] = s.bookmarkTags(r.Context(), user.ID, r.PathValue("id"))
 	bm["annotations"] = s.bookmarkAnnotations(r.Context(), user.ID, r.PathValue("id"))
 	bm["notes"] = s.bookmarkNotes(r.Context(), user.ID, r.PathValue("id"))
+	bm["item_state"] = s.itemState(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	bm["links"] = s.itemLinks(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	bm["reminders"] = s.itemReminders(r.Context(), user.ID, "bookmark", r.PathValue("id"))
+	bm["action_items"] = s.itemActionItems(r.Context(), user.ID, "bookmark", r.PathValue("id"))
 	bm["capture_attempts"] = s.captureAttempts(r.Context(), user.ID, r.PathValue("id"))
 	bm["artifacts"] = s.bookmarkArtifacts(r.Context(), user.ID, r.PathValue("id"))
 	evidence, evidenceErr := s.Evidence(r.Context(), user.ID, r.PathValue("id"))

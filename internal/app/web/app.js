@@ -9,7 +9,7 @@ const state = {
 };
 const routeLifecycle = createRouteLifecycle();
 const offlineQueueKey = "arivu.offline.bookmarks";
-const offlineSnapshotKey = "arivu.offline.snapshots.v2";
+const offlineSnapshotKey = "arivu.offline.snapshots";
 const modelProviderPresets = [
   { id: "openai", label: "OpenAI", baseURL: "https://api.openai.com/v1", defaultModel: "" },
   { id: "openrouter", label: "OpenRouter", baseURL: "https://openrouter.ai/api/v1", defaultModel: "~openai/gpt-latest" },
@@ -38,24 +38,24 @@ const routes = [
   { prefix: "/today", page: todayPage, access: "protected" },
   { prefix: "/library", page: libraryPage, access: "protected" },
   { prefix: "/graph", page: graphPage, access: "protected" },
+  { prefix: "/insights", page: insightsPage, access: "protected" },
   { prefix: "/search", page: searchPage, access: "protected" },
   { prefix: "/dashboard", page: () => compatibilityRedirect("/library", { view: "capture" }), access: "protected" },
   { prefix: "/bookmark/", page: bookmarkPage, access: "protected" },
-  { prefix: "/inbox", page: () => navigate("/library", true), access: "protected" },
-  { prefix: "/focus", page: () => navigate("/today", true), access: "protected" },
-  { prefix: "/assistant", page: () => navigate("/search", true), access: "protected" },
+  { prefix: "/inbox", page: () => compatibilityRedirect("/library", { view: "inbox", stage: "inbox" }), access: "protected" },
+  { prefix: "/focus", page: focusCompatibilityRedirect, access: "protected" },
+  { prefix: "/assistant", page: () => compatibilityRedirect("/search", { mode: "ask", review: "actions" }), access: "protected" },
   { prefix: "/notes/", page: notesPage, access: "protected" },
   { prefix: "/notes", page: notesPage, access: "protected" },
-  { prefix: "/objects", page: () => navigate("/notes", true), access: "protected" },
-  { prefix: "/evolution", page: () => navigate("/today", true), access: "protected" },
-  { prefix: "/board", page: () => navigate("/today", true), access: "protected" },
-  { prefix: "/review", page: reviewPage, access: "protected" },
+  { prefix: "/objects", page: () => compatibilityRedirect("/library", { type: "knowledge_object" }), access: "protected" },
+  { prefix: "/evolution", page: () => compatibilityRedirect("/insights", { family: "changed_thinking", legacy: "evolution" }), access: "protected" },
+  { prefix: "/board", page: () => homeViewRedirect("board"), access: "protected" },
+  { prefix: "/review", page: () => homeViewRedirect("review"), access: "protected" },
   { prefix: "/duplicates", page: () => compatibilityRedirect("/library", { management: "duplicates" }), access: "protected" },
   { prefix: "/settings", page: settingsPage, access: "protected" },
   { prefix: "/imports", page: () => navigate("/settings?section=import", true), access: "protected" },
   { prefix: "/knowledge-graph", page: () => compatibilityRedirect("/graph"), access: "protected" },
-  { prefix: "/insights", page: () => navigate("/today", true), access: "protected" },
-  { prefix: "/analytics", page: () => navigate("/today", true), access: "protected" },
+  { prefix: "/analytics", page: () => compatibilityRedirect("/insights"), access: "protected" },
   { prefix: "/admin", page: adminPage, access: "protected" },
 ];
 
@@ -65,6 +65,20 @@ function compatibilityRedirect(path, defaults = {}) {
     if (!params.has(key)) params.set(key, value);
   });
   navigate(`${path}${params.size ? `?${params}` : ""}`, true);
+}
+
+function homeViewRedirect(view) {
+  const params = new URLSearchParams(location.search);
+  params.set("view", view);
+  navigate(`/today?${params}`, true);
+}
+
+function focusCompatibilityRedirect() {
+  const params = new URLSearchParams(location.search);
+  const legacyFilter = params.get("view");
+  params.set("view", "focus");
+  if (["pending", "overdue", "today", "upcoming", "completed"].includes(legacyFilter)) params.set("focus", legacyFilter);
+  navigate(`/today?${params}`, true);
 }
 
 async function api(path, options = {}) {
@@ -223,18 +237,25 @@ function offlineSnapshotAllowed(path, options = {}) {
     /^\/bookmarks($|\?)/,
     /^\/bookmarks\/[^/]+($|\/related|\?)/,
     /^\/notes($|\/|\?)/,
+    /^\/daily-notes\//,
     /^\/search\/items($|\?)/,
+    /^\/objects($|\/|\?)/,
+    /^\/evolution($|\?)/,
+    /^\/today-board($|\?)/,
     /^\/review($|\?)/,
+    /^\/inbox($|\?)/,
+    /^\/action-items($|\?)/,
+    /^\/reminders($|\?)/,
     /^\/memory-jogger($|\?)/,
 	/^\/library\/items($|\?)/,
 	/^\/knowledge-graph\/v2($|\?)/,
+	/^\/insights($|\?)/,
   ].some((pattern) => pattern.test(path));
 }
 
 function offlineSnapshots() {
-  if (!state.user?.id) return {};
   try {
-    const parsed = JSON.parse(localStorage.getItem(`${offlineSnapshotKey}:${state.user.id}`) || "{}");
+    const parsed = JSON.parse(localStorage.getItem(offlineSnapshotKey) || "{}");
     return parsed && typeof parsed === "object" ? parsed : {};
   } catch {
     return {};
@@ -247,16 +268,16 @@ function readOfflineSnapshot(path, options = {}) {
 }
 
 function writeOfflineSnapshot(path, options = {}, data = null) {
-  if (!state.user?.id || !offlineSnapshotAllowed(path, options) || data == null) return;
+  if (!offlineSnapshotAllowed(path, options) || data == null) return;
   const snapshots = offlineSnapshots();
   snapshots[path] = { saved_at: new Date().toISOString(), data };
   const limited = Object.fromEntries(Object.entries(snapshots).sort((a, b) => String(b[1]?.saved_at || "").localeCompare(String(a[1]?.saved_at || ""))).slice(0, 40));
   try {
-    localStorage.setItem(`${offlineSnapshotKey}:${state.user.id}`, JSON.stringify(limited));
+    localStorage.setItem(offlineSnapshotKey, JSON.stringify(limited));
   } catch {
     try {
       const smallest = Object.fromEntries(Object.entries(limited).slice(0, 12));
-      localStorage.setItem(`${offlineSnapshotKey}:${state.user.id}`, JSON.stringify(smallest));
+      localStorage.setItem(offlineSnapshotKey, JSON.stringify(smallest));
     } catch {}
   }
 }
@@ -532,7 +553,8 @@ function shell(title, content, { wide = false } = {}) {
     ["/today", "Home"],
     ["/library", "Library"],
     ["/notes", "Notes"],
-    ["/search", "Search"],
+    ["/graph", "Graph"],
+    ["/insights", "Insights"],
   ];
   return `
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -732,36 +754,103 @@ async function acceptInvitePage(scope) {
 
 async function todayPage(scope) {
   await requireUser();
-  const [library, review, notes] = await Promise.all([
-    api("/library/items?scope=content&limit=8"),
-    api("/review?limit=4").catch(() => ({ items: [] })),
+  const view = new URLSearchParams(location.search).get("view");
+  if (view === "focus") return focusPage(scope);
+  if (view === "review") return reviewPage(scope);
+  if (view === "board") return boardPage(scope);
+  const date = localDateKey();
+  const [daily, inbox, actions, reminders, review, memory, notes] = await Promise.all([
+    api(`/daily-notes/${date}`),
+    api("/inbox?stage=inbox&limit=6").catch(() => ({ items: [], counts: {} })),
+    api("/action-items?status=all").catch(() => ({ action_items: [] })),
+    api("/reminders?status=all").catch(() => ({ reminders: [] })),
+    api("/review?limit=6").catch(() => ({ items: [] })),
+    api("/memory-jogger").catch(() => ({ has_memory: false })),
     api("/notes").catch(() => ({ notes: [] })),
   ]);
-  const recent = (library.items || []).filter((item) => ["bookmark", "note", "annotation"].includes(item.type)).slice(0, 6);
-  const revisiting = (review.items || []).slice(0, 3);
-  setRoot(scope, shell("Home", `<div class="home-view">
-    <form class="search-workspace home-search" role="search" id="home-search-form">
-      <label for="home-search">Search your knowledge</label>
-      <div class="search-line">
-        <input id="home-search" type="search" placeholder="Find a source or note">
-        <button type="submit">Search</button>
+  const openActions = (actions.action_items || []).filter((item) => item.status !== "completed").slice(0, 6);
+  const dueReminders = (reminders.reminders || []).filter((item) => item.status !== "completed" && ["overdue", "today"].includes(item.due_state)).slice(0, 6);
+  const note = daily.daily_note || { body: "" };
+  setRoot(scope, shell("Home", `<div class="home-view home-pulse">
+    ${homeViewTabs("pulse")}
+    <section class="home-pulse-columns">
+      <div class="home-pulse-primary stack">
+        <form class="panel form pulse-daily" id="daily-note-form">
+          <span class="meta">${escapeHTML(date)}</span>
+          <h2>Daily note</h2>
+          <div class="field"><label for="daily-note-body">Plan, decisions, loose thoughts</label><textarea id="daily-note-body" rows="10" placeholder="What matters today?">${escapeHTML(note.body || "")}</textarea>${voiceButton("daily-note-body", "daily note")}</div>
+          <p class="form-message" id="daily-note-message" data-form-message hidden></p>
+          <button type="submit">Save daily note</button>
+        </form>
+        ${todayList("New captures", inbox.items || [], "/library?stage=inbox", todayInboxItem, "pulse-captures")}
+        ${todayList("Worth revisiting", review.items || [], "/today?view=review", todayReviewItem, "pulse-revisit")}
       </div>
-    </form>
-    <section class="home-overview">
-      ${todayList("Recent Library items", recent, "/library", libraryItem)}
-      ${todayList("Worth revisiting", revisiting, "/review", todayReviewItem, "home-revisit")}
-    </section>
-    <section class="panel home-recent-notes">
-      <h2>Recent notes</h2>
-      ${todayListBody((notes.notes || []).slice(0, 5), todayNoteItem)}
-      <p><a class="text-link" href="/notes">Open notes</a></p>
+      <div class="home-pulse-rail stack">
+        <section class="panel pulse-summary">
+          <span class="meta">Knowledge pulse</span>
+          <h2>${Number((inbox.counts || {}).inbox || 0)} new · ${openActions.length + dueReminders.length} active · ${(review.items || []).length} worth revisiting</h2>
+          <p>Continue a thread, revisit a useful memory, and notice what your recent material is beginning to connect.</p>
+          <div class="chips">
+            <a href="/library?view=capture">Capture</a>
+            <a href="/library?stage=inbox">Triage</a>
+            <a href="/today?view=focus">Continue</a>
+            <a href="/today?view=review">Review</a>
+          </div>
+        </section>
+        <div class="pulse-memory">${memoryCard(memory)}</div>
+        ${todayList("Continue thinking", [...openActions, ...dueReminders].slice(0, 8), "/today?view=focus", todayWorkItem, "pulse-continue")}
+        <section class="panel pulse-fast-capture">
+          <h2>Fast capture</h2>
+          <p>Save a link, note, quote, or file without deciding where it belongs first.</p>
+          <div class="chips">
+            <a href="/library?view=capture">Capture</a>
+            <a href="/notes">New note</a>
+            <a href="/search?mode=ask">Ask Arivu</a>
+          </div>
+        </section>
+        <section class="panel pulse-recent-notes">
+          <h2>Recent notes</h2>
+          ${todayListBody((notes.notes || []).slice(0, 5), todayNoteItem)}
+          <p><a class="text-link" href="/notes">Open notes</a></p>
+        </section>
+      </div>
     </section>
   </div>`));
-  document.querySelector("#home-search-form")?.addEventListener("submit", (event) => {
+  const form = document.querySelector("#daily-note-form");
+  bindVoiceCapture();
+  form.addEventListener("submit", async (event) => {
     event.preventDefault();
-    const query = document.querySelector("#home-search").value.trim();
-    navigate(`/search${query ? `?q=${encodeURIComponent(query)}` : ""}`);
+    scope.assertCurrent();
+    const done = setButtonBusy(event.submitter, "Saving");
+    setFormMessage(form);
+    try {
+      await api(`/daily-notes/${date}`, { method: "PUT", body: JSON.stringify({ body: document.querySelector("#daily-note-body").value }) });
+      scope.assertCurrent();
+      setFormMessage(form, "Daily note saved.", "success");
+      ui.toast("Daily note saved", "success");
+    } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      if (scope.isCurrent()) done();
+    }
   });
+}
+
+function homeViewTabs(active) {
+  const views = [
+    ["pulse", "Pulse", "/today"],
+    ["focus", "Focus", "/today?view=focus"],
+    ["review", "Review", "/today?view=review"],
+    ["board", "Board", "/today?view=board"],
+  ];
+  return `<nav class="view-tabs" aria-label="Home views">${views.map(([id, label, href]) => `<a href="${href}"${id === active ? ` aria-current="page"` : ""}>${label}</a>`).join("")}</nav>`;
+}
+
+function localDateKey(value = new Date()) {
+  const tzOffset = value.getTimezoneOffset() * 60000;
+  return new Date(value.getTime() - tzOffset).toISOString().slice(0, 10);
 }
 
 function todayList(title, items, href, renderItem, className = "") {
@@ -773,21 +862,43 @@ function todayList(title, items, href, renderItem, className = "") {
 }
 
 function todayListBody(items, renderItem) {
-  if (!items.length) return `<p class="meta">Nothing here yet.</p>`;
+  if (!items.length) return `<p class="meta">Nothing waiting here.</p>`;
   return `<div class="stack">${items.map(renderItem).join("")}</div>`;
+}
+
+function todayInboxItem(item) {
+  const isNote = item.item_type === "note";
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || item.url || "Untitled")}</strong></p>
+    <p class="meta">${escapeHTML(stageLabel(item.stage || "inbox"))} · ${escapeHTML(item.next_action || item.domain || item.source || "")}</p>
+    <a class="text-link" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${encodeURIComponent(item.id)}`}">Open</a>
+  </article>`;
+}
+
+function todayWorkItem(item) {
+  const isReminder = Boolean(item.due_at);
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(isReminder ? formatDate(item.due_at) : item.title || "Action item")}</strong></p>
+    <p class="meta">${escapeHTML(item.item_title || "")}${isReminder ? ` · ${escapeHTML(item.due_state || "")}` : ""}</p>
+    <a class="text-link" href="${itemHref(item)}">Open source</a>
+  </article>`;
 }
 
 function todayReviewItem(item) {
   const isNote = item.item_type === "note";
   return `<article class="annotation">
     <p><strong>${escapeHTML(item.title || item.url || "Untitled")}</strong></p>
-    <p class="meta">${(item.review_reasons || []).slice(0, 2).map(escapeHTML).join(" · ") || escapeHTML(item.resurfacing_reason || "Worth another look")}</p>
+    <p class="meta">${(item.review_reasons || []).slice(0, 2).map(escapeHTML).join(" · ") || escapeHTML(item.resurfacing_reason || "review")}</p>
     <a class="text-link" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${encodeURIComponent(item.id)}`}">Open</a>
   </article>`;
 }
 
 function todayNoteItem(note) {
-  return `<article class="annotation"><p><strong>${escapeHTML(note.title || "Untitled note")}</strong></p><p class="meta">${escapeHTML(formatDate(note.updated_at))}</p><a class="text-link" href="/notes/${encodeURIComponent(note.id)}">Open note</a></article>`;
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(note.title || "Untitled note")}</strong></p>
+    <p class="meta">${escapeHTML(formatDate(note.updated_at))}</p>
+    <a class="text-link" href="/notes/${encodeURIComponent(note.id)}">Open note</a>
+  </article>`;
 }
 
 function currentItemRef() {
@@ -803,11 +914,10 @@ async function libraryPage(scope) {
   const params = new URLSearchParams(location.search);
   if (params.get("management") === "duplicates") return duplicatesPage(scope);
   if (params.get("view") === "capture") return dashboardPage(scope);
+  if (params.get("view") === "inbox") return inboxPage(scope);
   const request = new URLSearchParams(params);
   request.delete("view");
   request.delete("management");
-  request.delete("stage");
-  if (["knowledge_object", "daily_note"].includes(request.get("type"))) request.set("type", "note");
   if (request.has("collection") && !request.has("collection_id")) request.set("collection_id", request.get("collection"));
   request.delete("collection");
   if (request.has("search") && !request.has("q")) request.set("q", request.get("search"));
@@ -818,7 +928,7 @@ async function libraryPage(scope) {
   const sort = params.get("sort") || (params.get("q") ? "relevance" : "newest");
   const density = params.get("density") || localStorage.getItem("arivu-library-density") || "comfortable";
   const contentScope = params.get("scope") === "derived" ? "derived" : "content";
-  const typeOptions = contentScope === "derived" ? ["entity", "concept"] : ["bookmark", "note", "annotation"];
+  const typeOptions = contentScope === "derived" ? ["entity", "concept"] : ["bookmark", "note", "daily_note", "annotation", "knowledge_object"];
   const items = [...(result.items || [])].sort((a, b) => sort === "oldest" ? String(a.updated_at).localeCompare(String(b.updated_at)) : sort === "title" ? String(a.title).localeCompare(String(b.title)) : sort === "domain" ? String(a.source).localeCompare(String(b.source)) : sort === "newest" ? String(b.updated_at).localeCompare(String(a.updated_at)) : 0);
   setRoot(scope, shell("Library", `
     <section class="library-heading">
@@ -828,6 +938,7 @@ async function libraryPage(scope) {
       </div>
       <div class="button-row">
         <button type="button" id="library-capture">Capture</button>
+        <button type="button" class="secondary" id="library-new-object">New object</button>
       </div>
     </section>
     <nav class="library-views" aria-label="Library view">
@@ -840,6 +951,7 @@ async function libraryPage(scope) {
       ${params.get("collection_id") || params.get("collection") ? `<input type="hidden" name="collection_id" value="${escapeHTML(params.get("collection_id") || params.get("collection"))}">` : ""}
       <div class="field library-query"><label for="library-query">Search library</label><input id="library-query" name="q" type="search" value="${escapeHTML(params.get("q") || "")}" placeholder="Title, text, or topic"></div>
       <div class="field"><label for="library-type">Type</label><select id="library-type" name="type">${libraryFilterOptions(typeOptions, params.get("type"), "All types")}</select></div>
+      <div class="field"><label for="library-stage">Stage</label><select id="library-stage" name="stage">${libraryFilterOptions(["inbox", "processing", "processed", "archived"], params.get("stage"), "Any stage")}</select></div>
       <div class="field"><label for="library-sort">Sort</label><select id="library-sort" name="sort">${libraryFilterOptions(["relevance", "newest", "oldest", "title", "domain"], sort, "Sort")}</select></div>
       <button type="submit" class="secondary">Apply</button>
       <details class="library-more-filters"${["connection", "topic", "source", "date_from", "date_to"].some((key) => params.get(key)) || (params.get("density") && params.get("density") !== "comfortable") ? " open" : ""}>
@@ -853,7 +965,7 @@ async function libraryPage(scope) {
           <div class="field"><label for="library-density">Density</label><select id="library-density" name="density">${libraryFilterOptions(["comfortable", "compact"], density, "Density")}</select></div>
         </div>
       </details>
-      ${["q", "type", "connection", "topic", "source", "date_from", "date_to", "collection_id", "collection"].some((key) => params.get(key)) ? `<p class="library-filter-status">Filters are active. <a href="/library${contentScope === "derived" ? "?scope=derived" : ""}">Clear filters</a></p>` : ""}
+      ${["q", "type", "stage", "connection", "topic", "source", "date_from", "date_to", "collection_id", "collection"].some((key) => params.get(key)) ? `<p class="library-filter-status">Filters are active. <a href="/library${contentScope === "derived" ? "?scope=derived" : ""}">Clear filters</a></p>` : ""}
     </form>
     ${collectionBrowser(collections, params.get("collection_id") || params.get("collection"))}
     <section class="library-list density-${escapeHTML(density)}" aria-label="Library items">
@@ -862,6 +974,7 @@ async function libraryPage(scope) {
     ${result.next_cursor ? `<p class="pagination"><a class="button secondary" href="/library?${escapeHTML(libraryNextParams(params, result.next_cursor))}">Load more</a></p>` : ""}
   `));
   document.querySelector("#library-capture")?.addEventListener("click", openCaptureComposer);
+  document.querySelector("#library-new-object")?.addEventListener("click", openObjectComposer);
   localStorage.setItem("arivu-library-density", density);
   document.querySelector("#library-filter-form")?.addEventListener("submit", (event) => {
     event.preventDefault();
@@ -893,7 +1006,7 @@ function libraryItem(item) {
     <div class="library-copy">
       <h2><a href="${href}">${escapeHTML(item.title || "Untitled")}</a></h2>
       <p>${escapeHTML(String(item.body || "").slice(0, 220))}</p>
-      <p class="meta">${[item.source, item.capture_status && `Capture: ${item.capture_status.replaceAll("_", " ")}`, item.connection, formatDate(item.updated_at)].filter(Boolean).map(escapeHTML).join(" · ")}</p>
+      <p class="meta">${[item.source, item.capture_status && `Capture: ${item.capture_status.replaceAll("_", " ")}`, stageLabel(item.stage || ""), item.connection, formatDate(item.updated_at)].filter(Boolean).map(escapeHTML).join(" · ")}</p>
     </div>
     <a class="row-open" href="${href}" aria-label="Open ${escapeHTML(item.title || knowledgeTypeLabel(item.type))}">Open</a>
   </article>`;
@@ -954,6 +1067,7 @@ function evidencePanel(evidence = []) {
 function knowledgeItemHref(type, id, title = "") {
   if (type === "bookmark") return `/bookmark/${encodeURIComponent(id)}`;
   if (type === "note") return `/notes/${encodeURIComponent(id)}`;
+  if (type === "daily_note") return `/today?date=${encodeURIComponent(id)}`;
   if (type === "entity" || type === "concept") return `/graph?focus=${encodeURIComponent(`${type}:${id}`)}`;
   return `/library?type=${encodeURIComponent(type || "")}&q=${encodeURIComponent(title || id)}`;
 }
@@ -968,6 +1082,7 @@ function libraryNextParams(params, cursor) {
 async function searchPage(scope) {
   await requireUser();
   const params = new URLSearchParams(location.search);
+  if (params.get("review") === "actions") return assistantPage(scope);
   const query = params.get("q") || params.get("search") || "";
   const ask = params.get("mode") === "ask" || params.get("answer") === "1";
   let result = { results: [] };
@@ -1114,11 +1229,12 @@ async function openCommandPalette() {
       <div class="chips">
         ${[
           ["/today", "Today"],
-          ["/library", "Library"],
-          ["/notes", "Notes"],
-          ["/search", "Search"],
-          ["/graph", "Graph"],
+          ["/dashboard", "Capture"],
+          ["/inbox", "Inbox"],
+          ["/focus", "Focus"],
           ["/review", "Review"],
+          ["/notes", "Notes"],
+          ["/assistant", "Assistant"],
         ].map(([href, label]) => `<button type="button" class="secondary" data-command-nav="${href}">${label}</button>`).join("")}
         <button type="button" class="secondary" data-command-shortcuts>Keyboard shortcuts</button>
       </div>
@@ -1146,10 +1262,14 @@ async function openCommandPalette() {
     <form class="form" data-command-current ${current ? "" : "hidden"}>
       <h3>Current item</h3>
       <p class="meta">${current ? `${escapeHTML(current.type)}:${escapeHTML(current.id)}` : "Open a bookmark or note first."}</p>
+      <div class="field"><label for="command-task">Task</label><input id="command-task" type="text" placeholder="Next concrete action"></div>
+      <div class="field"><label for="command-reminder">Reminder</label><input id="command-reminder" type="datetime-local"></div>
       <div class="field"><label for="command-link-query">Link target search</label><input id="command-link-query" type="search" placeholder="Search bookmark or note title"></div>
       <div class="field"><label for="command-link-target">Link target</label><select id="command-link-target"><option value="">Search to choose target</option></select></div>
       <div class="field"><label for="command-link-label">Link label</label><input id="command-link-label" type="text" placeholder="related"></div>
       <div class="button-row">
+        <button type="submit" data-command-current-type="task">Add task</button>
+        <button type="submit" class="secondary" data-command-current-type="reminder">Add reminder</button>
         <button type="submit" class="secondary" data-command-current-type="link">Link item</button>
       </div>
     </form>
@@ -1189,8 +1309,8 @@ async function openCommandPalette() {
     const query = body.querySelector("#command-query").value.trim();
     if (!query) return;
     document.querySelector("[data-dialog-close]")?.click();
-    if (event.submitter.dataset.commandSearchType === "answer") navigate(`/search?q=${encodeURIComponent(query)}&mode=ask`);
-    else navigate(`/search?q=${encodeURIComponent(query)}`);
+    if (event.submitter.dataset.commandSearchType === "answer") navigate(`/dashboard?search=${encodeURIComponent(query)}&answer=1`);
+    else navigate(`/dashboard?search=${encodeURIComponent(query)}`);
   });
   const linkQuery = body.querySelector("#command-link-query");
   linkQuery?.addEventListener("change", async () => {
@@ -1205,6 +1325,18 @@ async function openCommandPalette() {
     if (!current) return;
     const type = event.submitter.dataset.commandCurrentType;
     await commandRun(event.submitter, "Saving", async () => {
+      if (type === "task") {
+        const title = body.querySelector("#command-task").value.trim();
+        if (!title) throw new Error("Task is required.");
+        await api("/action-items", { method: "POST", body: JSON.stringify({ item_type: current.type, item_id: current.id, title }) });
+        return "Task added";
+      }
+      if (type === "reminder") {
+        const due = body.querySelector("#command-reminder").value;
+        if (!due) throw new Error("Reminder time is required.");
+        await api("/reminders", { method: "POST", body: JSON.stringify({ item_type: current.type, item_id: current.id, due_at: new Date(due).toISOString(), notification_channel: "in_app" }) });
+        return "Reminder added";
+      }
       const rawTarget = body.querySelector("#command-link-target").value;
       const [toType, toID] = rawTarget.split(":");
       if (!toType || !toID) throw new Error("Link target is required.");
@@ -1240,7 +1372,7 @@ async function dashboardPage(scope) {
     <section class="split">
       <form class="panel form" id="save-form">
         <span class="meta">Capture</span>
-        <h2>Save a page to your Library</h2>
+        <h2>Save a page into Inbox</h2>
         <div class="field"><label for="url">URL</label><input id="url" type="url" placeholder="https://example.com/article" value="${escapeHTML(shared.url)}" required></div>
         <div class="field"><label for="save-note">Quick note</label><textarea id="save-note" rows="2" placeholder="Why this matters, optional">${escapeHTML(shared.note)}</textarea>${voiceButton("save-note", "quick note")}</div>
         <div class="field"><label for="save-tags">Tags</label><input id="save-tags" type="text" placeholder="research, idea, later"></div>
@@ -1248,7 +1380,16 @@ async function dashboardPage(scope) {
         ${offlineQueueMessage()}
         <p class="meta" id="job-status" hidden></p>
       </form>
-      <section class="panel"><span class="meta">Private by default</span><h2>Keep the source and your context together</h2><p>Arivu preserves the page, makes it searchable, and can gently bring useful material back later.</p></section>
+      <section class="panel">
+        <span class="meta">Work loop</span>
+        <h2>Capture, decide, act, review</h2>
+        <p>New saves land in Inbox. Move active work to Working, keep finished references in Kept, then let Review bring back what matters.</p>
+        <div class="chips">
+          <a href="/inbox">Inbox</a>
+          <a href="/focus">Focus</a>
+          <a href="/review">Review</a>
+        </div>
+      </section>
     </section>
     <form class="toolbar" role="search" id="search-form">
       <label class="sr-only" for="search">Search bookmarks</label>
@@ -1390,10 +1531,11 @@ function workflowEmptyState() {
   return `<div class="panel empty-state">
     <span class="meta">First save</span>
     <h2>No bookmarks yet</h2>
-    <p>Save a URL above. Arivu will archive it, extract the readable text, and add it to your Library.</p>
+    <p>Save a URL above. Arivu will archive it, extract text, and queue it in Inbox for triage.</p>
     <div class="chips">
-      <a href="/library?view=capture">Capture</a>
-      <a href="/library">Library</a>
+      <a href="/dashboard">Capture</a>
+      <a href="/inbox">Inbox</a>
+      <a href="/focus">Focus</a>
       <a href="/review">Review</a>
     </div>
   </div>`;
@@ -1484,6 +1626,558 @@ function bookmarkCard(b) {
 
 function splitTags(value) {
   return String(value || "").split(",").map((tag) => tag.trim()).filter(Boolean).slice(0, 20);
+}
+
+function stageLabel(stage) {
+  return {
+    inbox: "Inbox",
+    processing: "Working",
+    processed: "Kept",
+    archived: "Archived",
+  }[stage] || stage;
+}
+
+function focusViewLabel(view) {
+  return {
+    pending: "Pending",
+    overdue: "Overdue",
+    today: "Today",
+    upcoming: "Upcoming",
+    completed: "Completed",
+  }[view] || view;
+}
+
+async function inboxPage(scope) {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  const stage = params.get("stage") || "inbox";
+  const result = await api(`/inbox?stage=${encodeURIComponent(stage)}&limit=100`);
+  const items = result.items || [];
+  const counts = result.counts || {};
+  setRoot(scope, shell("Inbox", `
+    <section class="split">
+      <section class="panel">
+        <span class="meta">Triage loop</span>
+        <h2>${Number(counts.inbox || 0)} unprocessed</h2>
+        <p>Decide why each saved item matters, move active work to Working, then mark finished references Kept before review.</p>
+      </section>
+      <section class="panel">
+        <h2>Stages</h2>
+        <div class="chips stage-tabs">
+          ${["inbox", "processing", "processed", "archived"].map((name) => `<a class="${name === stage ? "active" : ""}" ${name === stage ? `aria-current="page"` : ""} href="/inbox?stage=${name}">${escapeHTML(stageLabel(name))} · ${Number(counts[name] || 0)}</a>`).join("")}
+        </div>
+      </section>
+    </section>
+    <section class="panel bulk-toolbar" data-inbox-bulk>
+      <span class="meta"><span data-bulk-count>0</span> selected</span>
+      <div class="button-row">
+        <button type="button" class="secondary" data-bulk-stage="processing">Working</button>
+        <button type="button" class="secondary" data-bulk-stage="processed">Kept</button>
+        <button type="button" class="secondary" data-bulk-stage="archived">Archive</button>
+      </div>
+    </section>
+    <section class="stack">
+      ${items.map(inboxCard).join("") || emptyState({ eyebrow: "Clear", title: `No ${stageLabel(stage)} items`, body: "New captures and notes appear in Inbox until you decide what to do with them." })}
+    </section>
+  `));
+  document.querySelectorAll("[data-inbox-select]").forEach((checkbox) => {
+    checkbox.addEventListener("change", updateBulkSelectionCount);
+  });
+  document.querySelectorAll("[data-bulk-stage]").forEach((button) => {
+    button.addEventListener("click", () => bulkUpdateInbox(scope, button.dataset.bulkStage, button));
+  });
+  document.querySelectorAll("[data-inbox-stage]").forEach((button) => {
+    button.addEventListener("click", () => updateInboxItem(scope, button, button.dataset.inboxStage));
+  });
+  document.querySelectorAll("[data-inbox-save]").forEach((button) => {
+    button.addEventListener("click", () => updateInboxItem(scope, button, button.closest("[data-inbox-item]").querySelector("[data-next-stage]").value));
+  });
+  bindActionItemControls(scope);
+  bindPriorityButtons();
+  ui.on(document, "keydown", (event) => inboxKeyboardTriage(scope, event));
+  updateBulkSelectionCount();
+}
+
+function inboxCard(item) {
+  const itemID = `${item.item_type}:${item.id}`;
+  const isNote = item.item_type === "note";
+  return `<article class="panel form" data-inbox-item="${escapeHTML(itemID)}">
+    <label class="meta"><input type="checkbox" data-inbox-select value="${escapeHTML(itemID)}"> ${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.domain || item.source || item.stage || "")}</label>
+    <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
+    <p>${escapeHTML(item.description || item.url || "")}</p>
+    <div class="split compact-split">
+      <div class="field">
+        <label for="next-action-${escapeHTML(item.id)}">Next action</label>
+        <input id="next-action-${escapeHTML(item.id)}" data-next-action value="${escapeHTML(item.next_action || "")}" maxlength="500" placeholder="Why keep this? What will you do with it?">
+      </div>
+      <fieldset class="field priority-field">
+        <legend>Priority</legend>
+        <input data-importance type="hidden" value="${Number(item.importance || 0)}">
+        <div class="priority-buttons">${priorityButtons(item.importance || 0)}</div>
+      </fieldset>
+      <div class="field">
+        <label for="stage-${escapeHTML(item.id)}">Stage</label>
+        <select id="stage-${escapeHTML(item.id)}" data-next-stage>
+          ${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}" ${stage === item.stage ? "selected" : ""}>${escapeHTML(stageLabel(stage))}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <p class="button-row">
+      <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
+      <button type="button" data-inbox-save="${escapeHTML(itemID)}">Save state</button>
+      <button type="button" class="secondary" data-inbox-stage="processing">Working</button>
+      <button type="button" class="secondary" data-inbox-stage="processed">Kept</button>
+      <button type="button" class="secondary" data-inbox-stage="archived">Archive</button>
+    </p>
+    ${actionItemsPanel(item.item_type, item.id, item.action_items || [])}
+  </article>`;
+}
+
+function selectedInboxItems() {
+  return Array.from(document.querySelectorAll("[data-inbox-select]:checked")).map((item) => item.value);
+}
+
+function updateBulkSelectionCount() {
+  const target = document.querySelector("[data-bulk-count]");
+  if (target) target.textContent = String(selectedInboxItems().length);
+}
+
+async function bulkUpdateInbox(scope, stage, button) {
+  const items = selectedInboxItems();
+  if (!items.length) {
+    ui.toast("Select inbox items first.", "error");
+    return;
+  }
+  const done = setButtonBusy(button, "Saving");
+  try {
+    const result = await api("/inbox/bulk", { method: "POST", body: JSON.stringify({ items, stage }) });
+    scope.assertCurrent();
+    ui.toast(`${result.updated_count || 0} item${result.updated_count === 1 ? "" : "s"} updated`, result.failed_count ? "error" : "success");
+    render();
+  } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+function inboxKeyboardTriage(scope, event) {
+  if (event.metaKey || event.ctrlKey || event.altKey || event.target.matches("input, textarea, select")) return;
+  const card = event.target.closest?.("[data-inbox-item]");
+  if (!card) return;
+  const shortcuts = { p: "processing", d: "processed", a: "archived" };
+  const stage = shortcuts[event.key.toLowerCase()];
+  if (!stage) return;
+  event.preventDefault();
+  const button = card.querySelector(`[data-inbox-stage="${stage}"]`) || card.querySelector("[data-inbox-save]");
+  updateInboxItem(scope, button, stage);
+}
+
+async function updateInboxItem(scope, button, stage) {
+  const card = button.closest("[data-inbox-item]");
+  const done = setButtonBusy(button, "Saving");
+  try {
+    await saveItemState(card.dataset.inboxItem, stage, Number(card.querySelector("[data-importance]").value || 0), card.querySelector("[data-next-action]").value);
+    scope.assertCurrent();
+    ui.toast("Inbox updated", "success");
+    render();
+  } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+function priorityButtons(value) {
+  const current = Number(value || 0);
+  return [
+    [1, "Low"],
+    [3, "Med"],
+    [5, "High"],
+  ].map(([score, label]) => `<button type="button" class="secondary ${current === score ? "active" : ""}" data-priority="${score}" aria-pressed="${current === score}">${label}</button>`).join("");
+}
+
+function bindPriorityButtons() {
+  document.querySelectorAll("[data-priority]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const field = button.closest(".priority-field");
+      field.querySelector("[data-importance]").value = button.dataset.priority;
+      field.querySelectorAll("[data-priority]").forEach((item) => item.classList.toggle("active", item === button));
+      field.querySelectorAll("[data-priority]").forEach((item) => item.setAttribute("aria-pressed", String(item === button)));
+    });
+  });
+}
+
+function saveItemState(itemID, stage, importance, nextAction) {
+  return api(`/inbox/${itemID}`, {
+    method: "PATCH",
+    body: JSON.stringify({ stage, importance, next_action: nextAction }),
+  });
+}
+
+async function focusPage(scope) {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  const view = params.get("focus") || (location.pathname === "/focus" ? params.get("view") : "") || "pending";
+  const [actions, reminders] = await Promise.all([
+    api("/action-items?status=all"),
+    api("/reminders?status=all"),
+  ]);
+  const actionItems = focusActionFilter(actions.action_items || [], view);
+  const reminderItems = focusReminderFilter(reminders.reminders || [], view);
+  setRoot(scope, shell("Focus", `<div class="home-view focus-view">
+    ${homeViewTabs("focus")}
+    <section class="focus-overview">
+      <section class="panel">
+        <span class="meta">${escapeHTML(focusViewLabel(view))}</span>
+        <h2>${actionItems.length + reminderItems.length} tasks and reminders</h2>
+        <p>Start with concrete tasks, then check timed reminders. Every item links back to its source.</p>
+      </section>
+      <section class="panel">
+        <h2>Queue</h2>
+        <div class="chips">
+          <a href="/inbox?stage=processing">Working</a>
+          <a href="/today?view=review">Review</a>
+          <a href="/assistant">Assistant</a>
+        </div>
+      </section>
+    </section>
+    <nav class="chips stage-tabs focus-filters" aria-label="Focus filters">
+      ${["pending", "overdue", "today", "upcoming", "completed"].map((name) => `<a class="${name === view ? "active" : ""}" ${name === view ? `aria-current="page"` : ""} href="/today?view=focus&amp;focus=${name}">${escapeHTML(focusViewLabel(name))}</a>`).join("")}
+    </nav>
+    <section class="focus-columns">
+      <section class="panel">
+        <h2>Action items</h2>
+        ${focusActionItems(actionItems, view)}
+      </section>
+      <section class="panel">
+        <h2>Reminders</h2>
+        ${focusReminders(reminderItems, view)}
+      </section>
+    </section>
+  </div>`));
+  bindActionItemControls(scope);
+  bindReminderControls(scope);
+}
+
+function focusActionFilter(items, view) {
+  if (view === "completed") return items.filter((item) => item.status === "completed");
+  if (view === "pending") return items.filter((item) => item.status !== "completed");
+  return [];
+}
+
+function focusReminderFilter(items, view) {
+  if (view === "completed") return items.filter((item) => item.status === "completed");
+  if (view === "pending") return items.filter((item) => item.status !== "completed");
+  return items.filter((item) => item.status !== "completed" && item.due_state === view);
+}
+
+function focusActionItems(items, view) {
+  if (!items.length) return focusEmptyState("action", view);
+  return `<div class="stack">${items.map((item) => `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.item_title || "")}</span></p>
+    <p class="button-row">
+      <a class="button secondary" href="${itemHref(item)}">Open item</a>
+      <button type="button" data-action-item-complete="${escapeHTML(item.id)}" aria-label="Complete action item ${escapeHTML(item.title || "")}">Complete</button>
+      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}" aria-label="Delete action item ${escapeHTML(item.title || "")}">Delete task</button>
+    </p>
+  </article>`).join("")}</div>`;
+}
+
+function focusReminders(items, view) {
+  if (!items.length) return focusEmptyState("reminder", view);
+  return `<div class="stack">${items.map((item) => `<article class="annotation">
+    <p><strong>${escapeHTML(formatDate(item.due_at))}</strong> <span class="meta">${reminderMeta(item)}</span></p>
+    ${item.note ? `<p>${escapeHTML(item.note)}</p>` : ""}
+    <p class="button-row">
+      <a class="button secondary" href="${itemHref(item)}">Open item</a>
+      <button type="button" class="secondary" data-reminder-snooze="${escapeHTML(item.id)}" data-minutes="30">30m</button>
+      <button type="button" class="secondary" data-reminder-snooze="${escapeHTML(item.id)}" data-days="1">Tomorrow</button>
+      <button type="button" data-reminder-complete="${escapeHTML(item.id)}" aria-label="Complete reminder ${escapeHTML(item.note || item.item_title || "")}">Complete</button>
+      <button type="button" class="danger" data-reminder-delete="${escapeHTML(item.id)}" aria-label="Delete reminder ${escapeHTML(item.note || item.item_title || "")}">Delete reminder</button>
+    </p>
+  </article>`).join("")}</div>`;
+}
+
+function focusEmptyState(type, view) {
+  const label = {
+    pending: "pending",
+    overdue: "overdue",
+    today: "due today",
+    upcoming: "upcoming",
+    completed: "completed",
+  }[view] || view;
+  if (type === "action" && view !== "pending" && view !== "completed") {
+    return emptyState({ eyebrow: "Clear", title: `No ${label} action items`, body: "Action items stay in pending or completed. Timed work appears under reminders.", panel: false, headingLevel: 3 });
+  }
+  const noun = type === "action" ? "action items" : "reminders";
+  const body = type === "action" ? "Tasks added from Inbox or a saved item appear here." : "Timed nudges from saved items appear here.";
+  return emptyState({ eyebrow: "Clear", title: `No ${label} ${noun}`, body, panel: false, headingLevel: 3 });
+}
+
+function itemHref(item) {
+  const id = encodeURIComponent(item.item_id || "");
+  return item.item_type === "note" ? `/notes/${id}` : `/bookmark/${id}`;
+}
+
+async function assistantPage(scope) {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  const status = params.get("status") || "pending";
+  const result = await api(`/assistant/actions?status=${encodeURIComponent(status)}`);
+  const actions = result.actions || [];
+  setRoot(scope, shell("Assistant", `
+    <section class="split">
+      <form class="panel form" id="assistant-suggest-form">
+        <span class="meta">Planner</span>
+        <h2>Draft suggested actions</h2>
+        <p>Arivu prepares suggestions only. Nothing changes until you review and run a proposal.</p>
+        <div class="field">
+          <label for="assistant-suggest-mode">Context</label>
+          <select id="assistant-suggest-mode" name="mode">
+            <option value="inbox">Inbox stage</option>
+            <option value="review">Review queue</option>
+            <option value="search">Search query</option>
+            <option value="item">Specific item</option>
+          </select>
+        </div>
+        <div class="field"><label for="assistant-suggest-stage">Stage</label><select id="assistant-suggest-stage" name="stage">${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}">${escapeHTML(stageLabel(stage))}</option>`).join("")}</select></div>
+        <div class="field"><label for="assistant-suggest-query">Search</label><input id="assistant-suggest-query" name="query" type="search" maxlength="2000" placeholder="recall, launch, research"></div>
+        <div class="split compact-split">
+          <div class="field"><label for="assistant-suggest-type">Item type</label><select id="assistant-suggest-type" name="item_type"><option value="bookmark">Bookmark</option><option value="note">Note</option></select></div>
+          <div class="field"><label for="assistant-suggest-id">Item ID</label><input id="assistant-suggest-id" name="item_id" type="text" autocomplete="off"></div>
+        </div>
+        <div class="field"><label for="assistant-suggest-limit">Drafts</label><input id="assistant-suggest-limit" name="limit" type="number" min="1" max="12" value="6"></div>
+        <p class="form-message" data-form-message hidden></p>
+        <button type="submit">Generate drafts</button>
+      </form>
+      <section class="panel">
+        <span class="meta">Pending proposals</span>
+        <h2>${actions.length} ${escapeHTML(status)} proposals</h2>
+        <p>Drafts do nothing until you queue them. Review the JSON, then execute or reject each proposal.</p>
+      </section>
+    </section>
+    <section class="stack" id="assistant-drafts" aria-live="polite"></section>
+    <details class="panel form">
+      <summary>Manual proposal JSON</summary>
+      <form id="assistant-action-form">
+        <div class="field">
+          <label for="assistant-action-type">Action</label>
+          <select id="assistant-action-type">
+            <option value="update_item_state">Update item state</option>
+            <option value="create_link">Create link</option>
+            <option value="create_reminder">Create reminder</option>
+            <option value="create_action_item">Create action item</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="assistant-payload">Payload JSON</label>
+          <textarea id="assistant-payload" rows="7" spellcheck="false">{&#10;  "item_type": "bookmark",&#10;  "item_id": "",&#10;  "stage": "processing",&#10;  "importance": 3,&#10;  "next_action": ""&#10;}</textarea>
+        </div>
+        <p class="form-message" id="assistant-message" data-form-message hidden></p>
+        <button type="submit">Add to review</button>
+      </form>
+    </details>
+    <section class="panel">
+      <h2>Queue</h2>
+      <div class="chips stage-tabs">
+        ${["pending", "executed", "failed", "rejected", "all"].map((name) => `<a class="${name === status ? "active" : ""}" ${name === status ? `aria-current="page"` : ""} href="/assistant?status=${name}">${name}</a>`).join("")}
+      </div>
+    </section>
+    <section class="stack">
+      ${actions.map(assistantActionCard).join("") || emptyState({ eyebrow: "No proposals", title: "Nothing waiting", body: "Queued assistant proposals appear here for review." })}
+    </section>
+  `));
+  document.querySelector("#assistant-suggest-form").addEventListener("submit", (event) => submitAssistantSuggestions(scope, event));
+  const form = document.querySelector("#assistant-action-form");
+  form.addEventListener("submit", (event) => submitAssistantAction(scope, event));
+  document.querySelector("#assistant-action-type").addEventListener("change", (event) => {
+    scope.assertCurrent();
+    updateAssistantPayloadTemplate(event);
+  });
+  document.querySelectorAll("[data-assistant-approve]").forEach((button) => {
+    button.addEventListener("click", () => decideAssistantAction(scope, button, "approve"));
+  });
+  document.querySelectorAll("[data-assistant-reject]").forEach((button) => {
+    button.addEventListener("click", () => decideAssistantAction(scope, button, "reject"));
+  });
+}
+
+function assistantActionCard(action) {
+  const payload = JSON.stringify(action.payload || {}, null, 2);
+  const result = JSON.stringify(action.result || {}, null, 2);
+  const actionID = escapeHTML(action.id || "");
+  const isPending = action.status === "pending";
+  return `<article class="panel form">
+    <span class="meta">${escapeHTML(action.action_type || "action")} · ${escapeHTML(action.status || "")} · ${escapeHTML(formatDate(action.created_at))}</span>
+    <h2>${escapeHTML(assistantActionTitle(action))}</h2>
+    ${action.error ? `<p class="form-message form-message-error">${escapeHTML(action.error)}</p>` : ""}
+    <div class="split comparison-split">
+      <div class="field">
+        <label>Payload</label>
+        <pre class="code-block">${escapeHTML(payload)}</pre>
+      </div>
+      <div class="field">
+        <label>Result</label>
+        <pre class="code-block">${escapeHTML(result)}</pre>
+      </div>
+    </div>
+    <p class="button-row">
+      ${isPending ? `<button type="button" data-assistant-approve="${actionID}">Execute proposal</button><button type="button" class="secondary" data-assistant-reject="${actionID}">Reject proposal</button>` : ""}
+    </p>
+  </article>`;
+}
+
+function assistantActionTitle(action) {
+  const payload = action.payload || {};
+  if (action.action_type === "update_item_state") return `${payload.item_type || "item"}:${payload.item_id || ""} -> ${payload.stage || "stage"}`;
+  if (action.action_type === "create_link") return `${payload.from_type || "item"}:${payload.from_id || ""} links to ${payload.to_type || "item"}:${payload.to_id || ""}`;
+  if (action.action_type === "create_reminder") return `${payload.item_type || "item"}:${payload.item_id || ""} reminder`;
+  return action.action_type || "Assistant action";
+}
+
+async function submitAssistantSuggestions(scope, event) {
+  event.preventDefault();
+  scope.assertCurrent();
+  const form = event.currentTarget;
+  const done = setButtonBusy(event.submitter, "Generating");
+  setFormMessage(form);
+  try {
+    const payload = Object.fromEntries(new FormData(form).entries());
+    payload.limit = Number(payload.limit || 6);
+    const result = await api("/assistant/suggestions", { method: "POST", body: JSON.stringify(payload) });
+    scope.assertCurrent();
+    renderAssistantDrafts(scope, result.suggestions || []);
+  } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+function renderAssistantDrafts(scope, drafts) {
+  scope.assertCurrent();
+  const target = document.querySelector("#assistant-drafts");
+  target.innerHTML = drafts.map(assistantDraftCard).join("") || emptyState({ eyebrow: "No drafts", title: "No reviewable draft found", body: "Try a different source or create a manual proposal." });
+  target.querySelectorAll("[data-assistant-draft]").forEach((button) => {
+    button.addEventListener("click", () => queueAssistantDraft(scope, button));
+  });
+}
+
+function assistantDraftCard(draft) {
+  const payload = JSON.stringify(draft.payload || {}, null, 2);
+  const source = draft.source || {};
+  const encoded = escapeHTML(JSON.stringify({ action_type: draft.action_type, payload: draft.payload || {} }));
+  return `<article class="panel form">
+    <span class="meta">${escapeHTML(draft.action_type || "action")} · ${escapeHTML(source.title || source.item_id || "")}</span>
+    <h2>${escapeHTML(draft.title || "Assistant draft")}</h2>
+    <p>${escapeHTML(draft.reason || "")}</p>
+    <div class="field">
+      <label>Payload</label>
+      <pre class="code-block">${escapeHTML(payload)}</pre>
+    </div>
+    <p class="button-row">
+      ${source.href ? `<a class="button secondary" href="${escapeHTML(source.href)}">Open source</a>` : ""}
+      <button type="button" data-assistant-draft="${encoded}">Queue proposal</button>
+    </p>
+  </article>`;
+}
+
+async function queueAssistantDraft(scope, button) {
+  scope.assertCurrent();
+  const draft = JSON.parse(button.dataset.assistantDraft || "{}");
+  const done = setButtonBusy(button, "Queueing");
+  try {
+    await api("/assistant/actions", { method: "POST", body: JSON.stringify(draft) });
+    scope.assertCurrent();
+    ui.toast("Assistant proposal queued", "success");
+    navigate("/assistant?status=pending", true);
+  } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+async function submitAssistantAction(scope, event) {
+  event.preventDefault();
+  scope.assertCurrent();
+  const form = event.currentTarget;
+  const done = setButtonBusy(event.submitter, "Adding");
+  setFormMessage(form);
+  try {
+    const payload = JSON.parse(document.querySelector("#assistant-payload").value || "{}");
+    await api("/assistant/actions", {
+      method: "POST",
+      body: JSON.stringify({ action_type: document.querySelector("#assistant-action-type").value, payload }),
+    });
+    scope.assertCurrent();
+    ui.toast("Assistant action queued", "success");
+    navigate("/assistant?status=pending", true);
+  } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+function updateAssistantPayloadTemplate(event) {
+  const templates = {
+    update_item_state: {
+      item_type: "bookmark",
+      item_id: "",
+      stage: "processing",
+      importance: 3,
+      next_action: "",
+    },
+    create_link: {
+      from_type: "bookmark",
+      from_id: "",
+      to_type: "note",
+      to_id: "",
+      label: "supports",
+    },
+    create_reminder: {
+      item_type: "bookmark",
+      item_id: "",
+      due_at: new Date(Date.now() + 86400000).toISOString(),
+      timezone: browserTimezone(),
+      recurrence: "none",
+      recurrence_interval_days: 0,
+      notification_channel: "in_app",
+      note: "",
+    },
+    create_action_item: {
+      item_type: "bookmark",
+      item_id: "",
+      title: "",
+    },
+  };
+  document.querySelector("#assistant-payload").value = JSON.stringify(templates[event.currentTarget.value], null, 2);
+}
+
+async function decideAssistantAction(scope, button, decision) {
+  scope.assertCurrent();
+  const id = button.dataset.assistantApprove || button.dataset.assistantReject;
+  const done = setButtonBusy(button, decision === "approve" ? "Executing" : "Rejecting");
+  try {
+    await api(`/assistant/actions/${id}/${decision}`, { method: "POST", body: "{}" });
+    scope.assertCurrent();
+    ui.toast(decision === "approve" ? "Assistant action executed" : "Assistant action rejected", "success");
+    render();
+  } catch (err) {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
 }
 
 function selectedReaderSelection() {
@@ -1806,8 +2500,9 @@ async function notesPage(scope) {
 }
 
 function noteListItem(note) {
+  const state = note.item_state || {};
   return `<a class="panel bookmark" href="/notes/${encodeURIComponent(note.id)}">
-    <span class="meta">${escapeHTML(formatDate(note.updated_at))}</span>
+    <span class="meta">${escapeHTML(state.stage || "inbox")} · ${escapeHTML(formatDate(note.updated_at))}</span>
     <h2>${escapeHTML(note.title || "Untitled note")}</h2>
     <p>${escapeHTML((note.body || "").slice(0, 220))}</p>
   </a>`;
@@ -1831,6 +2526,8 @@ async function noteDetailPage(scope, id) {
   bindNoteLinkForms(scope);
   bindNoteBookmarkLinkForms(scope);
   bindLinkDeleteControls(scope);
+  bindActionItemControls(scope);
+  bindReminderControls(scope);
   bindVoiceCapture();
 }
 
@@ -1845,6 +2542,15 @@ function standaloneNoteCard(note, notes, bookmarks = []) {
       <button type="button" data-note-save="${escapeHTML(note.id)}">Save changes</button>
       <button type="button" class="danger" data-note-delete="${escapeHTML(note.id)}">Delete note</button>
     </p>
+    <section>
+      <h3>Action items</h3>
+      ${actionItemsPanel("note", note.id, note.action_items || [])}
+    </section>
+    <section>
+      <h3>Reminder</h3>
+      ${reminderForm("note", note.id)}
+      ${reminderList(note.reminders || [])}
+    </section>
     <section>
       <h3>Links</h3>
       ${noteLinkForm(note, notes)}
@@ -1894,6 +2600,120 @@ async function deleteStandaloneNote(scope, button) {
   }
 }
 
+const objectFieldSets = {
+  project: [{ key: "status", label: "Status", type: "select", options: ["active", "paused", "complete"] }, { key: "outcome", label: "Desired outcome" }],
+  person: [{ key: "role", label: "Role or relationship" }, { key: "contact", label: "Contact note" }],
+  book: [{ key: "author", label: "Author" }, { key: "status", label: "Reading status", type: "select", options: ["to read", "reading", "finished"] }],
+  meeting: [{ key: "date", label: "Meeting date", type: "datetime-local" }, { key: "attendees", label: "Attendees" }],
+  decision: [{ key: "decision", label: "Decision" }, { key: "rationale", label: "Rationale" }],
+  research_thread: [{ key: "question", label: "Research question" }, { key: "status", label: "Status", type: "select", options: ["open", "developing", "resolved"] }],
+};
+
+function objectFieldsMarkup(type) {
+  const fields = objectFieldSets[type] || [];
+  return fields.map((field) => `<div class="field"><label for="object-field-${field.key}">${escapeHTML(field.label)}</label>${field.type === "select" ? `<select id="object-field-${field.key}" data-object-field="${field.key}">${field.options.map((option) => `<option value="${escapeHTML(option)}">${escapeHTML(knowledgeTypeLabel(option))}</option>`).join("")}</select>` : `<input id="object-field-${field.key}" data-object-field="${field.key}" type="${field.type || "text"}">`}</div>`).join("");
+}
+
+function collectObjectFields(root = document) {
+  return Object.fromEntries([...root.querySelectorAll("[data-object-field]")].map((field) => [field.dataset.objectField, field.value.trim()]).filter(([, value]) => value));
+}
+
+async function openObjectComposer() {
+  const body = document.createElement("div");
+  body.innerHTML = `<form class="form" id="object-composer-form">
+    <div class="field"><label for="object-composer-type">Type</label><select id="object-composer-type">${objectTypeOptions(Object.keys(objectFieldSets), "project")}</select></div>
+    <div class="field"><label for="object-composer-title">Title</label><input id="object-composer-title" required></div>
+    <div class="field"><label for="object-composer-description">Description</label><textarea id="object-composer-description" rows="4"></textarea></div>
+    <fieldset class="object-fields"><legend>Details</legend><div id="object-composer-fields"></div></fieldset>
+    <p class="form-message" data-form-message hidden></p>
+    <button type="submit">Create object</button>
+  </form>`;
+  const form = body.querySelector("form");
+  const type = body.querySelector("#object-composer-type");
+  const renderFields = () => { body.querySelector("#object-composer-fields").innerHTML = objectFieldsMarkup(type.value); };
+  type.addEventListener("change", renderFields);
+  renderFields();
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Creating");
+    try {
+      await api("/objects", { method: "POST", body: JSON.stringify({ object_type: type.value, title: body.querySelector("#object-composer-title").value, description: body.querySelector("#object-composer-description").value, fields: collectObjectFields(body) }) });
+      document.querySelector("[data-dialog-close]")?.click();
+      ui.toast("Object created", "success");
+      navigate("/library?type=knowledge_object", true);
+    } catch (err) {
+      setFormMessage(form, err.message);
+    } finally {
+      done();
+    }
+  });
+  await ui.dialog({ title: "New object", body, actions: [{ label: "Cancel", value: false, kind: "secondary" }] });
+}
+
+function objectTypeOptions(types, selected) {
+  return types.map((type) => `<option value="${escapeHTML(type)}"${type === selected ? " selected" : ""}>${escapeHTML(type.replaceAll("_", " "))}</option>`).join("");
+}
+
+async function evolutionPage(scope) {
+  await requireUser();
+  const query = new URLSearchParams(location.search).get("q") || "";
+  const result = query ? await api(`/evolution?q=${encodeURIComponent(query)}`) : { timeline: [] };
+  setRoot(scope, shell("Evolution", `
+    <form class="panel form" id="evolution-form">
+      <h2>Topic evolution</h2>
+      <div class="field"><label for="evolution-query">Topic or phrase</label><input id="evolution-query" type="search" value="${escapeHTML(query)}" placeholder="Roadmap, pricing, local-first"></div>
+      <button type="submit">Trace topic</button>
+    </form>
+    <section class="stack">
+      ${(result.timeline || []).map(evolutionItem).join("") || emptyState({ eyebrow: "No timeline yet", title: "Search a topic", body: "Arivu will line up matching daily notes, saved pages, notes, decisions, meetings, and projects.", tag: "article" })}
+    </section>
+  `));
+  document.querySelector("#evolution-form").addEventListener("submit", (event) => {
+    event.preventDefault();
+    const value = document.querySelector("#evolution-query").value.trim();
+    navigate(value ? `/evolution?q=${encodeURIComponent(value)}` : "/evolution", true);
+  });
+}
+
+function evolutionItem(item) {
+  return `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || "Untitled")}</strong> <span class="meta">${escapeHTML(item.item_type || "item")} · ${escapeHTML(item.updated_at || "")}</span></p>
+    <p>${escapeHTML(item.body || "")}</p>
+    ${item.href ? `<p><a class="text-link" href="${escapeHTML(item.href)}">Open source</a></p>` : ""}
+  </article>`;
+}
+
+async function boardPage(scope) {
+  await requireUser();
+  const board = await api("/today-board");
+  setRoot(scope, shell("Board", `<div class="home-view board-view">
+    ${homeViewTabs("board")}
+    <div class="board-scroller" role="region" aria-label="Knowledge workflow board" tabindex="0">
+      <section class="board-grid">
+        ${(board.columns || []).map(boardColumn).join("")}
+      </section>
+    </div>
+  </div>`, { wide: true }));
+}
+
+function boardColumn(column) {
+  const items = column.items || [];
+  return `<section class="panel board-column">
+    <header class="board-column-header"><span class="meta">${items.length} items</span><h2>${escapeHTML(column.title || "Column")}</h2></header>
+    <div class="stack board-column-items">${items.map(boardItem).join("") || `<p class="meta">Nothing here.</p>`}</div>
+  </section>`;
+}
+
+function boardItem(item) {
+  const href = item.href || (item.item_type === "note" ? `/notes/${encodeURIComponent(item.id)}` : item.item_type === "bookmark" ? `/bookmark/${encodeURIComponent(item.id)}` : "/objects");
+  return `<article class="annotation compact-object board-item">
+    <p><strong>${escapeHTML(item.title || "Untitled")}</strong></p>
+    <p class="meta">${escapeHTML(item.item_type || item.object_type || "object")} ${item.next_action ? `· ${escapeHTML(item.next_action)}` : ""}</p>
+    <p>${escapeHTML(item.description || item.body || "")}</p>
+    <a class="text-link" href="${escapeHTML(href)}">Open</a>
+  </article>`;
+}
+
 async function bookmarkPage(scope) {
   await requireUser();
   const id = location.pathname.split("/").pop();
@@ -1903,6 +2723,7 @@ async function bookmarkPage(scope) {
     api("/link-targets?type=note&limit=100").catch(() => ({ targets: [] })),
   ]);
   const summary = bookmark.ai_summary || {};
+  const itemState = bookmark.item_state || { stage: "inbox", importance: 0, next_action: "" };
   const artifacts = bookmark.artifacts || [];
   setRoot(scope, shell(bookmark.title || "Bookmark", `
     <article class="panel reader primary-reader">
@@ -1924,6 +2745,16 @@ async function bookmarkPage(scope) {
       <details><summary>Capture attempt history (${(bookmark.capture_attempts || []).length})</summary><ul>${(bookmark.capture_attempts || []).map((attempt) => `<li><strong>${escapeHTML(attempt.status)}</strong> · ${escapeHTML(attempt.engine)} ${attempt.error_code ? `· ${escapeHTML(attempt.error_code)}` : ""}</li>`).join("")}</ul></details>
       <details class="panel"><summary>Share this bookmark</summary><form id="share-bookmark-form" class="form"><div class="field"><label for="share-title">Public title</label><input id="share-title" required maxlength="200" value="${escapeHTML(bookmark.title || "Shared bookmark")}"></div><div class="field"><label for="share-expiry">Expires (optional)</label><input id="share-expiry" type="datetime-local"></div><button type="submit">Create share link</button><p class="form-message" data-form-message hidden></p><div id="share-created" hidden></div></form></details>
     </article>
+    <section class="panel primary-work">
+      <div>
+        <p class="meta">Next step</p>
+        <h2>Decide what this becomes</h2>
+      </div>
+      ${processingStrip(id, itemState)}
+      <p class="button-row">
+        <button type="button" class="secondary" id="review-complete">Mark review done</button>
+      </p>
+    </section>
     <details class="panel disclosure-panel workbench-group">
       <summary><span>Capture passages</span><span class="meta">${(bookmark.annotations || []).length} saved</span></summary>
       <section class="split disclosure-body embedded-split">
@@ -1970,6 +2801,28 @@ async function bookmarkPage(scope) {
         <section>
           <h2>Connections</h2>
           ${linkList(bookmark.links || {})}
+        </section>
+      </section>
+    </details>
+    <details class="panel disclosure-panel workbench-group">
+      <summary><span>Tasks and reminders</span><span class="meta">${(bookmark.action_items || []).length} tasks · ${(bookmark.reminders || []).length} reminders</span></summary>
+      <section class="split disclosure-body embedded-split">
+        <form class="form" data-action-item-form data-item-type="bookmark" data-item-id="${escapeHTML(id)}">
+          <h2>Action item</h2>
+          <div class="field"><label for="action-item-title">Task</label><input id="action-item-title" data-action-item-title type="text" maxlength="300" placeholder="Concrete thing to do with this"></div>
+          <p class="form-message" data-form-message hidden></p>
+          <button type="submit">Add task</button>
+        </form>
+        <section>
+          <h2>Action items</h2>
+          ${actionItemsList(bookmark.action_items || [])}
+        </section>
+      </section>
+      <section class="split disclosure-body embedded-split">
+        ${reminderForm("bookmark", id)}
+        <section>
+          <h2>Reminders</h2>
+          ${reminderList(bookmark.reminders || [])}
         </section>
       </section>
     </details>
@@ -2043,6 +2896,26 @@ async function bookmarkPage(scope) {
       if (scope.isCurrent()) done();
     }
   });
+  document.querySelector("#review-complete").addEventListener("click", async (event) => {
+    scope.assertCurrent();
+    const done = setButtonBusy(event.currentTarget, "Completing review");
+    try {
+      await api(`/review/bookmark:${id}/complete`, { method: "POST", body: "{}" });
+      scope.assertCurrent();
+      ui.toast("Review completed", "success");
+      render();
+    } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+      ui.toast(err.message, "error");
+    } finally {
+      if (scope.isCurrent()) done();
+    }
+  });
+  document.querySelectorAll("[data-reader-stage]").forEach((button) => {
+    button.addEventListener("click", () => updateReaderState(scope, button, button.dataset.readerStage));
+  });
+  document.querySelector("#processing-save").addEventListener("click", (event) => updateReaderState(scope, event.currentTarget, document.querySelector("#processing-stage").value));
+  bindPriorityButtons();
   bindReaderAnnotationComposer(scope, id);
   const annotationForm = document.querySelector("#annotation-form");
   document.querySelector("#use-selection").addEventListener("click", () => {
@@ -2137,6 +3010,8 @@ async function bookmarkPage(scope) {
     }
   });
   bindLinkDeleteControls(scope);
+  bindActionItemControls(scope);
+  bindReminderControls(scope);
   bindVoiceCapture();
   document.querySelector("#delete-bookmark").addEventListener("click", async () => {
     const confirmed = await ui.confirmDestructive({ title: "Delete bookmark", body: "This removes the bookmark, summary, graph terms, and collection links.", confirm: "Delete bookmark", cancel: "Keep bookmark" });
@@ -2146,7 +3021,7 @@ async function bookmarkPage(scope) {
       await api(`/bookmarks/${id}`, { method: "DELETE" });
       scope.assertCurrent();
       ui.toast("Bookmark deleted", "success");
-      navigate("/library", true);
+      navigate("/dashboard", true);
     } catch (err) {
       if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
       ui.toast(err.message, "error");
@@ -2161,6 +3036,332 @@ async function bookmarkPage(scope) {
   document.querySelectorAll("[data-annotation-delete]").forEach((button) => {
     button.addEventListener("click", () => deleteAnnotation(scope, button));
   });
+}
+
+function reminderList(reminders) {
+  if (!reminders.length) return `<p class="meta">No reminders set.</p>`;
+  return `<div class="stack">${reminders.map((reminder) => `<article class="annotation">
+    <p><strong>${escapeHTML(formatDate(reminder.due_at))}</strong> <span class="meta">${reminderMeta(reminder)}</span></p>
+    ${reminder.note ? `<p>${escapeHTML(reminder.note)}</p>` : ""}
+    <p class="button-row">
+      ${reminder.status === "completed" ? "" : `<button type="button" class="secondary" data-reminder-snooze="${escapeHTML(reminder.id)}" data-minutes="30">30m</button><button type="button" class="secondary" data-reminder-snooze="${escapeHTML(reminder.id)}" data-days="1">Tomorrow</button>`}
+      ${reminder.status === "completed" ? "" : `<button type="button" data-reminder-complete="${escapeHTML(reminder.id)}">Complete</button>`}
+      <button type="button" class="danger" data-reminder-delete="${escapeHTML(reminder.id)}">Delete reminder</button>
+    </p>
+    ${reminder.status === "completed" ? "" : reminderEditForm(reminder)}
+  </article>`).join("")}</div>`;
+}
+
+function reminderForm(itemType, itemID, layout = "inline") {
+  const dueID = `reminder-due-${itemType}-${itemID}`;
+  const noteID = `reminder-note-${itemType}-${itemID}`;
+  const recurrenceID = `reminder-recurrence-${itemType}-${itemID}`;
+  const intervalID = `reminder-interval-${itemType}-${itemID}`;
+  const channelID = `reminder-channel-${itemType}-${itemID}`;
+  const className = layout === "panel" ? "panel form" : "task-form";
+  return `<form class="${className}" data-reminder-form data-item-type="${escapeHTML(itemType)}" data-item-id="${escapeHTML(itemID)}">
+    ${layout === "panel" ? "<h2>Reminder</h2>" : ""}
+    <div class="field"><label for="${escapeHTML(dueID)}">Due</label><input id="${escapeHTML(dueID)}" data-reminder-due type="datetime-local" required></div>
+    <input data-reminder-timezone type="hidden" value="${escapeHTML(browserTimezone())}">
+    <div class="field"><label for="${escapeHTML(recurrenceID)}">Repeat</label><select id="${escapeHTML(recurrenceID)}" data-reminder-recurrence>${reminderRecurrenceOptions("none")}</select></div>
+    <div class="field"><label for="${escapeHTML(intervalID)}">Custom days</label><input id="${escapeHTML(intervalID)}" data-reminder-interval type="number" min="1" max="365" inputmode="numeric" placeholder="Only for custom"></div>
+    <div class="field"><label for="${escapeHTML(channelID)}">Notify</label><select id="${escapeHTML(channelID)}" data-reminder-channel>${reminderChannelOptions("in_app")}</select></div>
+    <div class="field"><label for="${escapeHTML(noteID)}">Note</label><input id="${escapeHTML(noteID)}" data-reminder-note type="text" maxlength="500" placeholder="Why this should come back"></div>
+    <p class="form-message" data-form-message hidden></p>
+    <button type="submit" class="secondary">Set reminder</button>
+  </form>`;
+}
+
+function reminderEditForm(reminder) {
+  const id = escapeHTML(reminder.id || "");
+  return `<details class="inline-details">
+    <summary>Edit reminder</summary>
+    <form class="task-form" data-reminder-edit="${id}">
+      <input data-reminder-timezone type="hidden" value="${escapeHTML(reminder.timezone || browserTimezone())}">
+      <label class="sr-only" for="edit-reminder-due-${id}">Due</label>
+      <input id="edit-reminder-due-${id}" data-reminder-due type="datetime-local" value="${escapeHTML(rfc3339ToLocalDateTime(reminder.due_at))}" required>
+      <label class="sr-only" for="edit-reminder-recur-${id}">Repeat</label>
+      <select id="edit-reminder-recur-${id}" data-reminder-recurrence>${reminderRecurrenceOptions(reminder.recurrence || "none")}</select>
+      <label class="sr-only" for="edit-reminder-interval-${id}">Custom days</label>
+      <input id="edit-reminder-interval-${id}" data-reminder-interval type="number" min="1" max="365" inputmode="numeric" value="${reminder.recurrence === "custom" ? escapeHTML(String(reminder.recurrence_interval_days || "")) : ""}" placeholder="Custom days">
+      <label class="sr-only" for="edit-reminder-channel-${id}">Notify</label>
+      <select id="edit-reminder-channel-${id}" data-reminder-channel>${reminderChannelOptions(reminder.notification_channel || "in_app")}</select>
+      <label class="sr-only" for="edit-reminder-note-${id}">Note</label>
+      <input id="edit-reminder-note-${id}" data-reminder-note type="text" maxlength="500" value="${escapeHTML(reminder.note || "")}" placeholder="Why this should come back">
+      <p class="form-message" data-form-message hidden></p>
+      <button type="submit" class="secondary">Save reminder</button>
+    </form>
+  </details>`;
+}
+
+function reminderRecurrenceOptions(current) {
+  return [["none", "Once"], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["custom", "Custom days"]].map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function reminderChannelOptions(current) {
+  return [["in_app", "In-app"], ["email", "In-app + email"]].map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function reminderMeta(reminder) {
+  const parts = [reminder.due_state || reminder.status || "pending", reminder.item_type || "item", reminder.item_title || ""];
+  if (reminder.recurrence && reminder.recurrence !== "none") parts.push(reminder.recurrence === "custom" ? `every ${reminder.recurrence_interval_days || "?"}d` : reminder.recurrence);
+  if (reminder.notification_channel === "email") parts.push("email");
+  return escapeHTML(parts.filter(Boolean).join(" · "));
+}
+
+function actionItemsPanel(itemType, itemID, items) {
+  return `<section class="task-panel">
+    <form class="task-form" data-action-item-form data-item-type="${escapeHTML(itemType)}" data-item-id="${escapeHTML(itemID)}">
+      <label class="sr-only" for="task-${escapeHTML(itemType)}-${escapeHTML(itemID)}">Action item</label>
+      <input id="task-${escapeHTML(itemType)}-${escapeHTML(itemID)}" data-action-item-title type="text" maxlength="300" placeholder="Add a task for this item">
+      <button type="submit" class="secondary">Add task</button>
+      <p class="form-message" data-form-message hidden></p>
+    </form>
+    ${actionItemsList(items)}
+  </section>`;
+}
+
+function actionItemsList(items) {
+  if (!items.length) return `<p class="meta">No action items yet.</p>`;
+  return `<div class="stack">${items.map((item) => `<article class="annotation">
+    <p><strong>${escapeHTML(item.title || "Action item")}</strong> <span class="meta">${escapeHTML(item.status || "pending")} · ${escapeHTML(item.item_title || "")}</span></p>
+    <p class="button-row">
+      ${item.status === "completed" ? "" : `<button type="button" data-action-item-complete="${escapeHTML(item.id)}">Complete</button>`}
+      <button type="button" class="danger" data-action-item-delete="${escapeHTML(item.id)}">Delete task</button>
+    </p>
+  </article>`).join("")}</div>`;
+}
+
+function bindActionItemControls(scope) {
+  document.querySelectorAll("[data-action-item-form]").forEach((form) => {
+    form.addEventListener("submit", (event) => submitActionItem(scope, event));
+  });
+  document.querySelectorAll("[data-action-item-complete]").forEach((button) => {
+    button.addEventListener("click", () => completeActionItem(scope, button));
+  });
+  document.querySelectorAll("[data-action-item-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteActionItem(scope, button));
+  });
+}
+
+function bindReminderControls(scope) {
+  document.querySelectorAll("[data-reminder-form]").forEach((form) => {
+    form.addEventListener("submit", (event) => submitReminder(scope, event));
+  });
+  document.querySelectorAll("[data-reminder-edit]").forEach((form) => {
+    form.addEventListener("submit", (event) => submitReminderEdit(scope, event));
+  });
+  document.querySelectorAll("[data-reminder-snooze]").forEach((button) => {
+    button.addEventListener("click", () => snoozeReminder(scope, button));
+  });
+  document.querySelectorAll("[data-reminder-complete]").forEach((button) => {
+    button.addEventListener("click", () => completeReminder(scope, button));
+  });
+  document.querySelectorAll("[data-reminder-delete]").forEach((button) => {
+    button.addEventListener("click", () => deleteReminder(scope, button));
+  });
+}
+
+async function submitActionItem(scope, event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const done = setButtonBusy(event.submitter, "Adding");
+  setFormMessage(form);
+  try {
+    await api("/action-items", {
+      method: "POST",
+      body: JSON.stringify({
+        item_type: form.dataset.itemType,
+        item_id: form.dataset.itemId,
+        title: form.querySelector("[data-action-item-title]").value,
+      }),
+    });
+    scope.assertCurrent();
+    ui.toast("Action item added", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+async function submitReminder(scope, event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dueAt = localDateTimeToRFC3339(form.querySelector("[data-reminder-due]").value);
+  if (!dueAt) {
+    setFormMessage(form, "Choose a valid reminder time.");
+    return;
+  }
+  const done = setButtonBusy(event.submitter, "Saving reminder");
+  setFormMessage(form);
+  try {
+    await api("/reminders", {
+      method: "POST",
+      body: JSON.stringify(reminderPayload(form, {
+        item_type: form.dataset.itemType,
+        item_id: form.dataset.itemId,
+        due_at: dueAt,
+      })),
+    });
+    scope.assertCurrent();
+    ui.toast("Reminder set", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+async function submitReminderEdit(scope, event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const dueAt = localDateTimeToRFC3339(form.querySelector("[data-reminder-due]").value);
+  if (!dueAt) {
+    setFormMessage(form, "Choose a valid reminder time.");
+    return;
+  }
+  const done = setButtonBusy(event.submitter, "Saving");
+  setFormMessage(form);
+  try {
+    await api(`/reminders/${form.dataset.reminderEdit}`, {
+      method: "PATCH",
+      body: JSON.stringify(reminderPayload(form, { due_at: dueAt })),
+    });
+    scope.assertCurrent();
+    ui.toast("Reminder updated", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
+    setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+function reminderPayload(form, base) {
+  const recurrence = form.querySelector("[data-reminder-recurrence]")?.value || "none";
+  const intervalValue = Number(form.querySelector("[data-reminder-interval]")?.value || 0);
+  const channel = form.querySelector("[data-reminder-channel]")?.value || "in_app";
+  return {
+    ...base,
+    timezone: form.querySelector("[data-reminder-timezone]")?.value || browserTimezone(),
+    recurrence,
+    recurrence_interval_days: recurrence === "custom" ? intervalValue : 0,
+    notification_channel: channel,
+    email_enabled: channel === "email",
+    note: form.querySelector("[data-reminder-note]")?.value || "",
+  };
+}
+
+async function completeActionItem(scope, button) {
+  const done = setButtonBusy(button, "Completing");
+  try {
+    await api(`/action-items/${button.dataset.actionItemComplete}/complete`, { method: "POST", body: "{}" });
+    scope.assertCurrent();
+    ui.toast("Action item completed", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+async function deleteActionItem(scope, button) {
+  const confirmed = await ui.confirmDestructive({ title: "Delete action item", body: "This removes only the task.", confirm: "Delete task", cancel: "Keep task" });
+  if (!confirmed) return;
+  scope.assertCurrent();
+  const done = setButtonBusy(button, "Deleting");
+  try {
+    await api(`/action-items/${button.dataset.actionItemDelete}`, { method: "DELETE" });
+    scope.assertCurrent();
+    ui.toast("Action item deleted", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+function localDateTimeToRFC3339(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toISOString();
+}
+
+function rfc3339ToLocalDateTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function browserTimezone() {
+  return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+}
+
+async function snoozeReminder(scope, button) {
+  const body = {};
+  if (button.dataset.minutes) body.minutes = Number(button.dataset.minutes);
+  if (button.dataset.days) body.days = Number(button.dataset.days);
+  const done = setButtonBusy(button, "Snoozing");
+  try {
+    await api(`/reminders/${button.dataset.reminderSnooze}/snooze`, { method: "POST", body: JSON.stringify(body) });
+    scope.assertCurrent();
+    ui.toast("Reminder snoozed", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+async function completeReminder(scope, button) {
+  const done = setButtonBusy(button, "Completing");
+  try {
+    await api(`/reminders/${button.dataset.reminderComplete}/complete`, { method: "POST", body: "{}" });
+    scope.assertCurrent();
+    ui.toast("Reminder completed", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
+}
+
+async function deleteReminder(scope, button) {
+  const confirmed = await ui.confirmDestructive({ title: "Delete reminder", body: "This removes the reminder only.", confirm: "Delete reminder", cancel: "Keep reminder" });
+  if (!confirmed) return;
+  scope.assertCurrent();
+  const done = setButtonBusy(button, "Deleting");
+  try {
+    await api(`/reminders/${button.dataset.reminderDelete}`, { method: "DELETE" });
+    scope.assertCurrent();
+    ui.toast("Reminder deleted", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
+    ui.toast(err.message, "error");
+  } finally {
+    if (scope.isCurrent()) done();
+  }
 }
 
 function noteOptions(notes, linkedNotes) {
@@ -2325,6 +3526,54 @@ async function submitNoteBookmarkLink(scope, event) {
   } catch (err) {
     if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     setFormMessage(form, err.message);
+    ui.toast(err.message, "error");
+  } finally {
+    done();
+  }
+}
+
+function processingStrip(bookmarkID, itemState) {
+  return `<section class="insight-strip processing-strip" data-reader-item="bookmark:${escapeHTML(bookmarkID)}">
+    <span class="meta">Workflow · ${readerStageLabel(itemState.stage || "inbox")}</span>
+    <div class="split compact-split">
+      <div class="field">
+        <label for="processing-next-action">Next action</label>
+        <input id="processing-next-action" data-next-action value="${escapeHTML(itemState.next_action || "")}" maxlength="500" placeholder="One concrete follow-up">
+      </div>
+      <fieldset class="field priority-field">
+        <legend>Priority</legend>
+        <input data-importance type="hidden" value="${Number(itemState.importance || 0)}">
+        <div class="priority-buttons">${priorityButtons(itemState.importance || 0)}</div>
+      </fieldset>
+      <div class="field">
+        <label for="processing-stage">Stage</label>
+        <select id="processing-stage" data-next-stage>
+          ${["inbox", "processing", "processed", "archived"].map((stage) => `<option value="${stage}" ${stage === itemState.stage ? "selected" : ""}>${readerStageLabel(stage)}</option>`).join("")}
+        </select>
+      </div>
+    </div>
+    <p class="button-row">
+      <button type="button" id="processing-save">Save next step</button>
+      <button type="button" class="secondary" data-reader-stage="processed">Keep</button>
+      <button type="button" class="secondary" data-reader-stage="archived">Archive</button>
+    </p>
+  </section>`;
+}
+
+function readerStageLabel(stage) {
+  return escapeHTML(({ inbox: "Inbox", processing: "Working", processed: "Kept", archived: "Archived" })[stage] || stage || "Inbox");
+}
+
+async function updateReaderState(scope, button, stage) {
+  const card = button.closest("[data-reader-item]");
+  const done = setButtonBusy(button, "Saving");
+  try {
+    await saveItemState(card.dataset.readerItem, stage, Number(card.querySelector("[data-importance]").value || 0), card.querySelector("[data-next-action]").value);
+    scope.assertCurrent();
+    ui.toast("Processing state updated", "success");
+    render();
+  } catch (err) {
+    if (scope.signal.aborted || routeLifecycle.isStale(err)) return;
     ui.toast(err.message, "error");
   } finally {
     done();
@@ -3148,6 +4397,14 @@ function importPanel() {
       <p class="form-message" id="media-import-message" data-form-message hidden></p>
       <button type="submit">Import as note</button>
     </form>
+    <form class="panel form" id="calendar-import-form">
+      <h3>Calendar import</h3>
+      <p class="meta">Paste an ICS export to create meeting objects with start, end, location, description, and UID fields.</p>
+      <div class="field"><label for="calendar-import-source">Source</label><input id="calendar-import-source" type="text" placeholder="calendar.ics"></div>
+      <div class="field"><label for="calendar-import-ics">ICS content</label><textarea id="calendar-import-ics" rows="8" spellcheck="false" placeholder="BEGIN:VCALENDAR&#10;BEGIN:VEVENT&#10;SUMMARY:Research review&#10;END:VEVENT&#10;END:VCALENDAR"></textarea></div>
+      <p class="form-message" id="calendar-import-message" data-form-message hidden></p>
+      <button type="submit">Import meetings</button>
+    </form>
     <section class="panel">
       <h3>Export</h3>
       <div class="button-row">
@@ -3201,6 +4458,7 @@ async function bindImportPanel(scope) {
     }
   });
   bindMediaImportPanel(scope);
+  bindCalendarImportPanel(scope);
 }
 
 function bindMediaImportPanel(scope) {
@@ -3217,6 +4475,35 @@ function bindMediaImportPanel(scope) {
       const title = result.note?.title || "Imported media";
       setFormMessage(form, `Saved "${title}" as a searchable note.`, "success");
       ui.toast("Media imported as a note", "success");
+      form.reset();
+    } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+      setFormMessage(form, err.message);
+      ui.toast(err.message, "error");
+    } finally {
+      if (scope.isCurrent()) done();
+    }
+  });
+}
+
+function bindCalendarImportPanel(scope) {
+  const form = document.querySelector("#calendar-import-form");
+  if (!form) return;
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const done = setButtonBusy(event.submitter, "Importing");
+    setFormMessage(form);
+    try {
+      const result = await api("/calendar/import", {
+        method: "POST",
+        body: JSON.stringify({
+          source: document.querySelector("#calendar-import-source").value,
+          ics: document.querySelector("#calendar-import-ics").value,
+        }),
+      });
+      scope.assertCurrent();
+      setFormMessage(form, `${Number(result.count || 0)} meeting objects imported.`, "success");
+      ui.toast(`${Number(result.count || 0)} meetings imported`, "success");
       form.reset();
     } catch (err) {
       if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
@@ -3275,12 +4562,13 @@ async function reviewPage(scope) {
     ? { eyebrow: "Caught up", title: "No additional review items due", body: "Finish the daily memory above and your review queue is clear." }
     : { eyebrow: "Clear", title: "No review items due", body: "Arivu will bring older or high-signal saves back when they are ready." };
   setRoot(scope, shell("Review", `<div class="home-view review-view">
+    ${homeViewTabs("review")}
     <section class="review-overview">
       ${memoryCard(memory)}
       <section class="panel">
         <span class="meta">Daily review</span>
         <h2>Keep saved pages from becoming a pile</h2>
-        <p>Complete what is useful or snooze what needs more time.</p>
+        <p>Complete what is useful, snooze what needs time, archive what should stop coming back for review.</p>
       </section>
     </section>
     <section class="review-grid" aria-label="Review queue">
@@ -3293,7 +4581,12 @@ async function reviewPage(scope) {
   document.querySelectorAll("[data-review-snooze]").forEach((button) => {
     button.addEventListener("click", () => reviewAction(scope, button, "snooze"));
   });
+  document.querySelectorAll("[data-review-archive]").forEach((button) => {
+    button.addEventListener("click", () => reviewAction(scope, button, "archive"));
+  });
   bindFeedbackControls(scope);
+  bindActionItemControls(scope);
+  bindReminderControls(scope);
 }
 
 function memoryCard(memory) {
@@ -3312,6 +4605,7 @@ function memoryCard(memory) {
       <a class="button secondary" href="/bookmark/${escapeHTML(item.id)}">Open</a>
       <button type="button" data-review-complete="${escapeHTML(id)}">Complete review</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
+      <button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>
     </p>
   </section>`;
 }
@@ -3319,19 +4613,37 @@ function memoryCard(memory) {
 function reviewCard(item) {
   const id = `${item.item_type || "bookmark"}:${item.id}`;
   const isNote = item.item_type === "note";
+  const itemState = item.item_state || {};
+  const nextAction = itemState.next_action || "";
+  const importance = Number(itemState.importance || 0);
   const reasons = item.review_reasons || [];
   return `<article class="panel bookmark">
-    <span class="meta">Why this came back: ${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")}</span>
+    <span class="meta">Why this came back: ${escapeHTML(item.resurfacing_reason || item.domain || item.source || "review")} · priority ${Number(item.review_priority || 0)}</span>
     <h2>${escapeHTML(item.title || item.url || "Untitled")}</h2>
     <p class="review-summary">${escapeHTML(item.description || item.ai_summary?.one_sentence || "")}</p>
     ${reasons.length ? `<div class="chips">${reasons.slice(0, 4).map((reason) => `<span>${escapeHTML(reason)}</span>`).join("")}</div>` : ""}
     ${feedbackControls(item.item_type || "bookmark", item.id || "", "review", item.feedback_state)}
+    ${nextAction || importance ? `<p class="meta">${nextAction ? `Next: ${escapeHTML(nextAction)}` : ""}${nextAction && importance ? " · " : ""}${importance ? `Priority ${importance}` : ""}</p>` : ""}
     <p class="button-row">
       <a class="button secondary" href="${isNote ? `/notes/${encodeURIComponent(item.id)}` : `/bookmark/${escapeHTML(item.id)}`}">Open</a>
       <button type="button" data-review-complete="${escapeHTML(id)}">Complete review</button>
       <button type="button" class="secondary" data-review-snooze="${escapeHTML(id)}">Snooze</button>
+      ${isNote ? "" : `<button type="button" class="secondary" data-review-archive="${escapeHTML(id)}">Archive</button>`}
     </p>
-
+    <details class="review-followup">
+      <summary>Add task or reminder</summary>
+      <div class="review-followup-body">
+        <section>
+          <h3>Task</h3>
+          ${actionItemsPanel(item.item_type || "bookmark", item.id, item.action_items || [])}
+        </section>
+        <section>
+          <h3>Reminder</h3>
+          ${reminderForm(item.item_type || "bookmark", item.id)}
+          ${reminderList(item.reminders || [])}
+        </section>
+      </div>
+    </details>
   </article>`;
 }
 
@@ -3380,12 +4692,19 @@ function bindFeedbackControls(scope) {
 
 async function reviewAction(scope, button, action) {
   scope.assertCurrent();
-  const target = button.dataset.reviewComplete || button.dataset.reviewSnooze;
-  const done = setButtonBusy(button, action === "complete" ? "Completing" : "Snoozing");
+  const item = button.dataset.reviewComplete || button.dataset.reviewSnooze;
+  const archiveItem = button.dataset.reviewArchive;
+  const target = item || archiveItem;
+  const done = setButtonBusy(button, action === "complete" ? "Completing" : action === "archive" ? "Archiving" : "Snoozing");
   try {
-    await api(`/review/${target}/${action}`, { method: "POST", body: action === "snooze" ? JSON.stringify({ days: 7 }) : "{}" });
+    if (action === "archive") {
+      const [, bookmarkID] = String(target).split(":");
+      await api(`/resurfacing/${bookmarkID}/archive`, { method: "POST", body: "{}" });
+    } else {
+      await api(`/review/${target}/${action}`, { method: "POST", body: action === "snooze" ? JSON.stringify({ days: 7 }) : "{}" });
+    }
     scope.assertCurrent();
-    ui.toast(action === "complete" ? "Review completed" : "Review snoozed", "success");
+    ui.toast(action === "complete" ? "Review completed" : action === "archive" ? "Archived from review" : "Review snoozed", "success");
     render();
   } catch (err) {
     if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
@@ -3560,6 +4879,128 @@ function bindRelationshipFeedback(scope) {
       if (button.dataset.relationshipFeedback === "dismiss") button.closest("article")?.remove();
     } catch (err) { if (scope.isCurrent() && !routeLifecycle.isStale(err)) ui.toast(err.message, "error"); } finally { if (scope.isCurrent()) done(); }
   }));
+}
+
+async function insightsPage(scope) {
+  await requireUser();
+  const params = new URLSearchParams(location.search);
+  if (params.get("legacy") === "evolution") return evolutionPage(scope);
+  const family = params.get("family") || "";
+  const insightQuery = new URLSearchParams({ limit: "40" });
+  if (family) insightQuery.set("family", family);
+  const result = await api(`/insights?${insightQuery}`);
+  const insights = result.insights || [];
+  setRoot(scope, shell("Insights", `
+    <section class="insights-heading">
+      <div><p class="lede">Patterns grounded in your own sources, with the evidence kept close.</p><p class="meta">Local detectors work without a model provider. Feedback shapes what returns.</p></div>
+      <label for="insight-family">Pattern family<select id="insight-family">
+        ${libraryFilterOptions(["emerging_theme", "recurring_connection", "changed_thinking", "knowledge_gap", "forgotten_value", "serendipitous_connection"], family, "All insights")}
+      </select></label>
+    </section>
+    <section class="insight-list" aria-live="polite">
+      ${insights.map(insightCard).join("") || insightEmptyState(result.state, family)}
+    </section>
+    ${result.next_cursor ? `<button type="button" class="secondary" data-insight-more data-cursor="${escapeHTML(result.next_cursor)}">Load more</button>` : ""}
+  `));
+  document.querySelector("#insight-family")?.addEventListener("change", (event) => navigate(`/insights${event.currentTarget.value ? `?family=${encodeURIComponent(event.currentTarget.value)}` : ""}`));
+  bindInsightActions(scope);
+  recordInsightImpressions(insights);
+}
+
+function insightEmptyState(state, family) {
+  const captureOrLibrary = `<button type="button" data-insight-next="capture-note">Capture</button><a class="button secondary" href="/library">Open Library</a>`;
+  if (state === "not_enough_history") return emptyState({ eyebrow: "Not enough history", title: "Insights need a little history", body: "Keep capturing and connecting. Arivu will surface patterns only when your own evidence supports them.", tag: "section", action: captureOrLibrary });
+  if (state === "reprocessing_required") return emptyState({ eyebrow: "Processing needed", title: "Refresh your saved sources", body: "Some items need to be reprocessed before Arivu can derive trustworthy patterns.", tag: "section" });
+  return emptyState({ eyebrow: "No qualifying patterns", title: family ? "No patterns in this family" : "No insights yet", body: "Arivu did not find a specific, evidence-backed pattern for this view.", tag: "section", action: captureOrLibrary });
+}
+
+function insightCard(insight) {
+  const confidence = Math.round(Number(insight.confidence || 0) * 100);
+  const evidence = insight.evidence || [];
+  const isRecommendation = insight.kind === "recommendation";
+  return `<article class="insight-card" data-insight-id="${escapeHTML(insight.id)}">
+    <header><div><p class="meta">${isRecommendation ? "Recommendation · " : ""}${escapeHTML(knowledgeTypeLabel(insight.type))} · ${escapeHTML(insight.window || "current")}</p><h2>${escapeHTML(insight.title || "Knowledge pattern")}</h2></div>${isRecommendation ? "" : `<span class="confidence" title="Evidence strength">${escapeHTML(insight.evidence_strength || `${confidence}% confidence`)}</span>`}</header>
+    <p class="insight-explanation">${escapeHTML(insight.explanation || "")}</p>
+    <details><summary>Why Arivu detected this</summary><p>${escapeHTML(insight.why_detected || "Detected from the evidence below.")}</p></details>
+    <div class="evidence-list" aria-label="Supporting evidence">
+      ${evidence.map((item) => `<a href="${knowledgeItemHref(item.type, item.id, item.title)}"><span>${escapeHTML(item.title || item.id)}</span><small>${escapeHTML(knowledgeTypeLabel(item.type))}</small></a>`).join("")}
+    </div>
+    <div class="insight-actions">
+      ${(insight.actions || []).slice(0, 2).map((action) => insightNextAction(action, evidence[0])).join("")}
+      <span class="action-spacer"></span>
+      <button type="button" class="secondary" data-insight-feedback="useful">Useful</button>
+      <button type="button" class="secondary" data-insight-feedback="not_useful">Not useful</button>
+      <select data-insight-reason aria-label="Why this insight was not useful"><option value="">Reason (optional)</option><option value="unsupported">Unsupported</option><option value="obvious">Obvious</option><option value="generic">Too generic</option><option value="wrong_connection">Wrong connection</option><option value="stale">Stale</option><option value="bad_source">Bad source</option></select>
+      <button type="button" class="secondary" data-insight-feedback="snooze">Snooze</button>
+      <button type="button" class="secondary" data-insight-feedback="dismiss">Dismiss</button>
+    </div>
+  </article>`;
+}
+
+function insightNextAction(action, evidence) {
+  if (action === "create_note") return `<button type="button" data-insight-next="capture-note">Create note</button>`;
+  if (action === "connect" && evidence) return `<a class="button" href="/graph?focus=${encodeURIComponent(`${evidence.type}:${evidence.id}`)}">Explore connection</a>`;
+  if (action === "snooze") return "";
+  return evidence ? `<a class="button" href="${knowledgeItemHref(evidence.type, evidence.id, evidence.title)}">Review evidence</a>` : "";
+}
+
+function bindInsightActions(scope) {
+  document.querySelectorAll("[data-insight-feedback]:not([data-bound])").forEach((button) => {
+    button.dataset.bound = "true";
+    button.addEventListener("click", async () => {
+    if (!scope.isCurrent()) return;
+    const card = button.closest("[data-insight-id]");
+    const done = setButtonBusy(button, "Saving");
+    try {
+      const reason = button.dataset.insightFeedback === "not_useful" ? card.querySelector("[data-insight-reason]")?.value || "" : "";
+      await api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "insight", target_id: card.dataset.insightId, feedback: button.dataset.insightFeedback, reason }) });
+      scope.assertCurrent();
+      ui.toast("Insight feedback saved", "success");
+      if (button.dataset.insightFeedback === "dismiss" || button.dataset.insightFeedback === "snooze") card.remove();
+    } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+      ui.toast(err.message, "error");
+    } finally {
+      if (scope.isCurrent()) done();
+    }
+    });
+  });
+  document.querySelectorAll("[data-insight-next='capture-note']:not([data-bound])").forEach((button) => { button.dataset.bound = "true"; button.addEventListener("click", openCaptureComposer); });
+  const moreButton = document.querySelector("[data-insight-more]:not([data-bound])");
+  if (moreButton) moreButton.dataset.bound = "true";
+  moreButton?.addEventListener("click", async (event) => {
+    if (!scope.isCurrent()) return;
+    const button = event.currentTarget;
+    const family = new URLSearchParams(location.search).get("family") || "";
+    const query = new URLSearchParams({ limit: "40", cursor: button.dataset.cursor });
+    if (family) query.set("family", family);
+    const done = setButtonBusy(button, "Loading");
+    try {
+      const result = await api(`/insights?${query}`);
+      scope.assertCurrent();
+      if (result.restart_required) {
+        ui.toast("Your library changed. Refreshing insights.", "info");
+        render();
+        return;
+      }
+      const items = result.insights || [];
+      document.querySelector(".insight-list")?.insertAdjacentHTML("beforeend", items.map(insightCard).join(""));
+      recordInsightImpressions(items);
+      button.dataset.cursor = result.next_cursor || "";
+      if (!result.next_cursor) button.remove(); else bindInsightActions(scope);
+    } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+      ui.toast(err.message, "error");
+    } finally {
+      if (scope.isCurrent()) done();
+    }
+  });
+}
+
+function recordInsightImpressions(insights) {
+  const target_ids = insights.map((insight) => insight.id).filter(Boolean);
+  if (!target_ids.length) return;
+  queueMicrotask(() => api("/feedback", { method: "POST", body: JSON.stringify({ target_type: "insight_impression", target_ids }) }).catch(() => {}));
 }
 
 async function adminPage(scope) {
@@ -3977,7 +5418,7 @@ async function render() {
   state.pendingRoutes += 1;
   document.body.classList.add("is-routing");
   const route = routes.find(routeMatches);
-  const page = route ? route.page : location.pathname === "/" ? () => navigate(state.user ? "/today" : "/auth", true) : todayPage;
+  const page = route ? route.page : location.pathname === "/" ? () => navigate(state.user ? "/today" : "/auth", true) : dashboardPage;
   try {
     if (route?.access === "protected") await requireUser();
     await page(scope);
