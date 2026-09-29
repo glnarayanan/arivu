@@ -18,9 +18,9 @@ Monolith reports exactly version 2.10.1.
 
 Direct package versions are exact in `package.json` and `package-lock.json`:
 
-- Playwright `1.62.1` and its pinned Chromium runtime (Apache-2.0).
+- Playwright `1.63.0` and its pinned Chromium runtime (Apache-2.0).
 - Mozilla Readability `0.6.0` (Apache-2.0).
-- JSDOM `30.0.1` (MIT).
+- JSDOM `30.1.1` (MIT).
 - Monolith `2.10.1` (CC0-1.0), installed as a separate executable.
 
 No dependency from this bundle may be imported into `internal/app/web`.

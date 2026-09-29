@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+- Updated SQLite, Go crypto/network libraries, JSDOM, and Playwright. Patched
+  the capture runtime's transitive undici WebSocket denial-of-service issue.
+  Builds now use Go 1.26.8, including the container and orb toolchains.
+- Pinned OpenWiki setup actions to commits and stopped leaving the repository
+  write credential in its checkout while the documentation tool runs.
 - Added optional conversations and three-question quizzes from original saved
   passages. Preview the sources and provider before sending; inspect exact
   cited quotes and save answers or passages as editable notes with source links.

@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="$HOME/.local/share/arivu-orb"
 bin_dir="$HOME/.local/bin"
-go_version="1.25.12"
+go_version="1.26.8"
 node_version="22.23.1"
 
 step() {
