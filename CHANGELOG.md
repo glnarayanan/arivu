@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.7.0] - 2026-09-30
 
 - Updated SQLite, Go crypto/network libraries, JSDOM, and Playwright. Patched
   the capture runtime's transitive undici WebSocket denial-of-service issue.
