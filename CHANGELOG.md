@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Changed the OpenWiki workflow's OpenRouter model from `z-ai/glm-5.2` to
+  `deepseek/deepseek-v4.1-flash`.
+
 ## [1.7.0] - 2026-09-30
 
 - Updated SQLite, Go crypto/network libraries, JSDOM, and Playwright. Patched
