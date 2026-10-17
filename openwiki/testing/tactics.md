@@ -79,7 +79,7 @@ Also load `/dashboard`, `/knowledge-graph`, `/analytics`, `/inbox`, `/focus`,
 `/review`, `/board`, `/assistant`, `/objects`, `/evolution`, `/duplicates`, and
 `/imports`; confirm the canonical URL and incoming query values survive.
 
-Run at desktop, tablet, and 390x844 mobile sizes with the Brightlight-derived
+Run at desktop, tablet, and 390x844 mobile sizes with the Spaziobianco-derived
 light-only palette. Emulate an OS dark preference and verify the UI remains
 light. Check keyboard-only use, visible focus, route announcements, skip link,
 dialog/menu focus management, graph SVG/list parity, the Graph zoom/reset

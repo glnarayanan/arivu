@@ -2,63 +2,67 @@
 
 ## Direction
 
-Arivu uses a **Brightlight-derived** visual language. The reference theme
-supplies the look and feel only: a white work surface, dashed rails, coral
-`--accent-500` actions, neutral ink, medium-weight serif titles, restrained
-sans-serif interface text, sand quiet panels, pill controls, and sparse
-shadows. It should feel bright, composed, and inviting during long reading
-and research sessions. Sand is for quiet panels and muted controls, not the
-page field.
+Arivu follows the Lexington Themes **Spaziobianco** design language, applied to
+a working application: warm paper, a serif display face at regular weight,
+borderless muted cards with soft shadows, charcoal buttons with layered edges,
+and hairlines only where a divider is needed. Coral stands in for the theme's
+orchid, pink, and periwinkle accents and remains Arivu's accent. It should feel
+calm, composed, and unhurried during long reading and research sessions.
 
 Arivu is light-only. `color-scheme: light` is an intentional product decision;
-do not add a dark palette or follow `prefers-color-scheme` for colors.
+do not add a dark palette or follow `prefers-color-scheme` for colors. The one
+dark moment is the dithered art panel on the auth screens, which is an image,
+not a theme.
 
 The knowledge-focused product pass changes navigation and retires planning
 workflows as described in `PRODUCT.md`. It retains this visual system and the
 existing shared interaction primitives.
 
-Brightlight is a licensed design reference, not a runtime dependency. Its
-Astro components, Tailwind setup, scripts, font files, and image assets are not
-copied into the shipped application. Arivu independently self-hosts the
-OFL-licensed Geist and Noto Serif webfonts used by the visual language and
-remains a dependency-free embedded frontend implemented with first-party HTML,
-CSS, SVG, and browser JavaScript.
+The implementation is first-party HTML, CSS, SVG, and browser JavaScript in a
+dependency-free embedded frontend. Values below come from the theme source.
+When changing the app, check the theme source first and keep these values
+unless a deviation is listed here.
 
 ## Principles
 
-1. Editorial warmth. Use warm canvas tones and confident type hierarchy rather
-   than application chrome to make saved knowledge pleasant to revisit.
+1. Editorial warmth. Warm paper tones and a confident serif hierarchy make
+   saved knowledge pleasant to revisit.
 2. Familiar structure. Preserve current navigation, menus, routes, information
    architecture, and behavior while changing presentation.
-3. Coral with restraint. Reserve the accent for primary actions, selection,
-   focus, and small moments of emphasis.
-4. Native and resilient. Prefer semantic HTML, platform controls, CSS, SVG, and
+3. Coral with restraint. Reserve the accent for selection, focus, links in
+   emphasis, and small moments of color. Primary actions are charcoal.
+4. Soft depth, no outlines. Cards are muted fills with a shadow, not boxed.
+5. Native and resilient. Prefer semantic HTML, platform controls, CSS, SVG, and
    existing dependency-free primitives.
-5. Equivalent access. A visual graph always has an operable list alternative.
+6. Equivalent access. A visual graph always has an operable list alternative.
 
 ## Tokens
 
 Tokens live in `internal/app/web/styles.css` and use OKLCH.
 
-- **Canvas:** white `--paper` with dashed `--base-200` rails. White `--panel`
-  and `--sidebar` sit on that field. Quiet surfaces use pale sand, not gray-blue.
-- **Text:** near-black base neutrals provide `--ink`; secondary copy uses
-  `--base-500`. Placeholder text uses `--base-600` so 1rem field hints meet
-  WCAG AA on white.
-- **Accent:** `--accent-500` remains the decorative brand coral. Primary
-  action fills use `--accent-700` with white labels so 0.875rem control text
-  meets WCAG AA. Hover ink on quiet surfaces uses `--accent-50` /
-  `--accent-800`. Active navigation is a text-weight change, not a coral
-  pill fill.
-- **Semantic roles:** danger, success, information, highlight, and modal scrim
-  remain distinct. Color never carries meaning alone.
+- **Paper and fill:** `--paper` is `oklch(98% 0.005 80.72)`. `--fill` (the
+  theme's muted) is `oklch(94% 0.008 81.79)`, with `--fill-deep` one step
+  darker for hover and disabled states. Pages sit on paper; cards sit on fill.
+- **Ink:** `--ink` is `oklch(26.45% 0 89.88)`. `--ink-strong` is used for
+  headings and active navigation.
+- **Secondary text:** the theme's muted foreground, `oklch(55.1% 0.012 76.53)`,
+  fails AA on fill cards. `--text-2` is the same hue at 47% lightness so
+  secondary copy passes 4.5:1 on paper and on fill. Placeholder text uses
+  `--base-600`.
+- **Hairlines:** `--hairline` (also `--line`) is the only divider color.
+- **Accent:** a coral ramp, `--accent-50` to `--accent-800`. `--accent` is
+  `--accent-700` for text and links; `--accent-600` drives the focus ring and
+  the active-navigation bar. `--highlight` is `--accent-200`. The legacy
+  `--sand-*` and `--base-*` names are aliases onto the warm paper family so
+  older rules recolor automatically.
+- **Selection:** `::selection` is charcoal with `--accent-300` text.
+- **Shadows:** `--shadow`, `--shadow-lg`, `--shadow-xl`, and the five-layer
+  `--shadow-2xl` follow the theme. Buttons use `--shadow-button-default` and
+  `--shadow-button-muted`.
 - **Spacing:** use the established 4, 8, 12, 16, 24, 32, 48, and 64px rhythm.
-- **Shape:** compact 6-12px radii contain fields and surfaces. Pills are for
-  buttons, navigation states, tags, and compact filters.
-- **Rules:** use fine dashed neutral separators to establish editorial rhythm.
-  Avoid heavy borders and decorative grids.
-- **Elevation:** use `--shadow-sm` and `--shadow` sparingly for true layering,
-  such as primary work surfaces, dialogs, menus, and toasts.
+- **Shape and concentric radii:** cards use `--radius-xl` (16px, `rounded-2xl`).
+  Content nested inside a card with 8px padding uses 12px radii; fields and
+  small controls use 8px. Pills are only for chips and compact filters.
 - **Motion:** retain short 150-250ms state transitions using
   `--ease-out-quart`; honor reduced-motion preferences.
 
@@ -67,25 +71,27 @@ Zoom out, Reset view, and Zoom in controls above its pannable canvas.
 
 ## Typography
 
-Use `--font-display`, a locally available serif stack led by Noto Serif, for
-brand marks, page titles, panel headings, and other editorial moments. Use
-`--font-body` / `--font-ui`, a locally available sans-serif stack led by Geist,
-for prose, labels, controls, and data. `--font-mono` is limited to technical
-values that benefit from fixed-width alignment.
+- `--font-display`: **STIX Two Text** at weight 400 with negative tracking
+  (`-0.025em`) for the brand, page titles, `h2` headings, panel headings, and
+  dialog titles. Titles are 1.875rem, 2.25rem from 1024px; panel headings
+  1.5rem; sub-headings 1.25rem.
+- `--font-body` / `--font-ui`: **Geist** for navigation, controls, prose,
+  labels, and data. Geist is the one deliberate deviation from the theme,
+  whose sans is not bundled.
+- `--font-mono`: **Geist Mono**, limited to technical values.
 
-The official OFL-licensed Geist, Geist Mono, and Noto Serif webfonts are bundled
-under `internal/app/web/fonts`, served first-party, and covered by local license
-notices. No font is fetched from the Brightlight checkout or a third-party CDN,
-and every stack retains durable platform fallbacks. Keep headings compact enough for product
-work, body prose near 65-75 characters, and saved reading content within the
-existing reader measure.
+All faces are bundled under `internal/app/web/fonts`, served first-party, and
+covered by local license notices. Nothing is fetched from a CDN, and every
+stack retains durable platform fallbacks. Keep body prose near 65-75
+characters and saved reading content within the existing reader measure.
+There are no uppercase kickers or letter-spaced labels.
 
 ## Application Shell
 
-The knowledge-focused shell uses:
-
-- **Desktop:** left rail, central workspace, and contextual right inspector
-  where the surface already needs one.
+- **Desktop:** a solid paper left rail separated by a hairline, a central
+  workspace, and a contextual right inspector where a surface needs one. The
+  active navigation item shows a 2px coral bar on its left edge and
+  `--ink-strong` text; there is no pill fill.
 - **Tablet:** compact rail; graph inspector moves below the canvas.
 - **Mobile:** fixed four-item bottom navigation, persistent Capture and Search
   actions, and dialogs/inspectors that fit safe areas.
@@ -96,6 +102,8 @@ Imports/exports, settings, administration, and account actions remain under the
 profile or contextual controls. The command palette remains under More and
 `Cmd/Ctrl+K`.
 
+The topbar is solid paper with a hairline underneath, not translucent.
+
 ## Components And States
 
 Restyle the shared primitives already in `app.js`: shell, dialog, destructive
@@ -104,14 +112,25 @@ and route cleanup. Do not replace their behavior or create theme-only variants.
 Interactive components need default, hover, focus, active, disabled, loading,
 success, and error treatment as applicable.
 
-- Primary actions use `--accent-700` pills with white labels; quieter actions
-  use sand-100 with sand-950 text. Disabled controls use sand-200 with
-  sand-950 text instead of opacity. Desktop controls may be `h-9`; mobile
-  and touch stay 44px.
-- Fields use white fills, `rounded-md`, and a `base-200` ring. Keep 1rem type
-  in operate forms.
-- Dashed separators divide editorial sections without wrapping every item in a
-  card.
+- **Buttons:** the default is a charcoal gradient from `--ink` at 85% to
+  `--ink` with the layered `--shadow-button-default`. Hover raises
+  `brightness` to 1.25, active scales to 0.98, and focus shows a 3px
+  `--accent` ring at 40% plus a 2px outline so the indicator survives forced
+  colors. Muted (secondary and icon) buttons run from `--paper` to `--fill`
+  with `--shadow-button-muted` and hover at brightness 0.97. Danger uses the
+  same construction in `--danger`. Disabled controls use `--fill-deep` with
+  `--text-2` text, no shadow, and no motion.
+- **Sizes:** extra small `h-8 px-3 text-xs rounded-md`, small
+  `h-9 px-4 text-sm rounded-md`, base `h-10 px-4 text-base rounded-lg`.
+  Desktop controls may be small; mobile and touch targets stay 44px.
+- **Cards:** `rounded-2xl` on `--fill` with `--shadow` and no outline. The
+  primary reading surface is paper with `--shadow-lg` and a hairline so it
+  separates from the page. Inputs inside a card sit on paper.
+- **Fields:** `--fill` background, 8px radius, a transparent border that shows
+  `--fill-deep` on hover, and a paper background on focus. Keep 1rem type in
+  operate forms.
+- **Dividers:** hairlines only, and only where the structure needs one. Do not
+  wrap every item in a card or draw dashed rails.
 - Use structural placeholders for visible asynchronous loading; do not center
   ornamental spinners.
 - Empty states explain the next useful action.
@@ -119,12 +138,28 @@ success, and error treatment as applicable.
 - Forms retain labels, inline errors, `aria-describedby`, native validity, and
   specific busy labels.
 
+## Auth And Public Share
+
+The auth screens use the theme's split layout: a form column (24rem maximum)
+beside a rounded dark art panel from 1024px up. Below that width only the form
+shows. The panel is `internal/app/web/art/auth-dither.webp`, a static image
+that is decorative (`aria-hidden`). Never put text on it.
+
+The art is generated by `scripts/generate-dither-art.py`, a deterministic
+numpy port of the theme's shader: warped fractional Brownian noise cut into
+four flat colors with an 8x8 Bayer threshold. Edit the script and rerun it
+instead of editing the WebP. The theme's live WebGL shader is not reproduced.
+
+The public share page (`public-share.css`) is self-contained and uses the same
+paper, ink, STIX Two Text, and hairline values.
+
 ## Graph Semantics
 
 Node color is a secondary cue; labels and accessible type names remain present.
 Current semantic roles cover bookmarks, notes, annotations, entities, and
-concepts. Solid edges indicate explicit
-relationships; derived relationships use a quieter or dashed treatment.
+concepts. Solid edges indicate explicit relationships; derived relationships
+use a quieter or dashed treatment. Dashed strokes are reserved for this
+meaning and are never used as decoration.
 
 The graph is intentionally bounded. The current browser requests at most 48
 nodes and 160 edges, while the API enforces its own higher bounds. A focus
@@ -157,9 +192,10 @@ alternative; content must be visible before animation.
 ## Quality Checks
 
 At minimum, validate authenticated Home, Library, Notes, Search, Graph, Review,
-bookmark detail, note detail, Settings, and legacy route aliases at desktop,
-tablet, and 390x844 mobile sizes. Validate the light-only palette even when the
-operating system requests dark appearance. Check keyboard-only operation,
-reduced motion, empty/loading/error/offline states, long text, viewport overflow,
-console errors, graph/list parity, and contrast. Keep screenshots as temporary
-review artifacts unless a committed regression fixture needs them.
+bookmark detail, note detail, Settings, the auth screen, and legacy route
+aliases at desktop (1440), tablet (about 820), and 390x844 mobile sizes.
+Validate the light-only palette even when the operating system requests dark
+appearance. Check keyboard-only operation, reduced motion,
+empty/loading/error/offline states, long text, viewport overflow, console
+errors, graph/list parity, and contrast. Keep screenshots as temporary review
+artifacts unless a committed regression fixture needs them.

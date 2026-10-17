@@ -95,8 +95,8 @@ link; the browser does not construct a trusted edge by itself.
 
 ## Shared Interaction Rules
 
-- Presentation uses the Brightlight-derived white/sand, coral, serif/sans,
-  dashed-rule visual system without changing component behavior or hierarchy.
+- Presentation uses the Spaziobianco-derived paper, coral, serif/sans,
+  hairline visual system without changing component behavior or hierarchy.
 - Forms retain labels, inline errors, native validity, and specific busy states.
 - Dialogs trap focus, close with Escape, and restore focus.
 - Menus use ARIA menu semantics and roving keyboard focus.
