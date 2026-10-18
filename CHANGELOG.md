@@ -12,6 +12,12 @@ All notable changes to this project will be documented in this file.
   screen with a static dithered art panel. Routes, navigation, and behavior are
   unchanged. Noto Serif is replaced by self-hosted STIX Two Text, and the app
   shell cache moves to v8.
+- Updated the Go toolchain to 1.26.9 (including the container and orb setup),
+  `golang.org/x/net`, `golang.org/x/crypto`, and `golang.org/x/sys`, which
+  clears the standard library and network advisories reported by the release
+  vulnerability scan. Also updated the capture runtime's JSDOM, Playwright,
+  and a transitive source-map package, and the GitHub Actions checkout and
+  Node setup steps.
 - Changed the OpenWiki workflow's OpenRouter model from `z-ai/glm-5.2` to
   `deepseek/deepseek-v4.1-flash`.
 
