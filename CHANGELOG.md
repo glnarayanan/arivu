@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.8.0] - 2026-10-18
 
 - Fixed the public share page, which always showed "unavailable" because its
   script read an undefined result-count element.
