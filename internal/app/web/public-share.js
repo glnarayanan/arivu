@@ -1,6 +1,7 @@
 'use strict';
 
 let data;
+const resultCount = document.getElementById('result-count');
 const token = location.pathname.split('/')[2];
 const esc = (value) => {
   const element = document.createElement('span');

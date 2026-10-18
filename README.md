@@ -34,9 +34,9 @@ See [PRODUCT.md](PRODUCT.md) and the
 - One Go binary serves the web app, API, workers, CLI commands, and migration
   tooling.
 - Embedded dependency-free frontend assets are served from the binary.
-- The light-only browser UI uses a Brightlight-derived warm editorial look
-  implemented in first-party CSS with self-hosted OFL-licensed Geist and Noto
-  Serif fonts; no Astro, Tailwind, reference assets, remote font requests, or
+- The light-only browser UI uses a Spaziobianco-derived warm paper look
+  implemented in first-party CSS with self-hosted OFL-licensed Geist, Geist
+  Mono, and STIX Two Text fonts; no Astro, Tailwind, reference assets, remote font requests, or
   frontend dependency tree ships with Arivu.
 - SQLite stores content, sessions, jobs, settings, search indexes, and preserved
   legacy records.

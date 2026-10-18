@@ -110,7 +110,7 @@ test("ships a responsive light-only theme and accessible graph fallbacks", () =>
   for (const contract of [
     "color-scheme: light",
 	"/fonts/geist-variable.woff2",
-	"/fonts/noto-serif-variable-latin.woff2",
+	"/fonts/stix-two-text-variable-latin.woff2",
     ".mobile-nav",
     ".graph-list",
     "@media (prefers-reduced-motion: reduce)",
@@ -144,9 +144,10 @@ test("keeps imports inside Settings and uses legible interactive states", () => 
   assert.ok(app.includes('["import", "Import", "Bring in browser, Pocket, Raindrop, or URL-list exports."]'));
   assert.ok(!app.includes("calendar-import-form"));
   assert.ok(!app.includes("/calendar/import"));
-  assert.ok(styles.includes('background: var(--accent-hover);\n    color: var(--accent-ink);'));
-  assert.ok(styles.includes('--interactive-hover-bg: var(--accent-50);'));
-  assert.ok(styles.includes('--interactive-hover-ink: var(--accent-800);'));
+  assert.ok(styles.includes('filter: brightness(1.25);'));
+  assert.ok(styles.includes('transform: scale(0.98);'));
+  assert.ok(styles.includes('--interactive-hover-bg: var(--fill-deep);'));
+  assert.ok(styles.includes('--interactive-hover-ink: var(--ink-strong);'));
   assert.match(styles, /\.tab-list \[role="tab"\]:hover:not\(\[aria-selected="true"\]\) \{\s+background: var\(--interactive-hover-bg\);\s+color: var\(--interactive-hover-ink\);/);
   assert.match(styles, /\.menu \[role="menuitem"\]:hover \{\s+background: var\(--interactive-hover-bg\);\s+color: var\(--interactive-hover-ink\);/);
   assert.match(styles, /summary:hover \{\s+border-radius: var\(--radius\);\s+background: var\(--interactive-hover-bg\);\s+color: var\(--interactive-hover-ink\);/);
@@ -158,7 +159,7 @@ test("keeps imports inside Settings and uses legible interactive states", () => 
   assert.ok(styles.includes(".graph-nodes a:focus-visible .graph-node circle"));
   assert.ok(styles.includes("--placeholder: var(--base-600);"));
   assert.ok(styles.includes("--accent: var(--accent-700);"));
-  assert.ok(styles.includes("background: var(--sand-200);\n  color: var(--sand-950);"));
+  assert.ok(styles.includes("background: var(--fill-deep);\n  box-shadow: none;\n  color: var(--text-2);"));
 });
 
 test("library and graph keep accessible composition", () => {

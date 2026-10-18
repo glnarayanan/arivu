@@ -579,6 +579,7 @@ function authShell(formInner) {
       <section class="auth-form">
         ${formInner}
       </section>
+      <div class="auth-art" aria-hidden="true"></div>
     </main>
   `;
 }

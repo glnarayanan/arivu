@@ -1,21 +1,21 @@
 @font-face{font-family:Geist;src:url("/fonts/geist-variable.woff2") format("woff2");font-weight:100 900;font-display:swap}
-@font-face{font-family:"Noto Serif";src:url("/fonts/noto-serif-variable-latin.woff2") format("woff2");font-weight:100 900;font-display:swap}
-:root{color-scheme:light;--paper:#fff;--panel:#fff;--sand:oklch(97.03% .007 88.64);--line:oklch(92.2% 0 0);--ink:oklch(20.5% 0 0);--muted:oklch(55.6% 0 0);--accent:oklch(64.47% .167 35.21);--accent-hover:oklch(55.96% .174 34.81);--accent-soft:oklch(96.37% .014 34.3);--focus:oklch(55.96% .174 34.81);font:16px Geist,"Segoe UI",sans-serif}
+@font-face{font-family:"STIX Two Text";src:url("/fonts/stix-two-text-variable-latin.woff2") format("woff2");font-weight:400 700;font-style:normal;font-display:swap}
+:root{color-scheme:light;--paper:oklch(98% .005 80.72);--panel:oklch(98% .005 80.72);--sand:oklch(94% .008 81.79);--line:oklch(90% .008 81.79);--ink:oklch(26.45% 0 89.88);--muted:oklch(47% .012 76.53);--accent:oklch(45.78% .139 34.91);--accent-hover:oklch(38% .12 34.5);--accent-soft:oklch(94% .03 34.3);--focus:oklch(55.96% .174 34.81);font:16px Geist,"Segoe UI",sans-serif}
 *{box-sizing:border-box}
 body{min-height:100vh;margin:0;background:var(--paper);color:var(--ink);line-height:1.6}
 header,main{width:min(900px,calc(100% - 32px));margin-inline:auto}
-header{padding:56px 0 32px;border-bottom:1px dashed var(--line)}
-header::before{content:"Arivu";display:block;margin-bottom:24px;color:var(--ink);font:500 1.125rem/1 "Noto Serif",serif}
-h1,h2{font-family:"Noto Serif",Georgia,serif;font-weight:500;letter-spacing:-.025em;text-wrap:balance}
+header{padding:56px 0 32px;border-bottom:1px solid var(--line)}
+header::before{content:"Arivu";display:block;margin-bottom:24px;color:var(--ink);font:400 1.5rem/1 "STIX Two Text",Georgia,serif}
+h1,h2{font-family:"STIX Two Text",Georgia,serif;font-weight:400;letter-spacing:-.025em;text-wrap:balance}
 h1{max-width:18ch;margin:0;font-size:clamp(1.5rem,4vw,2.25rem);line-height:1.15}
 #d{max-width:70ch;color:var(--muted);text-wrap:pretty}
 label{display:inline-grid;gap:6px;margin:20px 12px 0 0;color:var(--muted);font-size:.8125rem;font-weight:650;vertical-align:top}
-input,select{min-height:44px;margin:0;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--ink);padding:0 12px;font:inherit}
+input,select{min-height:44px;margin:0;border:1px solid transparent;border-radius:8px;background:var(--sand);color:var(--ink);padding:0 12px;font:inherit}
 input{width:min(28rem,100%)}
-input:hover,select:hover{border-color:var(--muted)}
+input:hover,select:hover{border-color:var(--line)}
 input:focus-visible,select:focus-visible,a:focus-visible{outline:3px solid color-mix(in oklch,var(--focus) 35%,transparent);outline-offset:2px}
 main{padding-bottom:64px}
-article{padding:32px 0;border-bottom:1px dashed var(--line)}
+article{padding:32px 0;border-bottom:1px solid var(--line)}
 article h2{margin:4px 0 12px;font-size:clamp(1.35rem,3vw,2rem);line-height:1.2}
 a{color:var(--accent);text-decoration-thickness:1px;text-underline-offset:3px}
 a:hover{color:var(--accent-hover);text-decoration-thickness:2px}
@@ -24,9 +24,11 @@ a:hover{color:var(--accent-hover);text-decoration-thickness:2px}
 .reader{max-width:70ch;line-height:1.7}
 .reader img{max-width:100%;height:auto}
 .artifacts{display:flex;flex-wrap:wrap;gap:8px}
-.artifacts a{min-height:44px;display:inline-flex;align-items:center;border-radius:999px;background:var(--accent-soft);padding:0 16px;font-size:.875rem;font-weight:650;text-decoration:none}
-.artifacts a:hover{background:var(--accent);color:#fff}
-.empty,.unavailable{margin-top:48px;border-radius:12px;background:var(--panel);padding:24px}
+.artifacts a{min-height:44px;display:inline-flex;align-items:center;border-radius:8px;background:var(--accent-soft);padding:0 16px;font-size:.875rem;font-weight:500;text-decoration:none}
+.artifacts a:hover{background:var(--ink);color:var(--paper)}
+.empty,.unavailable{margin-top:48px;border-radius:16px;background:var(--sand);box-shadow:0 1px 2px oklch(26.45% 0 89.88/.08),0 1px 3px oklch(26.45% 0 89.88/.06);padding:24px}
 .unavailable{width:min(600px,calc(100% - 32px))}
-.brand{color:var(--accent);font-family:"Noto Serif",serif;font-weight:650}
+.brand{color:var(--ink);font-family:"STIX Two Text",Georgia,serif;font-weight:400}
 @media(max-width:560px){header{padding-top:32px}label{display:grid;margin-right:0}input,select{width:100%}}
+
+::selection{background:var(--ink);color:oklch(80% .1 34)}

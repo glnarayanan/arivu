@@ -8,26 +8,27 @@ separate frontend build.
 
 Assets live under `internal/app/web/` and are embedded with `go:embed`.
 
-- `index.html`: accessible root document, light warm-sand `#fcfcf9`
+- `index.html`: accessible root document, warm paper `#faf9f6`
   theme-color metadata, app mount, route progress indicator, and toast region.
 - `app.js`: client router, authenticated shell, API client, canonical and
   compatibility routes, shared UI primitives, and product screens.
 - `route-lifecycle.mjs`: generation-scoped route commits, abort signaling, and
   route-owned listener cleanup that prevents stale asynchronous renders.
-- `styles.css`: Brightlight-derived light-only warm editorial tokens, responsive
+- `styles.css`: Spaziobianco-derived light-only warm paper tokens, responsive
   shell, component states, graph semantics, and reduced-motion handling.
-- `manifest.webmanifest`: install metadata, matching light-only `#fcfcf9`
+- `manifest.webmanifest`: install metadata, matching light-only `#faf9f6`
   background/theme colors, and the compatible GET share target into
   `/dashboard`.
-- `sw.js`: app-shell and first-party font cache; `/api/*` remains network-only.
+- `sw.js`: app-shell, first-party font, and auth art cache; `/api/*` remains network-only.
 - `service-worker-register.mjs`: CSP-compatible registration lifecycle.
 
 The visual reference changes presentation only. Existing routes, navigation,
 menu layout and options, content hierarchy, and interactions remain unchanged.
-The shipped assets do not contain Brightlight's Astro components, Tailwind
-configuration, scripts, font binaries, or images. Arivu independently bundles
-official OFL-licensed Geist and Noto Serif WOFF2 files with license notices; the
-browser client remains first-party and dependency-free.
+The shipped assets do not contain the reference theme's Astro components,
+Tailwind configuration, or scripts. Arivu bundles OFL-licensed Geist, Geist
+Mono, and STIX Two Text WOFF2 files with license notices, plus a generated
+static dither image for the auth screens; the browser client remains
+first-party and dependency-free.
 
 ## Canonical Product Routes
 

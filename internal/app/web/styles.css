@@ -15,61 +15,80 @@
 }
 
 @font-face {
-  font-family: "Noto Serif";
-  src: url("/fonts/noto-serif-variable-latin.woff2") format("woff2");
+  font-family: "STIX Two Text";
+  src: url("/fonts/stix-two-text-variable-latin.woff2") format("woff2");
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 400 700;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "STIX Two Text";
+  src: url("/fonts/stix-two-text-italic-variable-latin.woff2") format("woff2");
+  font-style: italic;
+  font-weight: 400 700;
   font-display: swap;
 }
 
 :root {
   color-scheme: light;
 
-  /* Brightlight palette */
+  /* Warm paper ground, charcoal ink, warm grey fills. Coral is the accent. */
+  --paper: oklch(98% 0.005 80.72);
+  --paper-raised: oklch(99.4% 0.003 80.72);
+  --fill: oklch(94% 0.008 81.79);
+  --fill-deep: oklch(90.5% 0.012 81.79);
+  --hairline: oklch(91.5% 0.01 81);
+  --ink: oklch(26.45% 0 89.88);
+  --ink-strong: oklch(18% 0 89.88);
+  --muted-foreground: oklch(55.1% 0.012 76.53);
+  --text-2: oklch(47% 0.012 76.53);
+
   --accent-50: oklch(96.37% 0.014 34.3);
   --accent-100: oklch(92.11% 0.031 32.56);
   --accent-200: oklch(85.18% 0.06 35);
+  --accent-300: oklch(77.67% 0.096 34.47);
   --accent-500: oklch(64.47% 0.167 35.21);
   --accent-600: oklch(55.96% 0.174 34.81);
   --accent-700: oklch(45.78% 0.139 34.91);
   --accent-800: oklch(35.02% 0.102 35.05);
-  --sand-50: oklch(98.73% 0.004 106.47);
-  --sand-100: oklch(97.03% 0.007 88.64);
-  --sand-200: oklch(90.07% 0.024 90.76);
-  --sand-700: oklch(47.95% 0.054 88.5);
-  --sand-950: oklch(16.56% 0.011 80.55);
-  --base-100: oklch(97% 0 0);
-  --base-200: oklch(92.2% 0 0);
-  --base-400: oklch(70.8% 0 0);
-  --base-500: oklch(55.6% 0 0);
-  --base-600: oklch(43.9% 0 0);
-  --base-700: oklch(37.1% 0 0);
-  --base-800: oklch(26.9% 0 0);
-  --base-900: oklch(20.5% 0 0);
 
-  --ink: var(--base-900);
-  --paper: white;
-  --panel: white;
-  --field: white;
+  /* Legacy ramp names keep working; they now resolve to the warm paper family. */
+  --sand-50: oklch(96.6% 0.006 81);
+  --sand-100: var(--fill);
+  --sand-200: var(--fill-deep);
+  --sand-700: oklch(45% 0.03 80);
+  --sand-950: var(--ink-strong);
+  --base-100: oklch(96% 0.004 80);
+  --base-200: var(--hairline);
+  --base-400: oklch(70% 0.01 78);
+  --base-500: var(--text-2);
+  --base-600: oklch(42% 0.012 76.5);
+  --base-700: oklch(36% 0.01 76);
+  --base-800: var(--ink);
+  --base-900: var(--ink-strong);
+
+  --panel: var(--paper);
+  --field: var(--fill);
   --placeholder: var(--base-600);
-  --muted: var(--base-500);
-  --line: var(--base-200);
-  --line-soft: var(--base-200);
+  --muted: var(--text-2);
+  --line: var(--hairline);
+  --line-soft: var(--hairline);
   --accent: var(--accent-700);
   --accent-hover: var(--accent-800);
   --accent-ink: white;
-  --interactive-bg: var(--sand-100);
-  --interactive-ink: var(--sand-950);
-  --interactive-hover-bg: var(--accent-50);
-  --interactive-hover-ink: var(--accent-800);
+  --interactive-bg: var(--fill);
+  --interactive-ink: var(--ink);
+  --interactive-hover-bg: var(--fill-deep);
+  --interactive-hover-ink: var(--ink-strong);
   --danger: oklch(45% 0.17 25);
   --danger-surface: oklch(95% 0.025 25);
   --success: oklch(40% 0.1 150);
   --success-surface: oklch(95% 0.025 150);
   --focus: var(--accent-600);
-  --sidebar: white;
-  --highlight: var(--accent-100);
-  --scrim: oklch(14.5% 0 0 / 0.55);
+  --sidebar: var(--paper);
+  --highlight: var(--accent-200);
+  --scrim: oklch(26.45% 0 89.88 / 0.5);
   accent-color: var(--accent-500);
 
   --space-1: 4px;
@@ -86,11 +105,36 @@
   --radius-sm: 6px;
   --radius: 8px;
   --radius-lg: 12px;
+  --radius-xl: 16px;
   --radius-pill: 999px;
-  --shadow-sm: 0 1px 3px oklch(14.5% 0 0 / 0.08);
-  --shadow: 0 4px 8px oklch(14.5% 0 0 / 0.09);
+  --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
+  --shadow-sm: var(--shadow);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  --shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
+  --shadow-2xl:
+    0 6.6px 4.7px 0 rgb(43 32 26 / 0.05),
+    0 16.7px 11.8px 0 rgb(43 32 26 / 0.075),
+    0 34px 24.1px 0 rgb(43 32 26 / 0.1),
+    0 70px 49.6px 0 rgb(43 32 26 / 0.12),
+    0 192px 136px 0 rgb(43 32 26 / 0.17);
+  --shadow-button-default:
+    0 0 0 1px oklch(0.2 0.01 60),
+    inset 0 1px 0 0 rgb(255 255 255 / 0.18),
+    inset 0 -1px 0 0 rgb(0 0 0 / 0.3),
+    inset 0 0 0 1px rgb(255 255 255 / 0.05),
+    0 1px 2px 0 rgb(40 28 20 / 0.2),
+    0 2px 3px -1px rgb(40 28 20 / 0.25),
+    0 4px 6px -3px rgb(40 28 20 / 0.25);
+  --shadow-button-muted:
+    0 0 0 1px rgb(43 32 26 / 0.1),
+    inset 0 1px 0 0 rgb(255 255 255 / 1),
+    inset 0 -1px 0 0 rgb(43 32 26 / 0.06),
+    0 1px 2px 0 rgb(43 32 26 / 0.06),
+    0 2px 3px -1px rgb(43 32 26 / 0.08),
+    0 4px 6px -3px rgb(43 32 26 / 0.08);
+  --ring: color-mix(in oklch, var(--accent-500) 40%, transparent);
   --ease-out-quart: cubic-bezier(0.25, 1, 0.5, 1);
-  --font-display: "Noto Serif", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+  --font-display: "STIX Two Text", "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
   --font-body: Geist, "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-ui: Geist, "Avenir Next", Avenir, "Segoe UI", Helvetica, Arial, sans-serif;
   --font-mono: "Geist Mono", "SFMono-Regular", Consolas, "Liberation Mono", monospace;
@@ -115,8 +159,8 @@ html {
 }
 
 ::selection {
-  background: var(--sand-100);
-  color: var(--accent-500);
+  background: var(--ink);
+  color: var(--accent-300);
 }
 
 body {
@@ -163,10 +207,10 @@ body.is-routing #route-progress {
   z-index: var(--z-toast);
   transform: translateY(-160%);
   border-radius: var(--radius-pill);
-  background: var(--base-900);
-  color: white;
+  background: var(--ink);
+  color: var(--paper);
   padding: var(--space-3) var(--space-4);
-  font: 650 0.875rem/1 var(--font-ui);
+  font: 500 0.875rem/1 var(--font-ui);
   text-decoration: none;
 }
 
@@ -188,19 +232,20 @@ body.is-routing #route-progress {
 
 button,
 .button {
+  --btn-shadow: var(--shadow-button-default);
   min-height: var(--control-size);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: var(--space-2);
   border: 0;
-  border-radius: var(--radius-pill);
-  background: var(--accent);
-  color: var(--accent-ink);
+  border-radius: var(--radius);
+  background: linear-gradient(to bottom, color-mix(in oklch, var(--ink) 85%, transparent), var(--ink));
+  box-shadow: var(--btn-shadow);
+  color: var(--paper);
   padding: 0 var(--space-5);
-  box-shadow: none;
   cursor: pointer;
-  font: 500 0.875rem/1.2 var(--font-ui);
+  font: 500 1rem/1.2 var(--font-ui);
   text-align: center;
   text-decoration: none;
   touch-action: manipulation;
@@ -209,13 +254,14 @@ button,
 button.secondary,
 .button.secondary,
 button.icon-button {
-  background: var(--interactive-bg);
-  color: var(--interactive-ink);
+  --btn-shadow: var(--shadow-button-muted);
+  background: linear-gradient(to bottom, var(--paper), var(--fill));
+  color: var(--ink);
 }
 
 button.danger,
 .button.danger {
-  background: var(--danger);
+  background: linear-gradient(to bottom, color-mix(in oklch, var(--danger) 85%, transparent), var(--danger));
   color: white;
 }
 
@@ -228,32 +274,24 @@ button.icon-button {
 button:disabled,
 .button[aria-disabled="true"] {
   cursor: not-allowed;
-  background: var(--sand-200);
-  color: var(--sand-950);
+  background: var(--fill-deep);
+  box-shadow: none;
+  color: var(--text-2);
   opacity: 1;
 }
 
 button:active:not(:disabled),
 .button:active:not([aria-disabled="true"]) {
-  background: var(--accent-800);
-  color: var(--accent-ink);
-}
-
-button.secondary:active:not(:disabled),
-.button.secondary:active:not([aria-disabled="true"]),
-button.icon-button:active:not(:disabled) {
-  background: var(--interactive-hover-bg);
-  color: var(--interactive-hover-ink);
-}
-
-button.danger:active:not(:disabled),
-.button.danger:active:not([aria-disabled="true"]) {
-  background: oklch(36% 0.14 25);
-  color: white;
+  transform: scale(0.98);
 }
 
 button:focus {
   outline: none;
+}
+
+button:focus-visible,
+.button:focus-visible {
+  box-shadow: var(--btn-shadow), 0 0 0 3px var(--ring);
 }
 
 button:focus-visible,
@@ -273,7 +311,6 @@ textarea:focus-visible,
   width: min(100%, 1536px);
   min-height: 100vh;
   margin-inline: auto;
-  border-inline: 1px dashed var(--line);
   background: var(--panel);
 }
 
@@ -290,7 +327,7 @@ textarea:focus-visible,
   position: sticky;
   top: 0;
   height: 100vh;
-  border-right: 1px dashed var(--line);
+  border-right: 1px solid var(--line);
   background: var(--sidebar);
   padding: max(var(--space-6), env(safe-area-inset-top)) var(--space-4) var(--space-5);
 }
@@ -298,10 +335,10 @@ textarea:focus-visible,
 .brand {
   display: inline-block;
   margin: 0 var(--space-2) var(--space-8);
-  color: var(--base-800);
+  color: var(--ink-strong);
   font-family: var(--font-display);
-  font-size: 1.125rem;
-  font-weight: 500;
+  font-size: 1.5rem;
+  font-weight: 400;
   letter-spacing: -0.025em;
   line-height: 1;
   text-decoration: none;
@@ -316,22 +353,23 @@ textarea:focus-visible,
   min-height: var(--control-size);
   display: flex;
   align-items: center;
-  border-radius: var(--radius-pill);
-  color: var(--base-600);
+  border-radius: var(--radius);
+  color: var(--text-2);
   padding: 0 var(--space-4);
-  font: 400 0.875rem/1 var(--font-ui);
+  font: 500 0.875rem/1 var(--font-ui);
   text-decoration: none;
 }
 
 .nav a:hover {
-  background: var(--sand-100);
-  color: var(--base-900);
+  background: var(--fill);
+  color: var(--ink-strong);
 }
 
 .nav a.active {
+  border-radius: 0 var(--radius) var(--radius) 0;
   background: transparent;
-  color: var(--base-900);
-  font-weight: 500;
+  box-shadow: inset 2px 0 0 var(--accent-600);
+  color: var(--ink-strong);
 }
 
 .main {
@@ -348,7 +386,7 @@ textarea:focus-visible,
   justify-content: space-between;
   gap: var(--space-5);
   margin-bottom: var(--space-7);
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px solid var(--line);
   padding-bottom: var(--space-5);
 }
 
@@ -373,14 +411,14 @@ textarea:focus-visible,
   border: 1px solid currentColor;
   border-radius: var(--radius-sm);
   padding: 2px 5px;
-  font: 700 0.6875rem/1.2 var(--font-mono);
+  font: 500 0.6875rem/1.2 var(--font-mono);
   letter-spacing: 0;
   opacity: 0.82;
 }
 
 .workspace-label {
   margin: 0 0 var(--space-1);
-  color: var(--base-500);
+  color: var(--text-2);
   font-size: 0.8125rem;
 }
 
@@ -388,19 +426,23 @@ textarea:focus-visible,
   max-width: 840px;
   margin: 0;
   overflow-wrap: anywhere;
-  color: black;
+  color: var(--ink-strong);
   font-family: var(--font-display);
   font-size: 1.875rem;
-  font-weight: 500;
+  font-weight: 400;
   letter-spacing: -0.025em;
-  line-height: 1.08;
+  line-height: 1.15;
   text-wrap: balance;
+}
+
+@media (min-width: 1024px) {
+  .headline { font-size: 2.25rem; }
 }
 
 .lede {
   max-width: 68ch;
   margin: 0;
-  color: var(--base-500);
+  color: var(--text-2);
   font-size: 1rem;
   line-height: 1.65;
   text-wrap: pretty;
@@ -410,20 +452,41 @@ textarea:focus-visible,
 .insight-strip,
 .annotation {
   overflow-wrap: anywhere;
-  border-radius: var(--radius-lg);
-  background: var(--sand-100);
+  border-radius: var(--radius-xl);
+  background: var(--fill);
+  box-shadow: var(--shadow);
   padding: var(--space-5);
 }
 
 .panel:where(.reader, .primary-panel) {
-  background: var(--panel);
-  box-shadow: none;
-  outline: 1px dashed var(--line);
+  background: var(--paper);
+  box-shadow: var(--shadow-lg);
+  outline: 1px solid var(--line);
 }
 
 .panel:where(.quiet-panel, .disclosure-panel),
 .empty-state {
-  background: var(--sand-100);
+  background: var(--fill);
+}
+
+.empty-state {
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow);
+}
+
+/* Inner tiles on a muted card sit on paper. */
+:is(.panel, .insight-strip, .annotation, .empty-state) :is(input, select, textarea) {
+  background: var(--paper);
+}
+
+h2 {
+  font-family: var(--font-display);
+  font-weight: 400;
+  letter-spacing: -0.025em;
+}
+
+h2 a {
+  font: inherit;
 }
 
 .panel h2,
@@ -434,22 +497,22 @@ textarea:focus-visible,
 .auth h1,
 details.panel > summary,
 .graph-inspector h2 {
-  color: var(--base-900);
+  color: var(--ink-strong);
   font-family: var(--font-display);
-  font-weight: 500;
-  letter-spacing: -0.02em;
-  line-height: 1.25;
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
   text-wrap: balance;
 }
 
 .panel h2 {
   margin: 0 0 var(--space-3);
-  font-size: 1.4rem;
+  font-size: 1.5rem;
 }
 
 .panel h3 {
   margin: 0 0 var(--space-3);
-  font-size: 1.0625rem;
+  font-size: 1.25rem;
 }
 
 .stack,
@@ -484,6 +547,12 @@ details.panel {
   padding: 0;
 }
 
+details.panel + details.panel,
+.panel + details.panel,
+.reader details.panel {
+  margin-top: var(--space-3);
+}
+
 details.panel > summary {
   min-height: 56px;
   display: flex;
@@ -507,13 +576,13 @@ details.panel > summary::before {
   flex: 0 0 auto;
   place-items: center;
   border-radius: 50%;
-  background: white;
+  background: var(--paper);
   color: var(--accent-700);
-  font: 650 1rem/1 var(--font-ui);
+  font: 500 1rem/1 var(--font-ui);
 }
 
 details.panel[open] > summary {
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px solid var(--paper);
 }
 
 details.panel[open] > summary::before {
@@ -538,14 +607,39 @@ details.panel[open] > summary::before {
 
 .auth {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: max(var(--space-6), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-6), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
+  display: flex;
   background: var(--paper);
 }
 
 .auth-form {
-  width: min(24rem, 100%);
+  flex: 1 1 50%;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 24rem);
+  justify-content: center;
+  align-content: center;
+  padding: max(var(--space-6), env(safe-area-inset-top)) max(var(--space-5), env(safe-area-inset-right)) max(var(--space-6), env(safe-area-inset-bottom)) max(var(--space-5), env(safe-area-inset-left));
+}
+
+.auth-art {
+  display: none;
+  flex: 1 1 50%;
+  padding: var(--space-2);
+}
+
+.auth-art::before {
+  content: "";
+  display: block;
+  height: 100%;
+  min-height: calc(100vh - 2 * var(--space-2));
+  border-radius: var(--radius-xl);
+  background: var(--ink) url("/art/auth-dither.webp") center / 1600px 1600px no-repeat;
+  box-shadow: var(--shadow);
+  image-rendering: pixelated;
+}
+
+@media (min-width: 1024px) {
+  .auth-art { display: block; }
 }
 
 .auth-form .lede {
@@ -554,7 +648,7 @@ details.panel[open] > summary::before {
 
 .auth h1 {
   margin: 0 0 var(--space-2);
-  font-size: 1.875rem;
+  font-size: 2.25rem;
 }
 
 .form {
@@ -568,8 +662,8 @@ details.panel[open] > summary::before {
 }
 
 label {
-  color: var(--base-500);
-  font: 500 0.75rem/1.2 var(--font-ui);
+  color: var(--text-2);
+  font: 500 0.8125rem/1.2 var(--font-ui);
 }
 
 .checkbox-row {
@@ -592,13 +686,13 @@ select,
 textarea {
   width: 100%;
   min-height: var(--control-size);
-  border: 1px solid var(--base-200);
+  border: 1px solid transparent;
   border-radius: var(--radius);
   background: var(--field);
   color: var(--ink);
   padding: var(--space-3) var(--space-4);
   box-shadow: none;
-  font: 500 1rem/1.35 var(--font-ui);
+  font: 400 1rem/1.35 var(--font-ui);
 }
 
 textarea {
@@ -608,7 +702,13 @@ textarea {
 input:hover,
 select:hover,
 textarea:hover {
-  border-color: var(--base-400);
+  border-color: var(--fill-deep);
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  background: var(--paper);
 }
 
 input::placeholder,
@@ -630,11 +730,11 @@ progress {
   overflow: hidden;
   border: 0;
   border-radius: var(--radius-pill);
-  background: var(--sand-200);
+  background: var(--fill-deep);
 }
 
 progress::-webkit-progress-bar {
-  background: var(--sand-200);
+  background: var(--fill-deep);
 }
 
 progress::-webkit-progress-value {
@@ -654,10 +754,10 @@ progress::-moz-progress-bar {
 #job-status:not([hidden]) {
   margin: 0;
   border-radius: var(--radius);
-  background: var(--sand-100);
+  background: var(--fill);
   color: var(--ink);
   padding: var(--space-3) var(--space-4);
-  font: 550 0.875rem/1.45 var(--font-ui);
+  font: 500 0.875rem/1.45 var(--font-ui);
 }
 
 .form-message-error {
@@ -674,18 +774,18 @@ progress::-moz-progress-bar {
   max-width: 100%;
   overflow: auto;
   margin: 0;
-  border-radius: var(--radius);
-  background: var(--base-900);
-  color: var(--base-100);
+  border-radius: var(--radius-lg);
+  background: var(--ink);
+  color: var(--fill);
   padding: var(--space-4);
-  font: 500 0.8125rem/1.55 var(--font-mono);
+  font: 400 0.8125rem/1.55 var(--font-mono);
   white-space: pre-wrap;
 }
 
 .text-link,
 .row-open {
   width: fit-content;
-  color: var(--base-500);
+  color: var(--ink);
   font: 500 0.875rem/1.35 var(--font-ui);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
@@ -704,8 +804,8 @@ progress::-moz-progress-bar {
 
 .toolbar details {
   flex: 1 1 100%;
-  border-radius: var(--radius-lg);
-  background: var(--sand-100);
+  border-radius: var(--radius-xl);
+  background: var(--fill);
 }
 
 .toolbar summary {
@@ -715,7 +815,7 @@ progress::-moz-progress-bar {
 }
 
 .toolbar details[open] summary {
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px solid var(--paper);
 }
 
 .toolbar details input,
@@ -825,9 +925,9 @@ progress::-moz-progress-bar {
   max-width: 100%;
   overflow-x: auto;
   margin-top: var(--space-5);
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--panel);
+  border-radius: var(--radius-xl);
+  background: var(--paper);
+  box-shadow: var(--shadow);
 }
 
 .data-table {
@@ -845,13 +945,13 @@ progress::-moz-progress-bar {
 }
 
 .data-table th {
-  background: var(--sand-100);
+  background: var(--fill);
   color: var(--base-700);
-  font: 650 0.75rem/1.2 var(--font-ui);
+  font: 500 0.75rem/1.2 var(--font-ui);
 }
 
 .data-table td {
-  font: 500 0.875rem/1.4 var(--font-ui);
+  font: 400 0.875rem/1.4 var(--font-ui);
 }
 
 .admin-failures-table {
@@ -911,7 +1011,7 @@ progress::-moz-progress-bar {
   display: grid;
   gap: var(--space-3);
   margin-top: var(--space-4);
-  border-block: 1px dashed var(--line);
+  border-block: 1px solid var(--line);
   padding-block: var(--space-3);
 }
 
@@ -964,11 +1064,15 @@ progress::-moz-progress-bar {
   align-items: center;
   min-height: 30px;
   border-radius: var(--radius-pill);
-  background: var(--sand-100);
+  background: var(--fill);
   color: var(--base-700);
   padding: var(--space-1) var(--space-3);
-  font: 600 0.75rem/1.25 var(--font-ui);
+  font: 500 0.75rem/1.25 var(--font-ui);
   text-decoration: none;
+}
+
+:is(.panel, .insight-strip, .annotation, .empty-state) :is(.chips span, .chips a, .status, .stage, .score) {
+  background: var(--paper);
 }
 
 .feedback-controls button.active,
@@ -982,7 +1086,7 @@ progress::-moz-progress-bar {
 }
 
 .term-cloud span:nth-child(3n + 2) {
-  background: white;
+  background: var(--paper);
 }
 
 .insight-strip,
@@ -1002,8 +1106,8 @@ progress::-moz-progress-bar {
 
 .annotation blockquote {
   margin: 0;
-  border-radius: var(--radius);
-  background: white;
+  border-radius: var(--radius-lg);
+  background: var(--paper);
   padding: var(--space-4);
   font-family: var(--font-display);
   font-size: 1.125rem;
@@ -1039,7 +1143,7 @@ progress::-moz-progress-bar {
 .summary-long-form {
   max-width: var(--reading-measure);
   font-family: var(--font-display);
-  font-size: 1.0625rem;
+  font-size: 1.125rem;
   line-height: 1.75;
 }
 
@@ -1082,7 +1186,7 @@ progress::-moz-progress-bar {
 .preservation {
   max-width: var(--reading-measure);
   margin-top: var(--space-7);
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--line);
   padding-top: var(--space-5);
 }
 
@@ -1145,7 +1249,7 @@ progress::-moz-progress-bar {
   display: block;
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
-  background: white;
+  background: var(--paper);
 }
 
 .preservation-preview {
@@ -1183,7 +1287,7 @@ progress::-moz-progress-bar {
   align-items: baseline;
   justify-content: space-between;
   gap: var(--space-4);
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--line);
   padding-block: var(--space-3);
 }
 
@@ -1195,7 +1299,7 @@ progress::-moz-progress-bar {
 .reader-jump-highlight {
   background: var(--highlight);
   color: var(--ink);
-  outline: 1px solid var(--accent-200);
+  outline: 1px solid var(--accent-300);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
@@ -1206,9 +1310,9 @@ progress::-moz-progress-bar {
   width: min(22rem, calc(100vw - 2 * var(--space-4)));
   max-height: min(32rem, calc(100vh - 2 * var(--space-4)));
   overflow: auto;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-xl);
   outline: 1px solid var(--line-soft);
   padding: var(--space-4);
 }
@@ -1227,8 +1331,8 @@ progress::-moz-progress-bar {
   max-height: 9rem;
   overflow: auto;
   margin: 0;
-  border-radius: var(--radius);
-  background: var(--sand-100);
+  border-radius: var(--radius-lg);
+  background: var(--fill);
   padding: var(--space-3);
   font-family: var(--font-display);
   font-size: 1rem;
@@ -1248,13 +1352,16 @@ progress::-moz-progress-bar {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px solid var(--line);
   padding-bottom: var(--space-3);
 }
 
 .tab-list [role="tab"] {
-  background: var(--interactive-bg);
-  color: var(--interactive-ink);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-2);
+  padding-inline: var(--space-3);
 }
 
 .tab-list [role="tab"]:hover:not([aria-selected="true"]) {
@@ -1263,8 +1370,13 @@ progress::-moz-progress-bar {
 }
 
 .tab-list [role="tab"][aria-selected="true"] {
-  background: var(--accent);
-  color: white;
+  background: transparent;
+  box-shadow: inset 0 -2px 0 var(--accent-600);
+  color: var(--ink-strong);
+}
+
+.tab-list [role="tab"]:focus-visible {
+  box-shadow: inset 0 -2px 0 var(--accent-600), 0 0 0 3px var(--ring);
 }
 
 .collection-settings {
@@ -1290,7 +1402,7 @@ progress::-moz-progress-bar {
 
 .evidence-inspector > ol > li {
   padding-block: var(--space-2);
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px solid var(--line);
 }
 
 .evidence-heading {
@@ -1313,11 +1425,11 @@ progress::-moz-progress-bar {
 .toast {
   position: relative;
   overflow: hidden;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-lg);
   padding: var(--space-3) var(--space-4);
-  font: 600 0.875rem/1.35 var(--font-ui);
+  font: 500 0.875rem/1.35 var(--font-ui);
 }
 
 .toast-success {
@@ -1326,8 +1438,8 @@ progress::-moz-progress-bar {
 }
 
 .toast-info {
-  background: var(--accent);
-  color: white;
+  background: var(--ink);
+  color: var(--paper);
 }
 
 .toast-error {
@@ -1353,9 +1465,9 @@ progress::-moz-progress-bar {
   width: min(560px, 100%);
   max-height: calc(100vh - 2 * var(--space-5));
   overflow: auto;
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-xl);
   background: var(--panel);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-xl);
   padding: var(--space-5);
 }
 
@@ -1368,7 +1480,7 @@ progress::-moz-progress-bar {
 
 .dialog h2 {
   margin: 0;
-  font-size: 1.6rem;
+  font-size: 1.5rem;
 }
 
 .dialog-body {
@@ -1383,7 +1495,7 @@ progress::-moz-progress-bar {
 
 .command-palette section,
 .command-palette form {
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--line);
   padding-top: var(--space-4);
 }
 
@@ -1394,7 +1506,7 @@ progress::-moz-progress-bar {
 
 .command-palette h3 {
   margin: 0 0 var(--space-3);
-  font: 650 1rem/1.2 var(--font-ui);
+  font: 500 1rem/1.2 var(--font-ui);
 }
 
 .shortcut-list {
@@ -1406,7 +1518,7 @@ progress::-moz-progress-bar {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-5);
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px solid var(--line);
   padding: var(--space-3) 0;
 }
 
@@ -1420,10 +1532,10 @@ progress::-moz-progress-bar {
   border: 1px solid var(--line);
   border-bottom-width: 2px;
   border-radius: var(--radius-sm);
-  background: var(--sand-100);
+  background: var(--fill);
   padding: var(--space-1) var(--space-2);
-  color: var(--base-800);
-  font: 650 0.75rem/1.4 var(--font-mono);
+  color: var(--ink);
+  font: 500 0.75rem/1.4 var(--font-mono);
   text-align: center;
 }
 
@@ -1443,19 +1555,25 @@ progress::-moz-progress-bar {
   gap: var(--space-1);
   border-radius: var(--radius-lg);
   background: var(--panel);
-  box-shadow: var(--shadow);
-  padding: var(--space-2);
+  box-shadow: var(--shadow-lg);
+  padding: 6px;
 }
 
 .menu [role="menuitem"] {
   width: 100%;
   min-height: 40px;
   justify-content: flex-start;
-  border-radius: var(--radius);
+  border-radius: var(--radius-sm);
   background: transparent;
+  box-shadow: none;
   color: var(--ink);
   padding-inline: var(--space-3);
+  font-size: 0.9375rem;
   text-align: left;
+}
+
+.menu [role="menuitem"]:focus-visible {
+  box-shadow: none;
 }
 
 .mobile-nav {
@@ -1483,7 +1601,7 @@ progress::-moz-progress-bar {
   width: fit-content;
   margin-bottom: var(--space-3);
   border-radius: 999px;
-  background: var(--sand-100);
+  background: var(--fill);
   padding: var(--space-1);
 }
 
@@ -1492,14 +1610,14 @@ progress::-moz-progress-bar {
   color: var(--base-700);
   padding: var(--space-2) var(--space-4);
   font-size: 0.875rem;
-  font-weight: 600;
+  font-weight: 500;
   text-decoration: none;
 }
 
 .library-views a[aria-current="page"] {
-  background: var(--panel);
-  box-shadow: var(--shadow-sm);
-  color: var(--ink);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+  color: var(--ink-strong);
 }
 
 .library-view-help {
@@ -1514,7 +1632,7 @@ progress::-moz-progress-bar {
   flex-wrap: wrap;
   gap: var(--space-3);
   margin-bottom: var(--space-4);
-  border-block: 1px dashed var(--line);
+  border-block: 1px solid var(--line);
   padding-block: var(--space-4);
 }
 
@@ -1528,7 +1646,7 @@ progress::-moz-progress-bar {
   display: inline-flex;
   align-items: center;
   padding: 0 var(--space-3);
-  font: 550 0.875rem/1.2 var(--font-ui);
+  font: 500 0.875rem/1.2 var(--font-ui);
   cursor: pointer;
 }
 
@@ -1543,7 +1661,7 @@ progress::-moz-progress-bar {
   flex: 1 1 100%;
   margin: 0;
   color: var(--base-700);
-  font: 550 0.875rem/1.4 var(--font-ui);
+  font: 500 0.875rem/1.4 var(--font-ui);
 }
 
 .library-filter-status a {
@@ -1555,7 +1673,7 @@ progress::-moz-progress-bar {
 }
 
 .collection-browser > summary {
-  font: 550 0.9375rem/1.3 var(--font-ui);
+  font: 500 0.9375rem/1.3 var(--font-ui);
 }
 
 .library-filters .field {
@@ -1584,7 +1702,7 @@ progress::-moz-progress-bar {
   grid-template-columns: 7rem minmax(0, 1fr) auto;
   gap: var(--space-4);
   align-items: start;
-  border-bottom: 1px dashed var(--line);
+  border-bottom: 1px solid var(--line);
   padding: var(--space-5) var(--space-2);
 }
 
@@ -1596,7 +1714,7 @@ progress::-moz-progress-bar {
   aspect-ratio: 4 / 3;
   overflow: hidden;
   border-radius: var(--radius-lg);
-  background: var(--sand-100);
+  background: var(--fill);
 }
 
 .library-thumbnail img {
@@ -1630,7 +1748,7 @@ progress::-moz-progress-bar {
 .library-kind {
   color: var(--base-600);
   font-size: 0.8125rem;
-  font-weight: 600;
+  font-weight: 500;
   text-transform: capitalize;
 }
 
@@ -1656,7 +1774,8 @@ progress::-moz-progress-bar {
 .library-copy h2,
 .search-result h2 {
   margin: 0 0 var(--space-1);
-  font-size: 1rem;
+  font-size: 1.25rem;
+  line-height: 1.3;
 }
 
 .library-copy h2 a,
@@ -1703,7 +1822,7 @@ progress::-moz-progress-bar {
 .answer-surface {
   max-width: 72ch;
   margin: 0 auto var(--space-6);
-  border-block: 1px dashed var(--line);
+  border-block: 1px solid var(--line);
   padding-block: var(--space-5);
 }
 
@@ -1730,14 +1849,14 @@ progress::-moz-progress-bar {
 .learning-question {
   min-width: 0;
   border: 0;
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--line);
   padding: var(--space-5) 0;
   margin: 0;
 }
 
 .learning-question legend {
   padding: 0;
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .learning-choice {
@@ -1759,8 +1878,8 @@ progress::-moz-progress-bar {
 
 .learning-citation {
   padding: var(--space-3);
-  background: var(--sand-50);
-  border-radius: var(--radius-md);
+  background: var(--fill);
+  border-radius: var(--radius);
   margin-block: var(--space-3);
 }
 
@@ -1809,23 +1928,26 @@ progress::-moz-progress-bar {
 }
 
 .graph-legend .edge-inferred {
-  background: var(--line);
+  background: oklch(78% 0.012 80);
 }
 
 .graph-workspace {
   min-height: 36rem;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(17rem, 24rem);
+  gap: var(--space-2);
   overflow: hidden;
-  border: 1px dashed var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--sand-50);
+  border-radius: var(--radius-xl);
+  background: var(--fill);
+  box-shadow: var(--shadow);
+  padding: var(--space-2);
 }
 
 .graph-canvas {
   min-width: 0;
   overflow: auto;
-  background: var(--sand-50);
+  border-radius: var(--radius-lg);
+  background: var(--paper);
 }
 
 .graph-canvas svg {
@@ -1850,7 +1972,7 @@ progress::-moz-progress-bar {
 }
 
 .graph-edges line {
-  stroke: var(--line);
+  stroke: oklch(78% 0.012 80);
   stroke-width: 1;
 }
 
@@ -1870,7 +1992,7 @@ progress::-moz-progress-bar {
 
 .graph-node circle {
   fill: currentColor;
-  stroke: white;
+  stroke: var(--paper);
   stroke-width: 3;
 }
 
@@ -1881,7 +2003,7 @@ progress::-moz-progress-bar {
 
 .graph-node text {
   fill: var(--ink);
-  stroke: var(--sand-50);
+  stroke: var(--paper);
   stroke-width: 5px;
   stroke-linejoin: round;
   paint-order: stroke;
@@ -1898,8 +2020,8 @@ progress::-moz-progress-bar {
 
 .graph-inspector {
   overflow: auto;
-  border-left: 1px dashed var(--line);
-  background: white;
+  border-radius: var(--radius-lg);
+  background: var(--paper);
   padding: var(--space-5);
 }
 
@@ -1914,7 +2036,7 @@ progress::-moz-progress-bar {
 }
 
 .relationship-list article {
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--line);
   padding-block: var(--space-3);
 }
 
@@ -1929,13 +2051,13 @@ progress::-moz-progress-bar {
 
 .graph-list {
   margin-top: var(--space-4);
-  border-top: 1px dashed var(--line);
+  border-top: 1px solid var(--line);
   padding-block: var(--space-4);
 }
 
 .graph-list summary {
   cursor: pointer;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .graph-list ul {
@@ -1954,10 +2076,10 @@ progress::-moz-progress-bar {
   justify-content: space-between;
   gap: var(--space-3);
   border-radius: var(--radius);
-  background: var(--sand-100);
+  background: var(--fill);
   color: var(--ink);
   padding: var(--space-3);
-  font: 650 0.875rem/1.2 var(--font-ui);
+  font: 500 0.875rem/1.2 var(--font-ui);
   text-align: left;
   text-decoration: none;
 }
@@ -1994,7 +2116,7 @@ progress::-moz-progress-bar {
 
 .inline-details summary {
   cursor: pointer;
-  font-weight: 650;
+  font-weight: 500;
 }
 
 .evidence-list {
@@ -2009,7 +2131,7 @@ progress::-moz-progress-bar {
   display: grid;
   gap: 2px;
   border-radius: var(--radius);
-  background: var(--sand-100);
+  background: var(--fill);
   color: var(--ink);
   padding: var(--space-3);
   text-decoration: none;
@@ -2030,31 +2152,33 @@ progress::-moz-progress-bar {
 
 
 .value {
-  color: var(--base-900);
+  color: var(--ink-strong);
   font-family: var(--font-display);
-  font-size: 1.4rem;
-  font-weight: 500;
+  font-size: 1.5rem;
+  font-weight: 400;
 }
 
 @media (hover: hover) {
   button:hover:not(:disabled),
   .button:hover:not([aria-disabled="true"]) {
-    background: var(--accent-hover);
-    color: var(--accent-ink);
+    filter: brightness(1.25);
   }
 
   button.secondary:hover:not(:disabled),
   .button.secondary:hover:not([aria-disabled="true"]),
-  button.icon-button:hover:not(:disabled),
+  button.icon-button:hover:not(:disabled) {
+    filter: brightness(0.97);
+  }
+
   .menu [role="menuitem"]:hover {
     background: var(--interactive-hover-bg);
     color: var(--interactive-hover-ink);
+    filter: none;
   }
 
   button.danger:hover:not(:disabled),
   .button.danger:hover:not([aria-disabled="true"]) {
-    background: oklch(36% 0.14 25);
-    color: white;
+    filter: brightness(1.2);
   }
 
   .bookmark:hover {
@@ -2076,7 +2200,7 @@ progress::-moz-progress-bar {
 
   .text-link:hover,
   .row-open:hover {
-    color: var(--accent-500);
+    color: var(--text-2);
     text-decoration-thickness: 1px;
   }
 }
@@ -2085,7 +2209,9 @@ progress::-moz-progress-bar {
   button,
   .button {
     min-height: 2.25rem;
+    border-radius: var(--radius-sm);
     padding-inline: 1rem;
+    font-size: 0.875rem;
   }
 
   button.icon-button {
@@ -2130,10 +2256,6 @@ progress::-moz-progress-bar {
     grid-template-columns: minmax(0, 1fr);
   }
 
-  .graph-inspector {
-    border-top: 1px dashed var(--line);
-    border-left: 0;
-  }
 }
 
 @media (max-width: 760px) {
@@ -2149,7 +2271,6 @@ progress::-moz-progress-bar {
     width: 100%;
     display: block;
     overflow-x: clip;
-    border-inline: 0;
   }
 
   .sidebar {
@@ -2193,24 +2314,24 @@ progress::-moz-progress-bar {
     z-index: var(--z-sticky);
     display: grid;
     grid-template-columns: repeat(4, 1fr);
-    border-top: 1px dashed var(--line);
-    background: white;
+    border-top: 1px solid var(--line);
+    background: var(--paper);
     padding: var(--space-2) max(var(--space-2), env(safe-area-inset-right)) max(var(--space-2), env(safe-area-inset-bottom)) max(var(--space-2), env(safe-area-inset-left));
   }
 
   .mobile-nav a {
-    border-radius: var(--radius-pill);
-    color: var(--base-600);
+    border-radius: var(--radius);
+    color: var(--text-2);
     padding: var(--space-3) var(--space-1);
     font-size: 0.75rem;
-    font-weight: 650;
+    font-weight: 500;
     text-align: center;
     text-decoration: none;
   }
 
   .mobile-nav a.active {
-    background: var(--accent-50);
-    color: var(--accent-700);
+    background: var(--fill);
+    color: var(--ink-strong);
   }
 
 
@@ -2317,11 +2438,6 @@ progress::-moz-progress-bar {
     flex: 1;
   }
 
-  .graph-inspector {
-    border-top: 1px dashed var(--line);
-    border-left: 0;
-  }
-
   .graph-focus {
     width: 100%;
   }
@@ -2395,7 +2511,7 @@ progress::-moz-progress-bar {
   input,
   select,
   textarea {
-    transition: background-color 180ms var(--ease-out-quart), color 180ms var(--ease-out-quart), border-color 180ms var(--ease-out-quart), opacity 180ms var(--ease-out-quart), transform 180ms var(--ease-out-quart);
+    transition: background-color 200ms var(--ease-out-quart), color 200ms var(--ease-out-quart), border-color 200ms var(--ease-out-quart), opacity 200ms var(--ease-out-quart), transform 200ms var(--ease-out-quart), filter 200ms var(--ease-out-quart);
   }
 
   .menu,

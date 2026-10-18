@@ -17,7 +17,7 @@ When working in this repository, read the OpenWiki quickstart first, then follow
 ## Working Rules
 
 - Keep long-form project docs in `openwiki/`.
-- Follow `DESIGN.md` for the Brightlight-derived light-only visual system;
+- Follow `DESIGN.md` for the Spaziobianco-derived light-only visual system;
   preserve the existing routes, navigation, menus, and behavior during styling.
 - Update relevant docs and `CHANGELOG.md` when behavior, setup, security, or operational guidance changes.
 - Run `gofmt` on changed Go files.

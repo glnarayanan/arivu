@@ -3,8 +3,8 @@
 Arivu is a self-hosted second brain for turning captured material into connected
 knowledge and evidence-backed learning patterns.
 
-The browser app uses a Brightlight-derived warm editorial look with a
-white/sand canvas and coral accents. It is intentionally light-only. This is a
+The browser app uses a Spaziobianco-derived warm paper look with
+muted cards and coral accents. It is intentionally light-only. This is a
 visual treatment only: the routes, navigation destinations, menus, options,
 and workflows documented below are unchanged.
 
