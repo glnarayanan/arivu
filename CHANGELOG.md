@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.8.1] - 2026-10-21
 
 - Updated the Go toolchain to 1.26.10 (including the container and orb setup),
   which fixes the `crypto/x509` intermediate certificate advisory
