@@ -16,7 +16,7 @@ export async function verifyRuntime({ launchBrowser = true } = {}) {
   }
   const command = process.env.ARIVU_MONOLITH_PATH || 'monolith';
   const version = await commandOutput(command, ['--version']);
-  if (!/(?:^|\s)2\.10\.1(?:\s|$)/.test(version)) throw new Error('capture requires Monolith 2.10.1');
+  if (!/(?:^|\s)2\.11\.6(?:\s|$)/.test(version)) throw new Error('capture requires Monolith 2.11.6');
 }
 
 async function commandOutput(command, args) {

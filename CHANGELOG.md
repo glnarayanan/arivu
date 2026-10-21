@@ -12,6 +12,15 @@ All notable changes to this project will be documented in this file.
   copy this Node binary into the native capture runtime, which was still on
   22.23.1 and missed the 22.23.2 security release. Also updated the capture
   runtime's Playwright to 1.64.1 and JSDOM to 30.1.3.
+- Moved to the current stable toolchains: Go 1.27.3 and Node.js 24.22.0 LTS
+  (CI, releases, the shipped capture runtime, and the orb setup). The
+  container image now builds and runs on Debian trixie instead of bookworm,
+  whose regular security support ended in June 2026.
+- The native capture runtime now ships Monolith 2.11.6, built with Rust
+  1.99.1. The flags capture passes are unchanged, and Monolith still sends
+  every fetch through the capture relay via the proxy environment.
+- CI runs govulncheck v1.9.0; releases use attest-build-provenance v4 and
+  download-artifact v8, which now fails on an artifact digest mismatch.
 
 ## [1.8.0] - 2026-10-18
 
