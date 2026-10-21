@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Updated the Go toolchain to 1.26.10 (including the container and orb setup),
+  which fixes the `crypto/x509` intermediate certificate advisory
+  (GO-2026-6809) reported by the vulnerability scan. That advisory is Go's
+  denylist for the eight compromised eMudhra intermediate CA keys.
+- Updated Node.js to 22.23.3 for CI, releases, and the orb setup. Releases
+  copy this Node binary into the native capture runtime, which was still on
+  22.23.1 and missed the 22.23.2 security release. Also updated the capture
+  runtime's Playwright to 1.64.1 and JSDOM to 30.1.3.
+
 ## [1.8.0] - 2026-10-18
 
 - Fixed the public share page, which always showed "unavailable" because its
