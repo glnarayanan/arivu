@@ -30,7 +30,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version: 22.23.3
+          node-version: 24.22.0
       - run: go mod verify
       - run: go test ./...
       - name: Verify capture dependencies
@@ -54,8 +54,8 @@ jobs:
           rm -rf /tmp/arivu-capture-runtime
           mkdir -p /tmp/arivu-capture-runtime
           (cd capture && npx playwright install --with-deps chromium)
-          rustup toolchain install 1.88.0 --profile minimal
-          cargo +1.88.0 install --locked --version 2.10.1 --root /tmp/arivu-capture-monolith monolith
+          rustup toolchain install 1.99.1 --profile minimal
+          cargo +1.99.1 install --locked --version 2.11.6 --root /tmp/arivu-capture-monolith monolith
           install -m 0755 "$(command -v node)" /tmp/arivu-capture-runtime/node
           install -m 0755 /tmp/arivu-capture-monolith/bin/monolith /tmp/arivu-capture-runtime/monolith
           cp -a capture/node_modules /tmp/arivu-capture-runtime/node_modules
@@ -68,7 +68,7 @@ jobs:
           tar -tzf "dist/arivu-capture-linux-${{ matrix.arch }}.tar.gz" | grep -Eq '^\./node$'
           ARIVU_CAPTURE_RELEASE_ARCHIVE="$GITHUB_WORKSPACE/dist/arivu-capture-linux-${{ matrix.arch }}.tar.gz" \
             go test ./internal/installer -run '^TestCaptureReleaseArchive$' -count=1
-      - uses: actions/attest-build-provenance@v3
+      - uses: actions/attest-build-provenance@v4
         with:
           subject-path: dist/*
       - uses: actions/upload-artifact@v7
@@ -87,7 +87,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           path: dist
           merge-multiple: true

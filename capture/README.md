@@ -12,7 +12,7 @@ creates a JPEG screenshot and PDF, and passes the rendered DOM through Monolith
 for a self-contained HTML archive.
 
 Startup fails closed unless the lockfile-selected Chromium launches and
-Monolith reports exactly version 2.10.1.
+Monolith reports exactly version 2.11.6.
 
 ## Approved production dependencies
 
@@ -21,7 +21,7 @@ Direct package versions are exact in `package.json` and `package-lock.json`:
 - Playwright `1.63.0` and its pinned Chromium runtime (Apache-2.0).
 - Mozilla Readability `0.6.0` (Apache-2.0).
 - JSDOM `30.1.1` (MIT).
-- Monolith `2.10.1` (CC0-1.0), installed as a separate executable.
+- Monolith `2.11.6` (CC0-1.0), installed as a separate executable.
 
 No dependency from this bundle may be imported into `internal/app/web`.
 Dependency updates require the same explicit approval, audit, integration test,
@@ -40,7 +40,7 @@ PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers
 ```
 
 Use Node `22.22.2` or newer. Production packaging pins Chromium through
-Playwright and pins Monolith to `2.10.1`; it must not resolve either runtime to
+Playwright and pins Monolith to `2.11.6`; it must not resolve either runtime to
 an unreviewed floating version.
 
 The app and helper must share a dedicated group that can traverse the runtime
