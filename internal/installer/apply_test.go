@@ -695,3 +695,97 @@ func indexCommand(commands []string, needle string) int {
 	}
 	return -1
 }
+
+func TestCaptureDropInCheckFlagsFilesMissingFromNewRuntime(t *testing.T) {
+	root := t.TempDir()
+	staged := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(staged, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(staged, "src/index.mjs"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCaptureDropIns(root, staged); err != nil {
+		t.Fatalf("no drop-in directory: %v", err)
+	}
+	dropIns := rootPath(root, captureDropInDir)
+	if err := os.MkdirAll(dropIns, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	shipped := "[Service]\n# ExecStartPre=/usr/local/lib/arivu-capture/commented-out.py\nEnvironment=ENTRY=/usr/local/lib/arivu-capture/src/index.mjs\nReadOnlyPaths=-/usr/local/lib/arivu-capture\n"
+	if err := os.WriteFile(filepath.Join(dropIns, "shipped.conf"), []byte(shipped), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkCaptureDropIns(root, staged); err != nil {
+		t.Fatalf("drop-in using shipped files: %v", err)
+	}
+	local := "[Service]\nExecStartPre=/usr/bin/python3 /usr/local/lib/arivu-capture/init-nss-distrust.py\n"
+	if err := os.WriteFile(filepath.Join(dropIns, "certificate-distrust.conf"), []byte(local), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := checkCaptureDropIns(root, staged)
+	if err == nil || !strings.Contains(err.Error(), "certificate-distrust.conf uses /usr/local/lib/arivu-capture/init-nss-distrust.py") {
+		t.Fatalf("drop-in check error = %v", err)
+	}
+}
+
+func TestUpgradeStopsBeforeReplacingWhenCaptureDropInNeedsMissingFile(t *testing.T) {
+	root := upgradeFixture(t)
+	if err := os.MkdirAll(filepath.Join(root, "etc/arivu"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "etc/arivu/arivu.env"), []byte("ARIVU_BROWSER_CAPTURE_ENABLED=true\n"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	captureDir := filepath.Join(root, "usr/local/lib/arivu-capture")
+	if err := os.MkdirAll(captureDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(captureDir, "version"), []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(captureDir, "local-helper.py"), []byte("pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dropIns := rootPath(root, captureDropInDir)
+	if err := os.MkdirAll(dropIns, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dropIns, "local.conf"), []byte("[Service]\nExecStartPre=/usr/bin/python3 /usr/local/lib/arivu-capture/local-helper.py\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	restoreDownloads := upgradeReleaseDownloads(t, []byte("new app"), []byte("new installer"))
+	defer restoreDownloads()
+	archive := validCaptureArchive(t, "new")
+	oldCaptureDownload := captureArchiveDownloadFunc
+	captureArchiveDownloadFunc = func(context.Context, string, []byte, string) (string, func(), error) {
+		return archive, func() {}, nil
+	}
+	defer func() { captureArchiveDownloadFunc = oldCaptureDownload }()
+
+	activated := false
+	err := upgrade(context.Background(), HostFacts{Arch: "amd64"}, ApplyOptions{
+		ArtifactURL:          "https://release.example/arivu-linux-amd64",
+		InstallerArtifactURL: "https://release.example/arivu-installer-linux-amd64",
+		CaptureArtifactURL:   "https://release.example/arivu-capture-linux-amd64.tar.gz",
+		ChecksumsURL:         "https://release.example/SHA256SUMS",
+	}, "v1.2.3", root, func(context.Context, string) error { activated = true; return nil })
+	if err == nil || !strings.Contains(err.Error(), "local.conf uses /usr/local/lib/arivu-capture/local-helper.py") {
+		t.Fatalf("upgrade error = %v", err)
+	}
+	if activated {
+		t.Fatal("upgrade restarted services despite the drop-in problem")
+	}
+	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu"), "old app")
+	assertFileContent(t, filepath.Join(root, "usr/local/bin/arivu-installer"), "old installer")
+	assertFileContentMode(t, filepath.Join(captureDir, "version"), "old", 0o644)
+	entries, err := os.ReadDir(filepath.Dir(captureDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if strings.HasPrefix(entry.Name(), ".arivu-capture-") {
+			t.Fatalf("staging directory %s was left behind", entry.Name())
+		}
+	}
+}

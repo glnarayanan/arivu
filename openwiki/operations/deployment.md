@@ -50,7 +50,16 @@ operator. Tagged releases contain a checksummed, architecture-specific
 
 `sudo arivu-installer upgrade` updates the app, installer, and enabled capture
 runtime from the same release. Activation failure restores all prior artifacts
-and restarts the previous services. Use reconfigure to change the choice:
+and restarts the previous services.
+
+`/usr/local/lib/arivu-capture` belongs to the installer and is replaced as a
+whole on every install and upgrade, so keep local helpers for systemd drop-ins
+in `/etc/systemd/system/arivu-capture.service.d/` somewhere else, such as
+`/usr/local/libexec`. If a drop-in refers to a file inside the runtime
+directory that the new release does not ship, the installer stops before
+replacing anything and names the drop-in.
+
+Use reconfigure to change the choice:
 
 ```bash
 sudo arivu-installer reconfigure                  # interactive
