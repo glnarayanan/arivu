@@ -19,7 +19,7 @@ jobs:
           go-version-file: go.mod
       - uses: actions/setup-node@v7.1.0
         with:
-          node-version: 24.22.0
+          node-version: 24.22.1
       - run: go mod verify
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.9.0 ./...
       - run: node --check internal/app/web/app.js
