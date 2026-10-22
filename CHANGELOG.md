@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Updated Node.js to 24.22.1 for CI, releases (and so the shipped capture
+  runtime), and the orb setup. This security release rejects certificate
+  chains that contain the compromised eMudhra intermediate keys, updates the
+  bundled root certificates and OpenSSL, and fixes TLS, HTTP, DNS, crypto,
+  and Brotli advisories. The OpenWiki workflow moves to Node.js 24 as well.
+
 ## [1.8.1] - 2026-10-21
 
 - Updated the Go toolchain to 1.26.10 (including the container and orb setup),
