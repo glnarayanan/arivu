@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.8.2] - 2026-10-22
 
 - Updated Node.js to 24.22.1 for CI, releases (and so the shipped capture
   runtime), and the orb setup. This security release rejects certificate
