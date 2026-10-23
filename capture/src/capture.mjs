@@ -7,6 +7,7 @@ import { JSDOM } from 'jsdom';
 import { chromium } from 'playwright';
 import { assessQuality } from './quality.mjs';
 import { startProxyRelay } from './relay.mjs';
+import { assertRenderersSandboxed, browserMarker, isSandboxLaunchError, launchOptions, sandboxEnabled, sandboxError } from './sandbox.mjs';
 
 const imageMIMEs = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
@@ -24,17 +25,20 @@ export async function capturePage(request, signal) {
   try {
     if (signal?.aborted) throw coded('capture_cancelled');
     temp = await mkdtemp(join(tmpdir(), 'arivu-helper-'));
+    const sandbox = sandboxEnabled();
+    const marker = browserMarker();
     try {
-      browser = await chromium.launch({
-        headless: true,
+      browser = await chromium.launch(launchOptions(sandbox, {
         proxy: { server: `http://127.0.0.1:${relay.port}`, username: 'arivu', password: request.proxy_token },
         args: ['--disable-quic', '--disable-background-networking', '--disable-component-update', '--disable-sync', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp'],
-      });
+      }, marker));
       if (signal?.aborted) {
         await browser.close();
         throw coded('capture_cancelled');
       }
-    } catch {
+    } catch (error) {
+      // Fail closed: never relaunch without the sandbox.
+      if (sandbox && isSandboxLaunchError(error)) throw sandboxError('Chromium could not start its sandbox');
       throw coded('browser_launch_failed');
     }
     const context = await browser.newContext({
@@ -45,6 +49,9 @@ export async function capturePage(request, signal) {
       viewport: { width: 1440, height: 900 },
     });
     const page = await context.newPage();
+    // Before any untrusted content loads, prove this browser's renderers are
+    // sandboxed; later renderers fork from the same sandboxed zygote.
+    if (sandbox) await assertRenderersSandboxed({ marker });
     await page.route('**/*', async (route) => {
       const protocol = new URL(route.request().url()).protocol;
       if (protocol === 'http:' || protocol === 'https:' || protocol === 'data:' || protocol === 'blob:') await route.continue();

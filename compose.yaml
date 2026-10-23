@@ -80,6 +80,20 @@ services:
   # app creates), no data volume, no secrets, no capabilities, and a read-only
   # root. This matches the systemd unit's PrivateNetwork=true and empty
   # CapabilityBoundingSet.
+  #
+  # Chromium's own sandbox also runs inside this boundary, so a compromised
+  # renderer must escape that sandbox before it can reach the helper or its
+  # sockets. The sandbox needs two profiles from capture/security, each
+  # Docker's default plus the minimum for Chromium (see its README):
+  # - seccomp: lets clone/unshare create user, pid, and network namespaces
+  #   (never mount, uts, ipc, or cgroup) and chroot inside them; sockets are
+  #   limited to AF_UNIX, AF_INET, and AF_INET6, like the native unit.
+  # - AppArmor: docker-default plus "userns". Install it on the host before
+  #   deploying (openwiki/operations/deployment.md, "Compose / PaaS"). On a
+  #   host without AppArmor, Docker ignores this option.
+  # No capability is added, no-new-privileges stays on, and nothing here is
+  # unconfined. If the sandbox cannot start, the helper refuses to run and
+  # Arivu keeps saving through its direct-HTTP path.
   capture:
     build:
       context: ./capture
@@ -88,7 +102,12 @@ services:
     network_mode: none
     read_only: true
     cap_drop: [ALL]
-    security_opt: ["no-new-privileges:true"]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./capture/security/seccomp-chromium.json
+      - apparmor=${ARIVU_CAPTURE_APPARMOR_PROFILE:-arivu-capture}
+    environment:
+      ARIVU_CAPTURE_CHROMIUM_SANDBOX: ${ARIVU_CAPTURE_CHROMIUM_SANDBOX:-true}
     tmpfs:
       # Chromium profiles, its shared memory (Playwright passes
       # --disable-dev-shm-usage), and per-attempt scratch files.

@@ -2,7 +2,38 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## [1.8.3] - Unreleased
+
+- Chromium's own sandbox is now on in the Compose capture container, without
+  loosening the container: no capability is added, `no-new-privileges`, no
+  network, the read-only root, and the non-root user all stay. A renderer
+  compromised by a hostile page now also has to escape Chromium's sandbox
+  before it can reach the helper or its sockets. Two profiles in
+  `capture/security` make it possible, each Docker's default plus only what
+  the sandbox needs: a seccomp profile (`clone` may create user, pid, and
+  network namespaces, `unshare` only a user namespace, and `chroot` works
+  inside them; `socket` is limited to AF_UNIX, AF_INET, and AF_INET6 like the
+  native unit, so no netlink) and an AppArmor profile (`docker-default` plus
+  `userns`). **Before deploying 1.8.3 on an AppArmor host such as Ubuntu,
+  install the AppArmor profile** (`apparmor_parser -r -W`; see "Compose /
+  PaaS" in `openwiki/operations/deployment.md`). Docker refuses to start the
+  capture container while the profile is missing, and when that happens
+  during an upgrade Compose also leaves the app stopped. Hosts without
+  AppArmor need nothing. `ARIVU_CAPTURE_APPARMOR_PROFILE` names the profile
+  (default `arivu-capture`).
+- The helper launches Chromium with `chromiumSandbox: true` when
+  `ARIVU_CAPTURE_CHROMIUM_SANDBOX` is on (the capture image's default) and
+  fails closed: it never relaunches with `--no-sandbox`. If the sandbox cannot
+  start, the helper exits with a one-line reason and Arivu keeps saving
+  through direct HTTP. Before each capture loads the page, the helper also
+  checks that the browser's renderer runs in its own user, pid, and network
+  namespaces, chrooted, under an extra seccomp filter; otherwise that capture
+  fails with `browser_sandbox_unavailable`. The startup log line and
+  `node src/preflight.mjs` report `sandbox active`. Native installs are
+  unchanged: the variable is unset there, so Chromium still runs with
+  `--no-sandbox` inside the systemd unit's isolation.
+- Capture helper preflight failures now print one line
+  (`capture helper preflight failed: ...`) instead of a Node.js stack trace.
 
 - Fixed complete capture on installer hosts silently falling back to direct
   HTTP. Every browser attempt failed with `browser_runtime_failed`, so no

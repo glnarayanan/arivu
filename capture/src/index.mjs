@@ -5,6 +5,7 @@ import { dirname } from 'node:path';
 import { capturePage, failedResponse } from './capture.mjs';
 import { MAX_ATTEMPT_TIMEOUT_MS, readRequest, writeResponse } from './protocol.mjs';
 import { verifyRuntime } from './preflight.mjs';
+import { SANDBOX_ERROR_CODE } from './sandbox.mjs';
 
 const socketPath = process.env.ARIVU_CAPTURE_SOCKET || process.argv[2];
 if (!socketPath) {
@@ -12,7 +13,14 @@ if (!socketPath) {
   process.exit(2);
 }
 
-await verifyRuntime();
+let runtime;
+try {
+  runtime = await verifyRuntime();
+} catch (error) {
+  // Exit without a socket: Arivu keeps saving through its direct-HTTP path.
+  process.stderr.write(`capture helper preflight failed: ${error.message}\n`);
+  process.exit(1);
+}
 
 await mkdir(dirname(socketPath), { recursive: true });
 try {
@@ -51,6 +59,7 @@ const server = net.createServer(async (socket) => {
     await writeResponse(socket, result.response, result.payloads);
   } catch (error) {
     if (process.env.ARIVU_CAPTURE_DEBUG === '1') process.stderr.write(`${error.stack ?? error.message}\n`);
+    else if (error?.code === SANDBOX_ERROR_CODE) process.stderr.write(`capture helper: ${error.message}; Arivu keeps its direct-HTTP copy of this page\n`);
     if (request && !socket.destroyed) await writeResponse(socket, failedResponse(request, error)).catch(() => socket.destroy());
     else socket.destroy();
   }
@@ -65,6 +74,7 @@ await new Promise((resolve, reject) => {
   server.listen(socketPath, resolve);
 });
 await chmod(socketPath, 0o660);
+process.stderr.write(`capture helper ready: Chromium ${runtime.chromium}, sandbox ${runtime.chromium_sandbox}, Monolith ${runtime.monolith}\n`);
 const ownedSocket = await lstat(socketPath);
 
 async function shutdown() {

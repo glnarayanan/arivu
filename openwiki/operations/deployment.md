@@ -388,10 +388,13 @@ the client address.
 | `TasksMax=512` | `pids_limit: 512` |
 | no memory cap | `mem_limit` and `memswap_limit` of 1536 MiB by default |
 | `LimitNOFILE=65536` | the Docker daemon default, so the stack starts on hosts with a lower hard limit |
+| `RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6` | seccomp allows `socket` for the same three families only |
+| Chromium runs with `--no-sandbox` | Chromium's sandbox is on (see below) |
 
-Docker's default seccomp and AppArmor profiles stay on for both services. The
-app container is also read-only, drops every capability, and sets
-`no-new-privileges`.
+The app container keeps Docker's default seccomp and AppArmor profiles, is
+read-only, drops every capability, and sets `no-new-privileges`. The capture
+container uses the two profiles in `capture/security`, each Docker's default
+plus only what Chromium's sandbox needs.
 
 The socket modes match the native install: the helper's socket is `0660`, each
 attempt directory the app creates is `0750` (the helper can enter it but not
@@ -399,21 +402,124 @@ replace anything), and each per-attempt proxy socket is `0660`.
 
 ### Chromium's own sandbox
 
-The capture helper launches Chromium through Playwright without
-`chromiumSandbox: true`, so Playwright passes `--no-sandbox`. This is already
-true on installer hosts: there, the isolation comes from the systemd unit, not
-from Chromium's sandbox. The container keeps the same behavior.
+Chromium's sandbox is on in the capture container (since 1.8.3). Each renderer,
+the process that parses and runs a page's HTML and JavaScript, starts in its
+own user, pid, and network namespaces, chrooted into an empty directory, under
+Chromium's seccomp-bpf policy. The container boundary around it is unchanged.
 
-Turning Chromium's sandbox on inside a container needs user namespaces.
-Docker's default seccomp profile blocks them: with `chromiumSandbox: true`,
-Chromium refuses to start under the default profile and starts with
-`seccomp=unconfined`. On Ubuntu 24.04 and later, AppArmor also restricts
-unprivileged user namespaces, so the host would additionally need a custom
-AppArmor profile or `apparmor=unconfined` for the container. Each of those
-loosens the outer boundary to strengthen the inner one, so the stack keeps
-Chromium's sandbox off and the container's seccomp and AppArmor on, with no
-network, no capabilities, a non-root user, and a read-only root.
-`--privileged` and `SYS_ADMIN` are never needed.
+**Why it matters.** Before 1.8.3 the renderer ran as the helper's own user in
+the helper's own namespaces. A page that exploited a renderer bug could then
+connect to the helper's socket and to the per-attempt proxy sockets, and read
+or alter other captures in flight, while still being stopped by the container
+(no network, no capabilities, read-only root, no data or secrets). Now the
+same exploit lands in an empty chroot (no socket paths to reach), in its own
+user, pid, and network namespaces, under Chromium's seccomp-bpf policy, which
+allows only the small set of syscalls a renderer needs. It needs a second bug,
+a Chromium sandbox escape, before it can reach the helper or its sockets, and
+a third, a container escape, before it can reach the host.
+
+**How, without loosening the container.** Docker's default seccomp profile
+allows namespace creation only with `CAP_SYS_ADMIN`, and Ubuntu's AppArmor
+restriction (`kernel.apparmor_restrict_unprivileged_userns=1`) refuses user
+namespaces unless the confining profile allows them. The capture service
+therefore runs with:
+
+- `seccomp=./capture/security/seccomp-chromium.json`: Docker's default plus
+  `clone` creating user, pid, and network namespaces (never mount, cgroup,
+  UTS, or IPC), `unshare` creating only a user namespace, and `chroot`
+  (which still needs `CAP_SYS_CHROOT`, so it works only inside such a
+  namespace). `socket` is limited to AF_UNIX, AF_INET, and AF_INET6, like the
+  native unit, so a process holding `CAP_NET_ADMIN` in its own network
+  namespace still cannot reach netfilter or rtnetlink.
+- `apparmor=arivu-capture`: `docker-default` plus `userns` (and an explicit
+  `unix` rule, which ABI 4.0 needs).
+
+No capability is added; `no-new-privileges`, `cap_drop: [ALL]`, `network_mode:
+none`, `read_only`, uid 10002, and the limits all stay; nothing is
+`unconfined` or privileged, and no setuid helper is used.
+`capture/security/README.md` lists every rule and why.
+
+**Remaining trade-off.** The helper's own processes (Node, Chromium's browser
+and network-service processes, Monolith) can now create user, pid, and network
+namespaces, which exposes kernel code that Docker's default keeps out of
+reach. Only code that already runs outside Chromium's sandbox can use it, and
+the socket limit removes netlink, the usual route to user-namespace kernel
+bugs. Keep the host kernel patched.
+
+#### Host prerequisite: install the AppArmor profile
+
+On a host with AppArmor (Ubuntu, Debian), install the profile **before**
+deploying, and again whenever a release changes
+`capture/security/apparmor-arivu-capture`. Docker refuses to start the capture
+container while the named profile is not loaded, and when that happens during
+an upgrade, Compose also leaves the new app container stopped (see Recovery
+below).
+
+```bash
+TAG=v1.8.3   # the tag you deploy
+curl -fsSL -o /tmp/apparmor-arivu-capture \
+  "https://raw.githubusercontent.com/glnarayanan/arivu/$TAG/capture/security/apparmor-arivu-capture"
+sudo install -m 0644 -o root -g root /tmp/apparmor-arivu-capture /etc/apparmor.d/arivu-capture
+sudo apparmor_parser -r -W /etc/apparmor.d/arivu-capture
+sudo grep '^arivu-capture ' /sys/kernel/security/apparmor/profiles   # arivu-capture (enforce)
+```
+
+`-r` loads or replaces the profile and `-W` writes its cache. Files in
+`/etc/apparmor.d` load again at boot, so the profile survives reboots. Check
+for AppArmor with `cat /sys/module/apparmor/parameters/enabled` (`Y`).
+
+**Hosts without AppArmor** need nothing: Docker ignores the `apparmor=` option
+there, and the seccomp profile alone lets the sandbox start, so plain `docker
+compose up` works. `ARIVU_CAPTURE_APPARMOR_PROFILE` names a differently named
+profile you loaded yourself; never set it to `unconfined`.
+
+#### Verify
+
+```bash
+docker compose -p <app-name> logs capture | grep 'capture helper ready'
+# capture helper ready: Chromium 156.0.8078.4, sandbox active, Monolith 2.11.6
+docker compose -p <app-name> exec -T capture node src/preflight.mjs
+# {"chromium":"…","chromium_sandbox":"active","renderers":[{"user_namespace":true,"pid_namespace":true,"network_namespace":true,"chroot":true,"seccomp_bpf":true}],"monolith":"2.11.6"}
+docker compose -p <app-name> exec -T capture cat /proc/1/attr/current
+# arivu-capture (enforce)          (AppArmor hosts only)
+```
+
+`preflight.mjs` launches a browser, opens a page, and reports `active` only
+after it has found the renderer in its own user, pid, and network namespaces,
+chrooted, with one more seccomp filter than the browser process.
+
+#### Failure behavior
+
+The helper never falls back to `--no-sandbox`.
+
+- If the sandbox cannot start, the helper exits before opening its socket and
+  logs one line, for example `capture helper preflight failed: capture
+  Chromium could not start its sandbox (ARIVU_CAPTURE_CHROMIUM_SANDBOX=true).
+  The capture container needs the seccomp profile …`. Docker keeps restarting
+  it; Arivu keeps saving through direct HTTP and records
+  `browser_helper_unavailable` for each attempt.
+- If a single capture's renderer is not sandboxed, or its browser cannot
+  start the sandbox, that capture fails with `browser_sandbox_unavailable`,
+  the helper logs why, and Arivu keeps the direct-HTTP copy.
+
+#### Recovery and opting out
+
+- **Profile missing after an upgrade** (capture keeps failing to start, app
+  stopped in `created`): install the profile as above and run the deployment
+  again (`docker compose -p <app-name> up -d`).
+- **Run without Chromium's sandbox** (the pre-1.8.3 posture, for a host where
+  the profiles cannot be used): set `ARIVU_CAPTURE_CHROMIUM_SANDBOX=false` and
+  `ARIVU_CAPTURE_APPARMOR_PROFILE=docker-default`. The container boundary
+  stays as described above.
+
+#### Native installs
+
+Unchanged. `arivu-capture.service` does not set
+`ARIVU_CAPTURE_CHROMIUM_SANDBOX`, so the helper still launches Chromium with
+`--no-sandbox` inside the unit's isolation (`PrivateNetwork`, empty capability
+set, `RestrictAddressFamilies`, and the rest). Turning it on there would need
+an AppArmor profile for the bundled Chromium on Ubuntu 24.04 and later, so it
+is left for a separate change.
 
 ### Settings
 
@@ -433,6 +539,8 @@ Compose refuses to start while a required one is missing.
 | `ARIVU_BROWSER_CAPTURE_TIMEOUT`, `_NAVIGATION_TIMEOUT`, `_MAX_*` | no | installer values | Capture limits; see `compose.yaml`. |
 | `ARIVU_CAPTURE_MEM_LIMIT` | no | `1536m` | Capture container memory cap (no swap). |
 | `ARIVU_CAPTURE_TMP_SIZE` | no | `1g` | Capture `/tmp` tmpfs size; counts toward its memory. |
+| `ARIVU_CAPTURE_CHROMIUM_SANDBOX` | no | `true` | Chromium's own sandbox in the capture container. `false` only with `ARIVU_CAPTURE_APPARMOR_PROFILE=docker-default`; see above. |
+| `ARIVU_CAPTURE_APPARMOR_PROFILE` | no | `arivu-capture` | AppArmor profile for the capture container; must be loaded on AppArmor hosts. Ignored on hosts without AppArmor. Never `unconfined`. |
 | `ARIVU_VERSION` | no | empty | Tag reported by `arivu --version` (for example `v1.8.3`). |
 | `ARIVU_IMAGE_TAG` | no | `local` | Tag for the two built images. |
 
@@ -441,25 +549,30 @@ because both containers must agree on them.
 
 ### Dokploy
 
-1. Create a **Compose** service from `glnarayanan/arivu` with compose path
+1. On the Dokploy host, install the capture AppArmor profile for the tag you
+   will deploy ([Host prerequisite](#host-prerequisite-install-the-apparmor-profile)).
+   Dokploy hosts are usually Ubuntu, where the capture container does not
+   start without it.
+2. Create a **Compose** service from `glnarayanan/arivu` with compose path
    `./compose.yaml`. Deploy from a release tag or from `main`.
-2. Set the environment from the table above, and set `ARIVU_VERSION` to the
+3. Set the environment from the table above, and set `ARIVU_VERSION` to the
    tag you deploy.
-3. Add the domain to service `arivu`, container port `8080`. Dokploy attaches
+4. Add the domain to service `arivu`, container port `8080`. Dokploy attaches
    its `dokploy-network` to that service. `compose.yaml` lists the app's
    networks directly, not through a YAML anchor, because Dokploy rewrites that
    key. Leave `capture` without a domain: it has `network_mode: none`.
-4. Deploy and wait until both services report healthy. The app's health check
+5. Deploy and wait until both services report healthy. The app's health check
    runs `arivu healthcheck` (a request to `/api/health`); the helper's health
-   check connects to its socket.
-5. For a new instance, create the first admin:
+   check connects to its socket. Then [verify](#verify) that the helper
+   reports `sandbox active`.
+6. For a new instance, create the first admin:
 
    ```bash
    docker compose -p <app-name> exec -T arivu arivu admin bootstrap \
      --email admin@example.com --password-stdin < admin-password.txt
    ```
 
-6. Under **Volume Backups**, back up the volume ending in `arivu-data` and let
+7. Under **Volume Backups**, back up the volume ending in `arivu-data` and let
    Dokploy stop service `arivu` while it copies, so the SQLite files are
    consistent. The `capture-socket` volume holds only sockets and never needs a
    backup.
@@ -472,6 +585,9 @@ Run the commands below from the directory that holds the deployed
 
 ```bash
 cp .env.example .env   # or write APP_URL, ADMIN_EMAILS, SECRET_KEY yourself
+# AppArmor hosts only, once per profile change:
+sudo install -m 0644 capture/security/apparmor-arivu-capture /etc/apparmor.d/arivu-capture
+sudo apparmor_parser -r -W /etc/apparmor.d/arivu-capture
 docker compose up -d --build
 ```
 
@@ -585,9 +701,20 @@ reachable with an external `dokploy-network` attached. That test host
 re-signed outbound HTTPS, which Chromium rightly rejected, so the end-to-end
 browser captures used plain-HTTP pages.
 
+Chromium's sandbox (1.8.3) was tested the same way on Docker 29.9.2 without
+AppArmor: under Docker's default seccomp profile the sandbox refuses to start
+and the helper exits with its one-line reason while the app keeps saving
+through direct HTTP; under `seccomp-chromium.json` the preflight reports
+`active` with every renderer check true, and saves through the app (two of
+them at once) produced a JPEG screenshot and a self-contained HTML archive;
+`unshare` of anything but a user namespace, `chroot` outside one, and netlink
+sockets are refused. The AppArmor profile was syntax-checked with
+`apparmor_parser` 4.1 but not enforced.
+
 Not tested: a real Dokploy deployment, Traefik and Cloudflare in front,
-Dokploy's volume backups, an Ubuntu 26.04 host with AppArmor, ARM64 images,
-and HTTPS captures on a host without TLS interception.
+Dokploy's volume backups, an Ubuntu 26.04 host with AppArmor (including the
+`arivu-capture` profile under enforcement), ARM64 images, and HTTPS captures
+on a host without TLS interception.
 
 ### Single container
 

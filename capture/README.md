@@ -12,7 +12,15 @@ creates a JPEG screenshot and PDF, and passes the rendered DOM through Monolith
 for a self-contained HTML archive.
 
 Startup fails closed unless the lockfile-selected Chromium launches and
-Monolith reports exactly version 2.11.6.
+Monolith reports exactly version 2.11.6. With
+`ARIVU_CAPTURE_CHROMIUM_SANDBOX=true` it also fails closed unless Chromium's
+own sandbox starts and a launched renderer is seen inside it (own user, pid,
+and network namespaces, chrooted, with an extra seccomp filter). The helper
+never relaunches with `--no-sandbox`, and repeats the renderer check before
+each capture loads its page; a failure there is reported as
+`browser_sandbox_unavailable`. `node src/preflight.mjs` prints the result as
+JSON, including `"chromium_sandbox":"active"`, `"disabled"`, or
+`"not_verified"`.
 
 ## Approved production dependencies
 
@@ -39,6 +47,12 @@ ARIVU_MONOLITH_PATH=/usr/local/lib/arivu-capture/monolith
 PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers
 /usr/local/lib/arivu-capture/node src/index.mjs
 ```
+
+`ARIVU_CAPTURE_CHROMIUM_SANDBOX` (`true` or `false`, unset means `false`)
+turns on Chromium's own sandbox. Native installs leave it unset, so Chromium
+runs with `--no-sandbox` inside the systemd unit's isolation. The container
+image sets it to `true`; that needs the seccomp and AppArmor profiles in
+`security/` (see `security/README.md`).
 
 `ARIVU_CAPTURE_RUNTIME_DIR` must match the app's
 `ARIVU_BROWSER_CAPTURE_RUNTIME_DIR`. The app creates a private directory per
@@ -125,5 +139,6 @@ runtime is disabled.
 
 Container hosts build `Dockerfile` in this directory instead. It packages the
 same pinned Node, Chromium, and Monolith, and the root `compose.yaml` runs it
-with no network, no capabilities, and a read-only root. See the Compose / PaaS
+with no network, no capabilities, a read-only root, and Chromium's own sandbox
+on, using the seccomp and AppArmor profiles in `security/`. See the Compose / PaaS
 section of `openwiki/operations/deployment.md`.

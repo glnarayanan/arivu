@@ -6,7 +6,8 @@
 # and Monolith 2.11.6 built with Rust 1.99.1. Build context: this directory.
 #
 # The root compose.yaml runs it with no network, a read-only root filesystem,
-# no capabilities, and a shared Unix-socket volume. See
+# no capabilities, a shared Unix-socket volume, and the seccomp and AppArmor
+# profiles in capture/security that let Chromium's own sandbox run. See
 # openwiki/operations/deployment.md ("Compose / PaaS").
 
 ARG NODE_IMAGE=node:24.22.1-trixie-slim
@@ -26,7 +27,11 @@ RUN npm ci --omit=dev --no-audit --no-fund \
 
 FROM ${NODE_IMAGE} AS runtime
 WORKDIR /usr/local/lib/arivu-capture
+# Chromium's own sandbox is on in the container. It needs the seccomp and
+# AppArmor profiles in capture/security (compose.yaml applies them); without
+# them the helper refuses to start rather than run Chromium unsandboxed.
 ENV NODE_ENV=production \
+  ARIVU_CAPTURE_CHROMIUM_SANDBOX=true \
   PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers \
   ARIVU_MONOLITH_PATH=/usr/local/lib/arivu-capture/monolith \
   ARIVU_CAPTURE_SOCKET=/run/arivu-capture/helper.sock \

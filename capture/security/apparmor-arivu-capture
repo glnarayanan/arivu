@@ -1,0 +1,80 @@
+# AppArmor profile for Arivu's browser-capture container (compose service
+# "capture"). It is Docker's docker-default profile plus what Chromium's
+# namespace sandbox needs. See capture/security/README.md for the reasoning
+# and openwiki/operations/deployment.md ("Compose / PaaS") for install steps:
+#
+#   sudo install -m 0644 capture/security/apparmor-arivu-capture /etc/apparmor.d/arivu-capture
+#   sudo apparmor_parser -r -W /etc/apparmor.d/arivu-capture
+#
+# Base: the docker-default template in moby/profiles apparmor v0.2.2 (Docker
+# Engine 29.9.2), rendered as Docker renders it on Ubuntu (tunables/global and
+# abstractions/base present, dockerd unconfined). Every line below the "Docker
+# default" marker is copied from that template; the arivu changes are marked.
+
+# arivu change: ABI 4.0 instead of Docker's 3.0. ABI 4.0 is the first one
+# that understands the "userns" rule below. It also mediates Unix sockets
+# separately from "network", hence the explicit "unix" rule.
+abi <abi/4.0>,
+
+include <tunables/global>
+
+profile arivu-capture flags=(attach_disconnected,mediate_deleted) {
+  include <abstractions/base>
+
+  # ---- arivu changes ----------------------------------------------------
+  # Chromium's sandbox puts every renderer in its own user, pid, and network
+  # namespace. Ubuntu (kernel.apparmor_restrict_unprivileged_userns=1)
+  # refuses that unless the profile grants it. Processes inside the new
+  # namespaces stay confined by this profile; Docker's seccomp profile for
+  # this service (capture/security/seccomp-chromium.json) still decides which
+  # namespace types may be created.
+  userns,
+  # Under ABI 3.0, docker-default's "network" rule also covered Unix
+  # sockets. Under ABI 4.0 it does not, so allow them explicitly: the
+  # helper's own socket, the app's per-attempt proxy sockets, and Chromium's
+  # internal IPC all use them.
+  unix,
+
+  # ---- Docker default (docker-default, moby/profiles apparmor v0.2.2) ----
+  network,
+  # Disallow AF_ALG (Linux kernel crypto API); see https://copy.fail/
+  deny network alg,
+  # Disallow AF_VSOCK to prevent host/guest communication.
+  deny network vsock,
+  capability,
+  file,
+  umount,
+  # Host (privileged) processes may send signals to container processes.
+  signal (receive) peer=unconfined,
+  # runc may send signals to container processes (for "docker stop").
+  signal (receive) peer=runc,
+  # crun may send signals to container processes (for "docker stop" when used with crun OCI runtime).
+  signal (receive) peer=crun,
+  # (The template's dockerd line, peer="<dockerd's profile>", is omitted:
+  # dockerd runs unconfined on Ubuntu, so it would repeat peer=unconfined.)
+  # Container processes may send signals amongst themselves.
+  signal (send,receive) peer=arivu-capture,
+
+  deny @{PROC}/* w,   # deny write for all files directly in /proc (not in a subdir)
+  # deny write to files not in /proc/<number>/** or /proc/sys/**
+  deny @{PROC}/{[^1-9/],[^1-9/][^0-9/],[^1-9s/][^0-9y/][^0-9s/],[^1-9/][^0-9/][^0-9/][^0-9/]*}/** w,
+  deny @{PROC}/sys/[^k]** w,  # deny /proc/sys except /proc/sys/k* (effectively /proc/sys/kernel)
+  deny @{PROC}/sys/kernel/{?,??,[^s][^h][^m]**} w,  # deny everything except shm* in /proc/sys/kernel/
+  deny @{PROC}/sysrq-trigger rwklx,
+  deny @{PROC}/kcore rwklx,
+
+  deny mount,
+
+  deny /sys/[^f]*/** wklx,
+  deny /sys/f[^s]*/** wklx,
+  deny /sys/fs/[^c]*/** wklx,
+  deny /sys/fs/c[^g]*/** wklx,
+  deny /sys/fs/cg[^r]*/** wklx,
+  deny /sys/firmware/** rwklx,
+  deny /sys/devices/virtual/powercap/** rwklx,
+  deny /sys/kernel/security/** rwklx,
+
+  # allow processes within the container to trace each other,
+  # provided all other LSM and yama setting allow it.
+  ptrace (trace,tracedby,read,readby) peer=arivu-capture,
+}
