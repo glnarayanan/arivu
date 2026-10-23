@@ -15,15 +15,6 @@ if (!socketPath) {
 await verifyRuntime();
 
 await mkdir(dirname(socketPath), { recursive: true });
-// The app creates one private directory per attempt under this root, so it
-// must exist before the first request. systemd and the Compose entrypoint
-// usually create it; this covers hosts whose unit predates that.
-const runtimeDir = process.env.ARIVU_CAPTURE_RUNTIME_DIR;
-if (runtimeDir) {
-  const created = await mkdir(runtimeDir, { recursive: true, mode: 0o770 });
-  if (created) await chmod(runtimeDir, 0o770);
-  if (!(await lstat(runtimeDir)).isDirectory()) throw new Error('capture runtime path exists and is not a directory');
-}
 try {
   const existing = await lstat(socketPath);
   if (!existing.isSocket()) throw new Error('capture socket path already exists and is not a socket');

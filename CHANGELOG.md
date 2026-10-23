@@ -5,22 +5,23 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 
 - Fixed complete capture on installer hosts silently falling back to direct
-  HTTP. The app creates each capture attempt under
-  `/run/arivu-capture/attempts`, but the capture unit only had systemd create
-  `/run/arivu-capture`, so every browser attempt failed with
-  `browser_runtime_failed`. The unit now lists both directories
-  (`RuntimeDirectory=arivu-capture arivu-capture/attempts`, mode `0770`,
-  owned by `arivu-capture:arivu`), and the capture helper also creates
-  `ARIVU_CAPTURE_RUNTIME_DIR` with mode `0770` at startup when it is missing.
-- `arivu-installer upgrade` now rewrites the managed
-  `/etc/systemd/system/arivu-capture.service` unit and runs
-  `systemctl daemon-reload` before restarting capture, so unit fixes reach
-  existing hosts. A failed activation puts the previous unit back. Keep local
-  overrides in `arivu-capture.service.d` drop-ins; those are not touched.
-  The one-line bootstrap fetches the new installer first, so it rewrites the
-  unit right away. `sudo arivu-installer upgrade` from an older installer
-  only swaps binaries; the helper-side directory creation ships in the
-  capture runtime, so capture works after either upgrade path.
+  HTTP. Every browser attempt failed with `browser_runtime_failed`, so no
+  installer host has completed a browser capture since native capture
+  shipped. The app creates each attempt under `/run/arivu-capture/attempts`,
+  but that directory was never created, and `arivu.service` runs with
+  `ProtectSystem=strict`, which leaves all of `/run` read-only to the app
+  anyway. The attempts root is now `/run/arivu/capture-attempts`, created by
+  the app's own unit (`RuntimeDirectory=arivu arivu/capture-attempts`, mode
+  `0750`, group `arivu`) and set in both `arivu.env` and the capture unit.
+- `arivu-installer upgrade` now rewrites the managed `arivu.service` and
+  `arivu-capture.service` units, moves `ARIVU_BROWSER_CAPTURE_RUNTIME_DIR` in
+  `arivu.env` off the old default (a custom value is kept), and runs
+  `systemctl daemon-reload` before restarting. A failed activation puts the
+  previous files back. Keep local overrides in `*.service.d` drop-ins; those
+  are not touched. Run the upgrade through the one-line bootstrap, which
+  fetches the new installer first; `sudo arivu-installer upgrade` from an
+  older installer only swaps binaries, so run `sudo arivu-installer upgrade`
+  once more afterwards (or `reconfigure`) to apply the unit changes.
 - Install and upgrade now stop before replacing anything when a local systemd
   drop-in for the capture service refers to a file inside
   `/usr/local/lib/arivu-capture` that the new capture runtime does not ship.

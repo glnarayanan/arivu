@@ -423,9 +423,12 @@ func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(root, "etc/arivu"), 0o750); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.WriteFile(filepath.Join(root, "etc/arivu/arivu.env"), []byte("ARIVU_BROWSER_CAPTURE_ENABLED=true\n"), 0o640); err != nil {
+			envPath := filepath.Join(root, "etc/arivu/arivu.env")
+			oldEnv := "ARIVU_BROWSER_CAPTURE_ENABLED=true\nARIVU_BROWSER_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts\nSECRET_KEY=keep\n"
+			if err := os.WriteFile(envPath, []byte(oldEnv), 0o640); err != nil {
 				t.Fatal(err)
 			}
+			newEnv := strings.Replace(oldEnv, "/run/arivu-capture/attempts", "/run/arivu/capture-attempts", 1)
 			captureDir := filepath.Join(root, "usr/local/lib/arivu-capture")
 			if err := os.MkdirAll(captureDir, 0o755); err != nil {
 				t.Fatal(err)
@@ -437,8 +440,13 @@ func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
 			if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
 				t.Fatal(err)
 			}
-			oldUnit := strings.Replace(CaptureServiceFile(), "RuntimeDirectory=arivu-capture arivu-capture/attempts\n", "RuntimeDirectory=arivu-capture\n", 1)
+			oldUnit := strings.Replace(CaptureServiceFile(), "/run/arivu/capture-attempts", "/run/arivu-capture/attempts", 1)
 			if err := os.WriteFile(unitPath, []byte(oldUnit), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			appUnitPath := filepath.Join(root, "etc/systemd/system/arivu.service")
+			oldAppUnit := strings.Replace(ServiceFile(), "RuntimeDirectory=arivu arivu/capture-attempts\nRuntimeDirectoryMode=0750\n", "", 1)
+			if err := os.WriteFile(appUnitPath, []byte(oldAppUnit), 0o644); err != nil {
 				t.Fatal(err)
 			}
 			restoreDownloads := upgradeReleaseDownloads(t, []byte("new app"), []byte("new installer"))
@@ -454,8 +462,10 @@ func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
 			activate := func(context.Context, string) error {
 				activations++
 				if activations == 1 {
-					// Activation must see the rewritten unit.
+					// Activation must see the refreshed units and env.
 					assertFileContentMode(t, unitPath, CaptureServiceFile(), 0o644)
+					assertFileContentMode(t, appUnitPath, ServiceFile(), 0o644)
+					assertFileContentMode(t, envPath, newEnv, 0o640)
 				}
 				if activationFails && activations == 1 {
 					return errors.New("capture unhealthy")
@@ -474,6 +484,8 @@ func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
 				}
 				assertFileContentMode(t, filepath.Join(captureDir, "version"), "old", 0o644)
 				assertFileContentMode(t, unitPath, oldUnit, 0o644)
+				assertFileContentMode(t, appUnitPath, oldAppUnit, 0o644)
+				assertFileContentMode(t, envPath, oldEnv, 0o640)
 				return
 			}
 			if err != nil {
@@ -481,6 +493,8 @@ func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
 			}
 			assertFileContentMode(t, filepath.Join(captureDir, "version"), "new", 0o644)
 			assertFileContentMode(t, unitPath, CaptureServiceFile(), 0o644)
+			assertFileContentMode(t, appUnitPath, ServiceFile(), 0o644)
+			assertFileContentMode(t, envPath, newEnv, 0o640)
 		})
 	}
 }
@@ -803,5 +817,30 @@ func TestUpgradeStopsBeforeReplacingWhenCaptureDropInNeedsMissingFile(t *testing
 		if strings.HasPrefix(entry.Name(), ".arivu-capture-") {
 			t.Fatalf("staging directory %s was left behind", entry.Name())
 		}
+	}
+}
+
+func TestRefreshManagedFilesKeepsCustomCaptureRuntimeDir(t *testing.T) {
+	root := t.TempDir()
+	envPath := filepath.Join(root, "etc/arivu/arivu.env")
+	if err := os.MkdirAll(filepath.Dir(envPath), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	env := "ARIVU_BROWSER_CAPTURE_ENABLED=true\nARIVU_BROWSER_CAPTURE_RUNTIME_DIR=/srv/arivu/attempts\n"
+	if err := os.WriteFile(envPath, []byte(env), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	restore, err := refreshManagedFiles(root, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileContentMode(t, envPath, env, 0o640)
+	assertFileContentMode(t, filepath.Join(root, "etc/systemd/system/arivu.service"), ServiceFile(), 0o644)
+	if err := restore(); err != nil {
+		t.Fatal(err)
+	}
+	// Units that did not exist before are removed again on rollback.
+	if _, err := os.Stat(filepath.Join(root, "etc/systemd/system/arivu.service")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("arivu.service after restore: %v", err)
 	}
 }
