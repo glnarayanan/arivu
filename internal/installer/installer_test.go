@@ -110,6 +110,12 @@ func TestBuildPlanCaptureEnabledManagesNativeServiceAndEnvironment(t *testing.T)
 		"User=arivu-capture",
 		"PrivateNetwork=true",
 		"NoNewPrivileges=true",
+		"Environment=ARIVU_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts",
+		// systemd only creates the directories listed here; the app's attempt
+		// root must exist or every capture falls back to direct HTTP.
+		"RuntimeDirectory=arivu-capture arivu-capture/attempts\n",
+		"RuntimeDirectoryMode=0770\n",
+		"Group=arivu\n",
 	} {
 		if !strings.Contains(service, expected) {
 			t.Fatalf("capture service missing %q: %s", expected, service)
@@ -120,6 +126,7 @@ func TestBuildPlanCaptureEnabledManagesNativeServiceAndEnvironment(t *testing.T)
 		"ARIVU_BROWSER_CAPTURE_ENABLED=true",
 		"ARIVU_BROWSER_CAPTURE_PROTOCOL=2",
 		"ARIVU_BROWSER_CAPTURE_SOCKET=/run/arivu-capture/helper.sock",
+		"ARIVU_BROWSER_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts",
 		"ARIVU_BROWSER_CAPTURE_SELF_CONTAINED_HTML=true",
 	} {
 		if !strings.Contains(env, expected) {

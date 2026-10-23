@@ -4,6 +4,23 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Fixed complete capture on installer hosts silently falling back to direct
+  HTTP. The app creates each capture attempt under
+  `/run/arivu-capture/attempts`, but the capture unit only had systemd create
+  `/run/arivu-capture`, so every browser attempt failed with
+  `browser_runtime_failed`. The unit now lists both directories
+  (`RuntimeDirectory=arivu-capture arivu-capture/attempts`, mode `0770`,
+  owned by `arivu-capture:arivu`), and the capture helper also creates
+  `ARIVU_CAPTURE_RUNTIME_DIR` with mode `0770` at startup when it is missing.
+- `arivu-installer upgrade` now rewrites the managed
+  `/etc/systemd/system/arivu-capture.service` unit and runs
+  `systemctl daemon-reload` before restarting capture, so unit fixes reach
+  existing hosts. A failed activation puts the previous unit back. Keep local
+  overrides in `arivu-capture.service.d` drop-ins; those are not touched.
+  The one-line bootstrap fetches the new installer first, so it rewrites the
+  unit right away. `sudo arivu-installer upgrade` from an older installer
+  only swaps binaries; the helper-side directory creation ships in the
+  capture runtime, so capture works after either upgrade path.
 - Install and upgrade now stop before replacing anything when a local systemd
   drop-in for the capture service refers to a file inside
   `/usr/local/lib/arivu-capture` that the new capture runtime does not ship.

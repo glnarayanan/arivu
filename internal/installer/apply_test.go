@@ -433,6 +433,14 @@ func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(captureDir, "version"), []byte("old"), 0o644); err != nil {
 				t.Fatal(err)
 			}
+			unitPath := filepath.Join(root, "etc/systemd/system/arivu-capture.service")
+			if err := os.MkdirAll(filepath.Dir(unitPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			oldUnit := strings.Replace(CaptureServiceFile(), "RuntimeDirectory=arivu-capture arivu-capture/attempts\n", "RuntimeDirectory=arivu-capture\n", 1)
+			if err := os.WriteFile(unitPath, []byte(oldUnit), 0o644); err != nil {
+				t.Fatal(err)
+			}
 			restoreDownloads := upgradeReleaseDownloads(t, []byte("new app"), []byte("new installer"))
 			defer restoreDownloads()
 			archive := validCaptureArchive(t, "new")
@@ -442,8 +450,14 @@ func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
 			}
 			defer func() { captureArchiveDownloadFunc = oldCaptureDownload }()
 
+			activations := 0
 			activate := func(context.Context, string) error {
-				if activationFails {
+				activations++
+				if activations == 1 {
+					// Activation must see the rewritten unit.
+					assertFileContentMode(t, unitPath, CaptureServiceFile(), 0o644)
+				}
+				if activationFails && activations == 1 {
 					return errors.New("capture unhealthy")
 				}
 				return nil
@@ -459,12 +473,14 @@ func TestUpgradeReplacesAndRollsBackConfiguredCaptureRuntime(t *testing.T) {
 					t.Fatalf("upgrade error = %v", err)
 				}
 				assertFileContentMode(t, filepath.Join(captureDir, "version"), "old", 0o644)
+				assertFileContentMode(t, unitPath, oldUnit, 0o644)
 				return
 			}
 			if err != nil {
 				t.Fatal(err)
 			}
 			assertFileContentMode(t, filepath.Join(captureDir, "version"), "new", 0o644)
+			assertFileContentMode(t, unitPath, CaptureServiceFile(), 0o644)
 		})
 	}
 }

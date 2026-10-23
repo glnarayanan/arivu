@@ -776,8 +776,24 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 			return err
 		}
 	}
+	var restoreCaptureUnit func() error
+	if captureOpts.CaptureEnabled {
+		restoreCaptureUnit, err = rewriteCaptureUnit(root)
+		if err != nil {
+			if captureReplacement != nil {
+				_ = captureReplacement.rollback()
+			}
+			for index := len(replacements) - 1; index >= 0; index-- {
+				_ = replacements[index].rollback()
+			}
+			return err
+		}
+	}
 	if err := activate(ctx, root); err != nil {
 		var rollbackErr error
+		if restoreCaptureUnit != nil {
+			rollbackErr = errors.Join(rollbackErr, restoreCaptureUnit())
+		}
 		if captureReplacement != nil {
 			rollbackErr = errors.Join(rollbackErr, captureReplacement.rollback())
 		}
@@ -793,9 +809,42 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 	return nil
 }
 
+// rewriteCaptureUnit writes the current managed capture unit so upgrades pick
+// up unit fixes, not only new binaries. Local changes belong in drop-ins under
+// arivu-capture.service.d, which are left alone. The returned func puts the
+// previous unit back if activation fails.
+func rewriteCaptureUnit(root string) (func() error, error) {
+	path := rootPath(root, captureServicePath)
+	previous, err := os.ReadFile(path)
+	existed := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, err
+	}
+	content := CaptureServiceFile()
+	if existed && string(previous) == content {
+		return func() error { return nil }, nil
+	}
+	if err := writeManagedFile(path, "0644", content); err != nil {
+		return nil, err
+	}
+	return func() error {
+		if !existed {
+			if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			return nil
+		}
+		return writeManagedFile(path, "0644", string(previous))
+	}, nil
+}
+
 func activateUpgrade(ctx context.Context, root string) error {
 	opts, _ := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env"))
 	if opts.CaptureEnabled {
+		// The capture unit may have been rewritten (or restored on rollback).
+		if err := runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
+			return err
+		}
 		if err := runCommand(ctx, "systemctl", "restart", "arivu-capture.service"); err != nil {
 			return fmt.Errorf("%w%s", err, systemdServiceFailureDetail(ctx, root, "arivu-capture.service"))
 		}
