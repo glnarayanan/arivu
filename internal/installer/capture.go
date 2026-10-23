@@ -14,6 +14,7 @@ import (
 	"os/user"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -21,10 +22,13 @@ import (
 const (
 	captureInstallPath       = "/usr/local/lib/arivu-capture"
 	captureServicePath       = "/etc/systemd/system/arivu-capture.service"
+	captureDropInDir         = "/etc/systemd/system/arivu-capture.service.d"
 	captureArchiveMaxBytes   = int64(512 << 20)
 	captureExtractMaxBytes   = int64(2 << 30)
 	captureExtractMaxEntries = 50000
 )
+
+var captureDropInPathPattern = regexp.MustCompile(regexp.QuoteMeta(captureInstallPath) + `/[^\s"';:]+`)
 
 var (
 	captureArchiveDownloadFunc = downloadCaptureArchive
@@ -73,6 +77,10 @@ func prepareCaptureRuntimeFromSums(ctx context.Context, root, artifactURL string
 		replacement.cleanup()
 		return nil, err
 	}
+	if err := checkCaptureDropIns(root, replacement.tmp); err != nil {
+		replacement.cleanup()
+		return nil, err
+	}
 	if root == "/" || root == "" {
 		if err := ensureCaptureUser(ctx); err != nil {
 			replacement.cleanup()
@@ -88,6 +96,54 @@ func prepareCaptureRuntimeFromSums(ctx context.Context, root, artifactURL string
 		}
 	}
 	return replacement, nil
+}
+
+// checkCaptureDropIns stops an install or upgrade before anything is replaced
+// when a local systemd drop-in for the capture service refers to a file inside
+// the managed runtime directory that the new runtime does not ship. The whole
+// directory is swapped on every install and upgrade, so such a file would
+// disappear and the service would fail to start after the swap.
+func checkCaptureDropIns(root, staged string) error {
+	dir := rootPath(root, captureDropInDir)
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	var missing []string
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".conf") {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, entry.Name()))
+		if err != nil {
+			return err
+		}
+		for _, line := range strings.Split(string(data), "\n") {
+			line = strings.TrimSpace(line)
+			if strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+				continue
+			}
+			for _, reference := range captureDropInPathPattern.FindAllString(line, -1) {
+				relative := path.Clean(strings.TrimPrefix(reference, captureInstallPath+"/"))
+				if relative == "." || relative == ".." || strings.HasPrefix(relative, "../") {
+					continue
+				}
+				_, statErr := os.Lstat(filepath.Join(staged, filepath.FromSlash(relative)))
+				if errors.Is(statErr, os.ErrNotExist) {
+					missing = append(missing, path.Join(captureDropInDir, entry.Name())+" uses "+reference)
+				} else if statErr != nil {
+					return statErr
+				}
+			}
+		}
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("capture service drop-in refers to a file the new capture runtime does not ship (%s); %s is replaced on every install and upgrade, so move that file outside it, update the drop-in, run systemctl daemon-reload, and retry", strings.Join(missing, "; "), captureInstallPath)
+	}
+	return nil
 }
 
 func ensureCaptureUser(ctx context.Context) error {

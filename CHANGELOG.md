@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Install and upgrade now stop before replacing anything when a local systemd
+  drop-in for the capture service refers to a file inside
+  `/usr/local/lib/arivu-capture` that the new capture runtime does not ship.
+  That directory is replaced as a whole, so such a file used to disappear,
+  the capture service failed to start, and the upgrade rolled back with only
+  a systemd error.
+
 ## [1.8.2] - 2026-10-22
 
 - Updated Node.js to 24.22.1 for CI, releases (and so the shipped capture
