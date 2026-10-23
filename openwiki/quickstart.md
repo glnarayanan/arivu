@@ -105,5 +105,5 @@ The `arivu` command suite acts as both a web server and a local CLI manager:
 |   |-- sanitize/               # Restrictive HTML sanitizer
 |   `-- secrets/                # Secret encryption helpers
 |-- extension/                  # Companion browser extension (vanilla JS)
-`-- deploy/                     # Docker Compose, systemd, and env templates
+`-- deploy/                     # systemd unit, env template, bootstrap script
 ```

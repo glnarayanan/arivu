@@ -22,6 +22,25 @@ All notable changes to this project will be documented in this file.
   fetches the new installer first; `sudo arivu-installer upgrade` from an
   older installer only swaps binaries, so run `sudo arivu-installer upgrade`
   once more afterwards (or `reconfigure`) to apply the unit changes.
+- Added a two-service Docker Compose stack (`compose.yaml` at the repository
+  root) for container hosts and self-hosted PaaS platforms such as Dokploy.
+  `capture/Dockerfile` builds the capture helper with the same pinned Node,
+  Playwright Chromium, and Monolith as the native release, and the stack runs
+  it with no network, no capabilities, `no-new-privileges`, a read-only root,
+  and a memory cap, reaching the web only through the app's per-attempt proxy
+  socket. The single-service `deploy/compose.yaml` sample is replaced by it.
+  The installer path is unchanged.
+- Added `arivu backup`, `arivu restore`, and `arivu healthcheck`. `backup`
+  writes the same verified snapshot format as `arivu-installer backup` and is
+  safe while the server runs, so `arivu reprocess --apply` works in containers.
+  `restore` moves an installer or container backup into place, verifies it
+  first, rolls back on failure, and refuses while the server has the database
+  open. The container image's health check uses `healthcheck`. The installer's
+  backup and restore now share this code with no change in behavior.
+- The app image accepts an `ARIVU_VERSION` build argument so container builds
+  can report their release tag.
+- Corrected the documented Monolith, Playwright, and JSDOM versions to the
+  pinned 2.11.6, 1.64.1, and 30.1.3.
 - Install and upgrade now stop before replacing anything when a local systemd
   drop-in for the capture service refers to a file inside
   `/usr/local/lib/arivu-capture` that the new capture runtime does not ship.

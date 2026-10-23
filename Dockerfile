@@ -7,7 +7,11 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=1 go build -trimpath -ldflags="-s -w" -o /out/arivu ./cmd/arivu
+# Release tag reported by `arivu --version`; empty builds report "devel".
+ARG ARIVU_VERSION=
+RUN CGO_ENABLED=1 go build -trimpath \
+  -ldflags="-s -w -X github.com/glnarayanan/arivu/internal/buildinfo.releaseVersion=${ARIVU_VERSION}" \
+  -o /out/arivu ./cmd/arivu
 
 FROM debian:trixie-slim AS runtime
 
@@ -26,6 +30,8 @@ ENV ARIVU_ADDR=:8080
 ENV ARIVU_DB=/data/arivu.sqlite3
 EXPOSE 8080
 VOLUME ["/data"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
+  CMD ["/usr/local/bin/arivu", "healthcheck"]
 
 ENTRYPOINT ["/usr/local/bin/arivu"]
 CMD ["serve"]

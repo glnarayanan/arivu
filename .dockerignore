@@ -5,3 +5,6 @@ coverage.out
 tmp/
 dist/
 bin/
+capture/node_modules/
+.env
+.env.*

@@ -47,6 +47,15 @@ func main() {
 		case "reprocess":
 			runReprocess(os.Args[2:])
 			return
+		case "backup":
+			runBackup(os.Args[2:])
+			return
+		case "restore":
+			runRestore(os.Args[2:])
+			return
+		case "healthcheck":
+			runHealthcheck(os.Args[2:])
+			return
 		case "login":
 			runLogin(os.Args[2:])
 			return
