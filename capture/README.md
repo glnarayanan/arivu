@@ -29,15 +29,24 @@ and capture-corpus review as adding a production dependency.
 
 ## Runtime contract
 
-The service requires:
+The service requires (native installer paths shown; the Compose stack uses
+`/run/arivu-capture/attempts` on its shared socket volume instead):
 
 ```sh
 ARIVU_CAPTURE_SOCKET=/run/arivu-capture/helper.sock
-ARIVU_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts
+ARIVU_CAPTURE_RUNTIME_DIR=/run/arivu/capture-attempts
 ARIVU_MONOLITH_PATH=/usr/local/lib/arivu-capture/monolith
 PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers
 /usr/local/lib/arivu-capture/node src/index.mjs
 ```
+
+`ARIVU_CAPTURE_RUNTIME_DIR` must match the app's
+`ARIVU_BROWSER_CAPTURE_RUNTIME_DIR`. The app creates a private directory per
+attempt there, so the app must be able to write it. On installer hosts the
+app's systemd unit creates it (`RuntimeDirectory=arivu arivu/capture-attempts`,
+mode `0750`, group `arivu`), because `ProtectSystem=strict` leaves the rest of
+`/run` read-only to the app. In Compose, `docker-entrypoint.sh` creates it. The
+helper only traverses it and connects to the proxy socket inside.
 
 Use Node `22.22.2` or newer. Production packaging pins Chromium through
 Playwright and pins Monolith to `2.11.6`; it must not resolve either runtime to

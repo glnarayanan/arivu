@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Fixed complete capture on installer hosts silently falling back to direct
+  HTTP. Every browser attempt failed with `browser_runtime_failed`, so no
+  installer host has completed a browser capture since native capture
+  shipped. The app creates each attempt under `/run/arivu-capture/attempts`,
+  but that directory was never created, and `arivu.service` runs with
+  `ProtectSystem=strict`, which leaves all of `/run` read-only to the app
+  anyway. The attempts root is now `/run/arivu/capture-attempts`, created by
+  the app's own unit (`RuntimeDirectory=arivu arivu/capture-attempts`, mode
+  `0750`, group `arivu`) and set in both `arivu.env` and the capture unit.
+- `arivu-installer upgrade` now rewrites the managed `arivu.service` and
+  `arivu-capture.service` units, moves `ARIVU_BROWSER_CAPTURE_RUNTIME_DIR` in
+  `arivu.env` off the old default (a custom value is kept), and runs
+  `systemctl daemon-reload` before restarting. A failed activation puts the
+  previous files back. Keep local overrides in `*.service.d` drop-ins; those
+  are not touched. Run the upgrade through the one-line bootstrap, which
+  fetches the new installer first; `sudo arivu-installer upgrade` from an
+  older installer only swaps binaries, so run `sudo arivu-installer upgrade`
+  once more afterwards (or `reconfigure`) to apply the unit changes.
 - Added a two-service Docker Compose stack (`compose.yaml` at the repository
   root) for container hosts and self-hosted PaaS platforms such as Dokploy.
   `capture/Dockerfile` builds the capture helper with the same pinned Node,

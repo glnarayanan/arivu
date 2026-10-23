@@ -88,7 +88,9 @@ On an existing installation, the same one-line bootstrap refreshes the
 installer and upgrades Arivu without rerunning the setup wizard. Future
 upgrades can use `sudo arivu-installer upgrade`; that command verifies and
 updates `arivu`, `arivu-installer`, and the enabled capture runtime from one
-release, then rolls them back together if activation does not become healthy.
+release, rewrites the managed `arivu.service` and `arivu-capture.service`
+units (local changes belong in `*.service.d` drop-ins, which are kept), then
+rolls them back together if activation does not become healthy.
 Check installed versions with `arivu --version` and `arivu-installer --version`.
 
 For local development, use the Go version declared in `go.mod`:

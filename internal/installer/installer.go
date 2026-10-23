@@ -324,7 +324,7 @@ func EnvFile(opts Options, port int, secret string) string {
 		"ARIVU_BROWSER_CAPTURE_ENABLED=" + strconv.FormatBool(opts.CaptureEnabled),
 		"ARIVU_BROWSER_CAPTURE_PROTOCOL=2",
 		"ARIVU_BROWSER_CAPTURE_SOCKET=/run/arivu-capture/helper.sock",
-		"ARIVU_BROWSER_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts",
+		"ARIVU_BROWSER_CAPTURE_RUNTIME_DIR=" + captureAttemptsDir,
 		"ARIVU_BROWSER_CAPTURE_SCREENSHOT=true",
 		"ARIVU_BROWSER_CAPTURE_PDF=false",
 		"ARIVU_BROWSER_CAPTURE_SELF_CONTAINED_HTML=true",
@@ -339,6 +339,16 @@ func EnvFile(opts Options, port int, secret string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+// captureAttemptsDir holds one private directory per browser capture attempt.
+// The app writes there, so the app's own unit creates it: ProtectSystem=strict
+// leaves the rest of /run read-only for arivu.service. The capture helper
+// (group arivu) only traverses it and connects to the proxy socket inside.
+const captureAttemptsDir = "/run/arivu/capture-attempts"
+
+// legacyCaptureAttemptsDir is the attempts root earlier installers wrote. The
+// app could not write to it, so upgrades move arivu.env off it.
+const legacyCaptureAttemptsDir = "/run/arivu-capture/attempts"
 
 func ServiceFile() string {
 	return `[Unit]
@@ -360,6 +370,8 @@ PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
 ReadWritePaths=/var/lib/arivu /var/backups/arivu
+RuntimeDirectory=arivu arivu/capture-attempts
+RuntimeDirectoryMode=0750
 CapabilityBoundingSet=
 LockPersonality=true
 MemoryDenyWriteExecute=true
@@ -383,7 +395,7 @@ Group=arivu
 WorkingDirectory=/usr/local/lib/arivu-capture
 Environment=NODE_ENV=production
 Environment=ARIVU_CAPTURE_SOCKET=/run/arivu-capture/helper.sock
-Environment=ARIVU_CAPTURE_RUNTIME_DIR=/run/arivu-capture/attempts
+Environment=ARIVU_CAPTURE_RUNTIME_DIR=` + captureAttemptsDir + `
 Environment=ARIVU_MONOLITH_PATH=/usr/local/lib/arivu-capture/monolith
 Environment=PLAYWRIGHT_BROWSERS_PATH=/usr/local/lib/arivu-capture/browsers
 ExecStart=/usr/local/lib/arivu-capture/node src/index.mjs

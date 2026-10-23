@@ -534,8 +534,18 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 			return err
 		}
 	}
+	restoreManaged, err := refreshManagedFiles(root, captureOpts.CaptureEnabled)
+	if err != nil {
+		if captureReplacement != nil {
+			_ = captureReplacement.rollback()
+		}
+		for index := len(replacements) - 1; index >= 0; index-- {
+			_ = replacements[index].rollback()
+		}
+		return err
+	}
 	if err := activate(ctx, root); err != nil {
-		var rollbackErr error
+		rollbackErr := restoreManaged()
 		if captureReplacement != nil {
 			rollbackErr = errors.Join(rollbackErr, captureReplacement.rollback())
 		}
@@ -551,8 +561,77 @@ func upgrade(ctx context.Context, facts HostFacts, opts ApplyOptions, version, r
 	return nil
 }
 
+// refreshManagedFiles brings the systemd units and the capture runtime path in
+// arivu.env up to this release, so upgrades pick up unit fixes and not only new
+// binaries. Local changes belong in drop-ins under the *.service.d directories,
+// which are left alone. The returned func puts every previous file back.
+func refreshManagedFiles(root string, captureEnabled bool) (func() error, error) {
+	type previousFile struct {
+		path    string
+		mode    string
+		content []byte
+		existed bool
+	}
+	var previous []previousFile
+	restore := func() error {
+		var err error
+		for index := len(previous) - 1; index >= 0; index-- {
+			item := previous[index]
+			if item.existed {
+				err = errors.Join(err, writeManagedFile(item.path, item.mode, string(item.content)))
+			} else if removeErr := os.Remove(item.path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+				err = errors.Join(err, removeErr)
+			}
+		}
+		return err
+	}
+	update := func(path, mode string, next func(current []byte, existed bool) (string, bool)) error {
+		path = rootPath(root, path)
+		current, err := os.ReadFile(path)
+		existed := err == nil
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		content, write := next(current, existed)
+		if !write || (existed && string(current) == content) {
+			return nil
+		}
+		previous = append(previous, previousFile{path: path, mode: mode, content: current, existed: existed})
+		return writeManagedFile(path, mode, content)
+	}
+	unit := func(content string) func([]byte, bool) (string, bool) {
+		return func([]byte, bool) (string, bool) { return content, true }
+	}
+	steps := []func() error{
+		func() error { return update("/etc/systemd/system/arivu.service", "0644", unit(ServiceFile())) },
+		func() error {
+			// Only move the old default; a custom path is the operator's choice.
+			return update("/etc/arivu/arivu.env", "0640", func(current []byte, existed bool) (string, bool) {
+				old := "ARIVU_BROWSER_CAPTURE_RUNTIME_DIR=" + legacyCaptureAttemptsDir + "\n"
+				if !existed || !strings.Contains(string(current), old) {
+					return "", false
+				}
+				return strings.Replace(string(current), old, "ARIVU_BROWSER_CAPTURE_RUNTIME_DIR="+captureAttemptsDir+"\n", 1), true
+			})
+		},
+	}
+	if captureEnabled {
+		steps = append(steps, func() error { return update(captureServicePath, "0644", unit(CaptureServiceFile())) })
+	}
+	for _, step := range steps {
+		if err := step(); err != nil {
+			return nil, errors.Join(err, restore())
+		}
+	}
+	return restore, nil
+}
+
 func activateUpgrade(ctx context.Context, root string) error {
 	opts, _ := OptionsFromEnvFile(rootPath(root, "/etc/arivu/arivu.env"))
+	// Units may have been rewritten, or restored on rollback.
+	if err := runCommand(ctx, "systemctl", "daemon-reload"); err != nil {
+		return err
+	}
 	if opts.CaptureEnabled {
 		if err := runCommand(ctx, "systemctl", "restart", "arivu-capture.service"); err != nil {
 			return fmt.Errorf("%w%s", err, systemdServiceFailureDetail(ctx, root, "arivu-capture.service"))
