@@ -18,9 +18,9 @@ Monolith reports exactly version 2.11.6.
 
 Direct package versions are exact in `package.json` and `package-lock.json`:
 
-- Playwright `1.63.0` and its pinned Chromium runtime (Apache-2.0).
+- Playwright `1.64.1` and its pinned Chromium runtime (Apache-2.0).
 - Mozilla Readability `0.6.0` (Apache-2.0).
-- JSDOM `30.1.1` (MIT).
+- JSDOM `30.1.3` (MIT).
 - Monolith `2.11.6` (CC0-1.0), installed as a separate executable.
 
 No dependency from this bundle may be imported into `internal/app/web`.
@@ -113,3 +113,8 @@ Fresh installs enable complete capture by default. Opt out with
 `--browser-capture=false`, or use `arivu-installer reconfigure` later. The core
 Go binary and its direct-capture path remain fully functional when the optional
 runtime is disabled.
+
+Container hosts build `Dockerfile` in this directory instead. It packages the
+same pinned Node, Chromium, and Monolith, and the root `compose.yaml` runs it
+with no network, no capabilities, and a read-only root. See the Compose / PaaS
+section of `openwiki/operations/deployment.md`.

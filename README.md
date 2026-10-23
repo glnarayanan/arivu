@@ -112,25 +112,21 @@ go build -trimpath -ldflags="-s -w" -o arivu-installer ./cmd/arivu-installer
 
 Arivu keeps `github.com/glnarayanan/arivu` as the canonical Go module path, so internal imports match the upstream module. Forks can build normally without renaming those imports; only rename the module path if the fork becomes a separate long-lived distribution. Runtime outbound fetches use the neutral `Arivu/2.0` user agent by default and can be branded with `ARIVU_FETCH_USER_AGENT`.
 
-## Docker
+## Docker Compose / PaaS
 
-Docker remains an advanced/manual deployment path. The main self-hosting path is
-`arivu-installer`, which handles Linux VPS setup and shared reverse proxies.
+The main self-hosting path is `arivu-installer`, which handles Linux VPS setup
+and shared reverse proxies. For container hosts and self-hosted PaaS platforms
+such as Dokploy, the root `compose.yaml` runs the app and the isolated capture
+helper as two services, with the capture container kept off the network:
 
 ```bash
-docker build -t arivu:local .
-docker run --rm \
-  -p 127.0.0.1:8080:8080 \
-  -v arivu-data:/data \
-  -e ARIVU_DB=/data/arivu.sqlite3 \
-  -e SECRET_KEY=replace-with-at-least-32-random-bytes \
-  -e APP_URL=https://arivu.example.com \
-  -e COOKIE_SECURE=true \
-  arivu:local
+cp .env.example .env   # set APP_URL, ADMIN_EMAILS, SECRET_KEY
+docker compose up -d --build
 ```
 
-A Compose sample is available at `deploy/compose.yaml`. It covers the core app
-only; the supported complete-capture path is managed by `arivu-installer`.
+See the Compose / PaaS section of `openwiki/operations/deployment.md` for the
+isolation model, settings, backups, moving an installer instance into the
+stack, and what has been tested.
 
 ## Migration
 

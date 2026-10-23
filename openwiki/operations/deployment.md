@@ -36,14 +36,16 @@ older supported core-only hosts must opt out. Existing installations retain
 their current setting during reconfigure.
 
 No Docker, npm, Node, Chromium, Rust, or Monolith setup is required from the
-operator. Tagged releases contain a checksummed, architecture-specific
-`arivu-capture-linux-<arch>.tar.gz` with the pinned runtime. `arivu-installer`:
+operator. Container hosts use the two-service stack described under
+[Compose / PaaS](#compose--paas-docker) instead. Tagged releases contain a
+checksummed, architecture-specific `arivu-capture-linux-<arch>.tar.gz` with the
+pinned runtime. `arivu-installer`:
 
 1. Streams and verifies the archive against the release `SHA256SUMS`.
 2. Rejects unsafe archive paths, links, unsupported entries, and size excesses.
 3. Installs only Chromium's required host libraries through the bundled,
    approved Playwright runtime.
-4. Launch-checks Chromium and verifies Monolith 2.10.1 as the unprivileged
+4. Launch-checks Chromium and verifies Monolith 2.11.6 as the unprivileged
    `arivu-capture` user.
 5. Atomically activates `/usr/local/lib/arivu-capture`, writes the hardened
    systemd unit, starts capture before Arivu, and checks both services.
@@ -345,36 +347,261 @@ In a second terminal, verify the restarted server before trying a capture:
 curl -fsS http://127.0.0.1:8080/api/health
 ```
 
-## Container
+## Compose / PaaS (Docker)
 
-Backups now include the SQLite snapshot, adjacent asset directory, and a
-versioned size/SHA-256 manifest. Restore verifies a present manifest before
-activation; backups made by older releases without a manifest remain accepted.
-Browser preservation stays disabled unless its isolated capture service and
-limits are configured.
+The installer stays the primary path for a Linux host you manage by hand. For a
+container host or a self-hosted PaaS such as Dokploy, the root `compose.yaml`
+runs Arivu as two services with complete capture. Both paths keep the same data
+format, so an installer backup restores into the container stack (see below),
+but a running installer host and a running stack never share data.
 
-Docker remains an advanced/manual path.
+### What runs
+
+| Service | Image | Runs as | Network | Writes to |
+| --- | --- | --- | --- | --- |
+| `arivu` | root `Dockerfile` | uid 10001, group `arivu` (10001) | compose network; no published host port | `/data` volume, `/run/arivu-capture` socket volume, `/tmp` (tmpfs) |
+| `capture` | `capture/Dockerfile` | uid 10002, group `arivu` (10001) | `network_mode: none` | `/run/arivu-capture` socket volume, `/tmp` (tmpfs) |
+
+The capture image carries the same pinned runtime as the native release
+archive: Node 24.22.1, the Chromium build pinned by Playwright in
+`capture/package-lock.json`, and Monolith 2.11.6 built with Rust 1.99.1. It
+starts the helper as the systemd unit does (`node src/index.mjs` in
+`/usr/local/lib/arivu-capture`), after creating the shared
+`/run/arivu-capture/attempts` directory with mode `0770`.
+
+The app listens on `:8080` inside its container. A reverse proxy on the same
+Docker network (Traefik under Dokploy) terminates TLS and forwards to
+`arivu:8080`. As behind Caddy on an installer host, the app sees the proxy as
+the client address.
+
+### Isolation compared with the systemd units
+
+| systemd (`arivu-capture.service`) | Compose (`capture`) |
+| --- | --- |
+| `PrivateNetwork=true` | `network_mode: none` (loopback only; the web is reachable only through the per-attempt proxy socket the app creates) |
+| `User=arivu-capture`, `Group=arivu` | uid 10002, gid 10001; the app is uid 10001, gid 10001 |
+| `RuntimeDirectory=arivu-capture`, mode `0770` | `capture-socket` tmpfs volume owned by 10002:10001, mode `0770` |
+| `CapabilityBoundingSet=` (empty) | `cap_drop: [ALL]` |
+| `NoNewPrivileges=true` | `no-new-privileges:true` |
+| `ProtectSystem=strict`, `ReadWritePaths=/run/arivu-capture` | `read_only: true` plus the socket volume |
+| `PrivateTmp=true` | private tmpfs on `/tmp` (1 GiB by default) |
+| `TasksMax=512` | `pids_limit: 512` |
+| no memory cap | `mem_limit` and `memswap_limit` of 1536 MiB by default |
+| `LimitNOFILE=65536` | the Docker daemon default, so the stack starts on hosts with a lower hard limit |
+
+Docker's default seccomp and AppArmor profiles stay on for both services. The
+app container is also read-only, drops every capability, and sets
+`no-new-privileges`.
+
+The socket modes match the native install: the helper's socket is `0660`, each
+attempt directory the app creates is `0750` (the helper can enter it but not
+replace anything), and each per-attempt proxy socket is `0660`.
+
+### Chromium's own sandbox
+
+The capture helper launches Chromium through Playwright without
+`chromiumSandbox: true`, so Playwright passes `--no-sandbox`. This is already
+true on installer hosts: there, the isolation comes from the systemd unit, not
+from Chromium's sandbox. The container keeps the same behavior.
+
+Turning Chromium's sandbox on inside a container needs user namespaces.
+Docker's default seccomp profile blocks them: with `chromiumSandbox: true`,
+Chromium refuses to start under the default profile and starts with
+`seccomp=unconfined`. On Ubuntu 24.04 and later, AppArmor also restricts
+unprivileged user namespaces, so the host would additionally need a custom
+AppArmor profile or `apparmor=unconfined` for the container. Each of those
+loosens the outer boundary to strengthen the inner one, so the stack keeps
+Chromium's sandbox off and the container's seccomp and AppArmor on, with no
+network, no capabilities, a non-root user, and a read-only root.
+`--privileged` and `SYS_ADMIN` are never needed.
+
+### Settings
+
+Set these in the PaaS environment or in a `.env` file next to `compose.yaml`.
+Compose refuses to start while a required one is missing.
+
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `APP_URL` | yes | | Public `https://` URL. |
+| `ADMIN_EMAILS` | yes | | Comma-separated admin emails. |
+| `SECRET_KEY` | yes | | Encrypts provider secrets in SQLite. When moving an existing install, reuse the value from `/etc/arivu/arivu.env`; a new key cannot read secrets saved under the old one. |
+| `COOKIE_SECURE` | no | `true` | Keep `true` behind HTTPS. |
+| `SIGNUPS_ENABLED` | no | `false` | Open signup. |
+| `ARIVU_FETCH_USER_AGENT` | no | `Arivu/2.0` | Outbound user agent. |
+| `ARIVU_BROWSER_CAPTURE_ENABLED` | no | `true` | `false` keeps the direct-HTTP path only. |
+| `ARIVU_BROWSER_CAPTURE_SCREENSHOT` / `_SELF_CONTAINED_HTML` / `_PDF` | no | `true` / `true` / `false` | Preservation formats, as the installer sets them. |
+| `ARIVU_BROWSER_CAPTURE_TIMEOUT`, `_NAVIGATION_TIMEOUT`, `_MAX_*` | no | installer values | Capture limits; see `compose.yaml`. |
+| `ARIVU_CAPTURE_MEM_LIMIT` | no | `1536m` | Capture container memory cap (no swap). |
+| `ARIVU_CAPTURE_TMP_SIZE` | no | `1g` | Capture `/tmp` tmpfs size; counts toward its memory. |
+| `ARIVU_VERSION` | no | empty | Tag reported by `arivu --version` (for example `v1.8.3`). |
+| `ARIVU_IMAGE_TAG` | no | `local` | Tag for the two built images. |
+
+The socket path, runtime directory, and protocol are fixed in `compose.yaml`
+because both containers must agree on them.
+
+### Dokploy
+
+1. Create a **Compose** service from `glnarayanan/arivu` with compose path
+   `./compose.yaml`. Deploy from a release tag or from `main`.
+2. Set the environment from the table above, and set `ARIVU_VERSION` to the
+   tag you deploy.
+3. Add the domain to service `arivu`, container port `8080`. Dokploy attaches
+   its `dokploy-network` to that service. `compose.yaml` lists the app's
+   networks directly, not through a YAML anchor, because Dokploy rewrites that
+   key. Leave `capture` without a domain: it has `network_mode: none`.
+4. Deploy and wait until both services report healthy. The app's health check
+   runs `arivu healthcheck` (a request to `/api/health`); the helper's health
+   check connects to its socket.
+5. For a new instance, create the first admin:
+
+   ```bash
+   docker compose -p <app-name> exec -T arivu arivu admin bootstrap \
+     --email admin@example.com --password-stdin < admin-password.txt
+   ```
+
+6. Under **Volume Backups**, back up the volume ending in `arivu-data` and let
+   Dokploy stop service `arivu` while it copies, so the SQLite files are
+   consistent. The `capture-socket` volume holds only sockets and never needs a
+   backup.
+
+Run the commands below from the directory that holds the deployed
+`compose.yaml` and its `.env` (Dokploy keeps them under
+`/etc/dokploy/compose/<app-name>/code`), with `-p <app-name>`.
+
+### Plain Docker Compose
+
+```bash
+cp .env.example .env   # or write APP_URL, ADMIN_EMAILS, SECRET_KEY yourself
+docker compose up -d --build
+```
+
+Nothing is published on the host. To reach the app without a proxy on the
+compose network, add a `compose.override.yaml` next to `compose.yaml`:
+
+```yaml
+services:
+  arivu:
+    ports:
+      - "127.0.0.1:8080:8080"
+```
+
+### Volumes and backups
+
+| Volume | Mounted at | Holds | Back up |
+| --- | --- | --- | --- |
+| `arivu-data` | `/data` (app) | `arivu.sqlite3` and its WAL, `arivu.sqlite3.assets/`, `backups/` from `arivu backup` | yes |
+| `capture-socket` | `/run/arivu-capture` (both) | sockets and per-attempt directories; an 8 MiB tmpfs that starts empty | no |
+
+`arivu backup` writes the same verified format as `arivu-installer backup`: a
+SQLite-consistent snapshot, the asset directory, and a size and SHA-256
+manifest. It is safe while the app runs and prints the new directory under
+`/data/backups`:
+
+```bash
+docker compose -p <app-name> exec -T arivu arivu backup
+```
+
+The container stack has no backup timer. Run that command from a scheduler if
+you want daily snapshots in addition to the volume backup, and prune old ones,
+for example
+`docker compose -p <app-name> exec -T arivu find /data/backups -mindepth 1 -maxdepth 1 -mtime +14 -exec rm -rf {} +`.
+
+### Admin commands
+
+Read-only commands and commands that are safe beside the server use `exec`:
+
+```bash
+docker compose -p <app-name> exec -T arivu arivu --version
+docker compose -p <app-name> exec -T arivu arivu quality audit --format json
+docker compose -p <app-name> exec -T arivu arivu reprocess --stale-version --dry-run --user-id USER_ID
+```
+
+`arivu reprocess --apply` requires a distinct, integrity-checked backup whose
+protected data matches the live database. In the container, take it with
+`arivu backup` immediately before applying:
+
+```bash
+docker compose -p <app-name> exec -T arivu sh -c '
+  BACKUP_DIR=$(arivu backup) &&
+  arivu reprocess --stale-version --user-id USER_ID \
+    --backup "$BACKUP_DIR" --batch-size 25 --apply'
+```
+
+`ARIVU_DB` is already `/data/arivu.sqlite3` inside the container, so `--db` is
+not needed.
+
+### Move an installer instance into the stack
+
+1. On the installer host, stop the app so no save lands after the snapshot,
+   take a backup, and package it:
+
+   ```bash
+   sudo systemctl stop arivu
+   BACKUP_DIR=$(sudo arivu-installer backup)
+   sudo tar -C "$(dirname "$BACKUP_DIR")" -czf ~/arivu-backup.tgz "$(basename "$BACKUP_DIR")"
+   sudo grep '^SECRET_KEY=' /etc/arivu/arivu.env
+   ```
+
+   Start it again with `sudo systemctl start arivu` if it should keep serving
+   until the cutover.
+2. Deploy the stack with the same `SECRET_KEY` and wait until it is healthy.
+3. Copy `arivu-backup.tgz` to the container host, unpack it, and give it to the
+   container user. Installer backups are owned by root with mode `0640`, which
+   uid 10001 cannot read:
+
+   ```bash
+   mkdir -p /root/arivu-restore
+   tar -C /root/arivu-restore -xzf arivu-backup.tgz
+   chown -R 10001:10001 /root/arivu-restore/<timestamp>
+   ```
+
+4. Stop the app, restore into the data volume as the app user, and start it:
+
+   ```bash
+   docker compose -p <app-name> stop arivu
+   docker compose -p <app-name> run --rm --no-deps \
+     -v /root/arivu-restore/<timestamp>:/restore:ro arivu restore --backup /restore
+   docker compose -p <app-name> start arivu
+   ```
+
+`arivu restore` verifies the manifest and every stored object before it
+touches `/data`, swaps the database and assets, checks the restored database,
+and puts the previous files back if anything fails. Files it writes belong to
+uid 10001, so no ownership repair is needed. It refuses to run while the server
+has the database open. The same command restores a backup made by
+`arivu backup`.
+
+### What has been tested
+
+Tested locally with Docker 29 and Compose 5 on a Linux host without AppArmor:
+both images build; the stack starts healthy with plain `docker compose`;
+`capture` has only a loopback interface, no capabilities, and no DNS or
+outbound connection; a save through the app produced a rendered reader copy,
+a JPEG screenshot, and a self-contained HTML archive through the per-attempt
+proxy socket; an `arivu-installer backup` archive restored into a fresh stack
+with the documented commands, and restore refused while the app was running;
+`arivu reprocess --apply` accepted an `arivu backup`; and the app stayed
+reachable with an external `dokploy-network` attached. That test host
+re-signed outbound HTTPS, which Chromium rightly rejected, so the end-to-end
+browser captures used plain-HTTP pages.
+
+Not tested: a real Dokploy deployment, Traefik and Cloudflare in front,
+Dokploy's volume backups, an Ubuntu 26.04 host with AppArmor, ARM64 images,
+and HTTPS captures on a host without TLS interception.
+
+### Single container
+
+The app image alone runs without complete capture:
 
 ```bash
 docker build -t arivu:local .
 docker run --rm \
   -p 127.0.0.1:8080:8080 \
   -v arivu-data:/data \
-  -e ARIVU_ADDR=:8080 \
-  -e ARIVU_DB=/data/arivu.sqlite3 \
   -e APP_URL=https://arivu.example.com \
-  -e COOKIE_SECURE=true \
-  -e SIGNUPS_ENABLED=false \
   -e ADMIN_EMAILS=admin@example.com \
   -e SECRET_KEY=replace-with-at-least-32-random-bytes \
   arivu:local
-```
-
-Compose sample:
-
-```bash
-cd deploy
-docker compose up -d --build
 ```
 
 ## Manual systemd

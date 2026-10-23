@@ -62,10 +62,10 @@ carry browser and DOM dependencies. It is not linked into the Go binary and
 nothing from it is imported by the embedded frontend. Its approved direct
 dependencies are pinned in `capture/package.json` and its lockfile:
 
-- Playwright `1.62.1` with its pinned Chromium runtime.
+- Playwright `1.64.1` with its pinned Chromium runtime.
 - Mozilla Readability `0.6.0`.
-- JSDOM `30.0.1`.
-- Monolith `2.10.1` as a separately pinned executable.
+- JSDOM `30.1.3`.
+- Monolith `2.11.6` as a separately pinned executable.
 
 They are justified because a real browser, a mature article projection, an
 HTML DOM, and a self-contained archive engine are materially harder and less
@@ -78,6 +78,9 @@ is the only supported production lifecycle: it verifies, installs, upgrades,
 disables, and rolls back that archive without exposing npm or Docker to users.
 Both architectures build on the declared Ubuntu 22.04 compatibility baseline,
 matching the complete runtime's Ubuntu 22.04+ and Debian 12+ support policy.
+For container hosts, `capture/Dockerfile` builds the same pins (Node, the
+lockfile's Playwright Chromium, and Monolith from crates.io with `--locked`)
+into an image that the root `compose.yaml` runs without network access.
 
 ## Adding A Dependency
 
