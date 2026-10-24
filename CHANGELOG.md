@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [Unreleased]
+## [1.8.4] - 2026-10-24
 
 - Embeddings now work with providers other than Gemini. Before, every
   embedding call failed with `provider_not_configured` unless text generation
