@@ -23,6 +23,8 @@ When working in this repository, read the OpenWiki quickstart first, then follow
 - Run `gofmt` on changed Go files.
 - Run `GOCACHE=/private/tmp/arivu-build-cache go test ./...` before handoff when possible.
 - The shipped frontend is embedded under `internal/app/web` and should stay dependency-free.
+- Make atomic commits: one logical change per commit, each building and passing tests on its own.
+- Open pull requests ready for review, never as drafts.
 
 <!-- OPENWIKI:START -->
 

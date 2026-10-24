@@ -533,3 +533,32 @@ func completeDirectResult(text string, score int) safefetch.Result {
 		Body:    []byte("<html></html>"), ContentType: "text/html",
 	}
 }
+
+func TestCaptureAttemptsReportsFieldsWhenRetryOfIsNull(t *testing.T) {
+	service, db := capturePipelineService(t)
+	if _, err := db.Exec(`UPDATE capture_attempts SET status='partial',engine='direct_http+browser',engine_version='arivu-capture/0.2.0',error_code='browser_sandbox_unavailable',final_url='https://example.com/article',started_at='2026-10-24T00:00:00Z' WHERE id='attempt-1'`); err != nil {
+		t.Fatal(err)
+	}
+	var retry sql.NullString
+	if err := db.QueryRow(`SELECT retry_of_id FROM capture_attempts WHERE id='attempt-1'`).Scan(&retry); err != nil || retry.Valid {
+		t.Fatalf("fixture must have a NULL retry_of_id: valid=%v err=%v", retry.Valid, err)
+	}
+	attempts := service.captureAttempts(t.Context(), "user-1", "bookmark-1")
+	if len(attempts) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(attempts))
+	}
+	got := attempts[0]
+	want := map[string]any{
+		"id": "attempt-1", "retry_of_id": "", "status": "partial", "requested_url": "https://example.com/article",
+		"final_url": "https://example.com/article", "engine": "direct_http+browser", "engine_version": "arivu-capture/0.2.0",
+		"error_code": "browser_sandbox_unavailable", "started_at": "2026-10-24T00:00:00Z", "finished_at": "",
+	}
+	for key, value := range want {
+		if got[key] != value {
+			t.Errorf("%s = %#v, want %#v", key, got[key], value)
+		}
+	}
+	if got["queued_at"] == "" {
+		t.Error("queued_at is empty")
+	}
+}

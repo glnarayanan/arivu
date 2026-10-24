@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [1.8.3] - Unreleased
 
+- Fixed blank capture attempt history in `GET /api/bookmarks/{id}`. A NULL
+  `retry_of_id` (every attempt that is not a retry) broke the row scan, and the
+  ignored error left every field except `id` empty, hiding each attempt's
+  status, engine, and error code. Rows that still fail to scan are now logged
+  and skipped instead of returned blank.
 - Chromium's own sandbox is now on in the Compose capture container, without
   loosening the container: no capability is added, `no-new-privileges`, no
   network, the read-only root, and the non-root user all stay. A renderer
