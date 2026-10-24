@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.8.3] - Unreleased
+## [1.8.3] - 2026-10-24
 
 - Fixed blank capture attempt history in `GET /api/bookmarks/{id}`. A NULL
   `retry_of_id` (every attempt that is not a retry) broke the row scan, and the
