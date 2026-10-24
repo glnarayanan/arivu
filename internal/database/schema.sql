@@ -85,6 +85,7 @@ CREATE INDEX IF NOT EXISTS idx_bookmarks_user_created ON bookmarks(user_id, crea
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_domain ON bookmarks(user_id, domain);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_user_source ON bookmarks(user_id, source);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_bookmarks_id_user ON bookmarks(id, user_id);
+CREATE INDEX IF NOT EXISTS idx_bookmarks_user_embedding_space ON bookmarks(user_id, embedding_model);
 
 CREATE TABLE IF NOT EXISTS bookmark_evidence (
   id TEXT PRIMARY KEY,
