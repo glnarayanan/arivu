@@ -110,7 +110,7 @@ func TestGeminiEmbeddingUsesCurrentModel(t *testing.T) {
 	})}
 
 	gemini := GeminiClient{APIKey: "secret", BaseURL: "https://gemini.test", HTTP: client}
-	values, err := gemini.GenerateEmbedding(context.Background(), "Useable article text.")
+	values, err := gemini.SameProviderEmbeddingClient().GenerateEmbedding(context.Background(), "Useable article text.")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +121,7 @@ func TestGeminiEmbeddingUsesCurrentModel(t *testing.T) {
 	if remaining <= 0 || remaining > EmbeddingRequestTimeout {
 		t.Fatalf("embedding deadline remaining = %s", remaining)
 	}
-	if gotBody.Content.Parts[0].Text != "Useable article text." || gotBody.OutputDimensionality != embeddingDimensions {
+	if gotBody.Content.Parts[0].Text != "Useable article text." || gotBody.OutputDimensionality != GeminiEmbeddingDimensions {
 		t.Fatalf("request body = %#v", gotBody)
 	}
 	if len(values) != 3 {

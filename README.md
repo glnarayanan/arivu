@@ -46,6 +46,12 @@ See [PRODUCT.md](PRODUCT.md) and the
   and Graph continue without one. AI requests disclose the provider and source
   text; self-hosting does not mean local AI processing. Check cited quotes:
   an exact quote does not prove an AI claim.
+- Text generation and embeddings are configured separately in Admin >
+  Settings. Embeddings can reuse the text provider when it offers them, or use
+  Gemini, OpenAI, OpenRouter, Mistral, Fireworks AI, Perplexity, Ollama, LM
+  Studio, or any OpenAI-compatible endpoint; changing the embedding model
+  re-embeds saved items in the background. See "Embedding model" in
+  `openwiki/operations/deployment.md`.
 - Outbound fetching is SSRF-shielded, archived HTML is sanitized on the backend,
   and provider integrations use direct HTTP clients for model providers, Resend,
   and X.

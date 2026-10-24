@@ -231,9 +231,72 @@ Built-in text-generation presets currently include OpenAI, OpenRouter, xAI,
 Gemini, Anthropic, DeepSeek, Mistral, Groq, Together AI, Fireworks AI,
 Perplexity, Cerebras, Z.ai, Hugging Face, LM Studio, Ollama/local, MiniMax, and
 Custom. OpenAI-compatible providers use `/chat/completions`; Anthropic uses the
-Messages API; Gemini uses the native Gemini generation endpoint. Provider-specific
-embeddings and image OCR are intentionally deferred except for the existing
-Gemini-backed paths. OpenCode-style client or proxy setups should use Custom.
+Messages API; Gemini uses the native Gemini generation endpoint. Image OCR is
+intentionally deferred except for the existing Gemini-backed path. OpenCode-style
+client or proxy setups should use Custom.
+
+### Embedding model
+
+Embeddings are configured separately from text generation, under **Embedding
+model** in Admin > Settings (and Settings > Provider settings). They power
+semantic ranking in Graph search, related items, Graph similarity links, and
+similar-content duplicate detection. Without them those features fall back to
+keywords and extracted topics, and Settings says so.
+
+| Setting | Environment | Meaning |
+| --- | --- | --- |
+| `embedding_provider` | `EMBEDDING_PROVIDER` | `same` (default), a preset id, or `none` |
+| `embedding_api_key` | `EMBEDDING_API_KEY` | Encrypted with `SECRET_KEY`; only shown masked |
+| `embedding_model` | `EMBEDDING_MODEL` | Empty uses the provider's default embedding model |
+| `embedding_base_url` | `EMBEDDING_BASE_URL` | Empty uses the preset; HTTPS unless localhost |
+| `embedding_dimensions` | `EMBEDDING_DIMENSIONS` | Optional; only for APIs that let the caller choose |
+
+`same` reuses the text generation provider, key, and Base URL when that
+provider offers embeddings, so the common case needs no extra key. If the text
+provider is text-only (for example DeepSeek), `same` leaves embeddings
+unconfigured and Settings explains why; pick an embedding provider instead. A
+separately chosen provider never borrows the text generation key, and switching
+embedding providers clears the previous provider's key, model, Base URL, and
+dimensions stored in SQLite. `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, and
+`EMBEDDING_DIMENSIONS` from the environment remain fallbacks for whichever
+provider is selected, so keep them empty when switching providers in the UI.
+
+Embedding support per preset, checked against each provider's public API docs
+in October 2026:
+
+| Preset | Embeddings | Default model | Dimensions |
+| --- | --- | --- | --- |
+| Gemini | Native `embedContent` | `gemini-embedding-2` | 768 by default (`output_dimensionality`, 128-3072) |
+| OpenAI | `POST /embeddings` | `text-embedding-3-small` | `dimensions` |
+| OpenRouter | `POST /embeddings` | `openai/text-embedding-3-small` | `dimensions` |
+| Mistral | `POST /embeddings` | `mistral-embed` (fixed 1024) | `output_dimension` (codestral-embed) |
+| Fireworks AI | `POST /embeddings` | `nomic-ai/nomic-embed-text-v1.5` | `dimensions` |
+| Perplexity | `POST /v1/embeddings`, base64 int8 vectors | `pplx-embed-v1-0.6b` | `dimensions` |
+| Ollama/local | `POST /v1/embeddings` | `embeddinggemma` | `dimensions` |
+| LM Studio | `POST /v1/embeddings` | none; enter the loaded model id | not offered |
+| Custom | Any OpenAI-compatible `POST {base}/embeddings` | none | `dimensions`, sent only when set |
+| xAI, Anthropic, DeepSeek, Groq, Cerebras, Z.ai, MiniMax | Text only | | |
+| Together AI | Text only: no serverless embedding models; use Custom with a dedicated endpoint | | |
+| Hugging Face | Text only: the router's OpenAI-compatible API is chat-only; use Custom with an OpenAI-compatible embeddings endpoint | | |
+
+Each stored vector records its space, `provider/model@dimensions`, in
+`bookmarks.embedding_model`. Vectors from different spaces are never compared.
+When the embedding provider, model, or dimensions change, older vectors are
+excluded from similarity at once and rebuilt by the `embedding.reembed`
+background job: batches of 16 at low priority on the single job worker, resumed
+after restarts, scheduled at startup, hourly, after settings changes, and from
+**Re-embed now**. An item the provider rejects (400/413/422) is skipped and
+retried by a later pass; a 404, 405, or 409, or three rejections without a
+single success, pauses the pass as a failed job that names the likely cause (a
+wrong model id or Base URL). Admin > API Usage and the Embedding model section show
+embedded, stale, and missing counts. A missing embedding model is reported as
+`embedding_not_configured`, never as the text provider's
+`provider_not_configured`.
+
+Upgrading from 1.8.3 or earlier labels existing vectors as
+`gemini/gemini-embedding-2@768`. Gemini deployments keep them. With any other
+effective embedding model, the first start re-embeds existing items (and embeds
+items that never got a vector) in the background, using that provider's quota.
 
 ## Backup, Restore, And Upgrade Safety
 

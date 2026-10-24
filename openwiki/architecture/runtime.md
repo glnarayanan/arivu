@@ -150,6 +150,20 @@ model, key, and Base URL together. LM Studio, Ollama/local, and Custom may run
 without an API key; other provider changes require a replacement key so a
 credential is never silently reused across providers.
 
+Embeddings have their own settings: `embedding_provider` (`same`, a preset id,
+or `none`), encrypted `embedding_api_key`, `embedding_model`,
+`embedding_base_url`, and `embedding_dimensions`, with `EMBEDDING_*`
+environment fallbacks. `providers.ResolveEmbedding` turns them, plus the text
+generation provider for `same`, into either a usable configuration or a reason
+code (`text_provider_has_no_embeddings`, `missing_api_key`, and so on) that the
+admin API and Settings explain. `providers.EmbeddingClient` speaks Gemini's
+native `embedContent` and the OpenAI-compatible `POST {base}/embeddings`, with
+each preset's dimension parameter, and records usage as the `embedding`
+operation. Each vector is stored with its space, `provider/model@dimensions`, in
+`bookmarks.embedding_model`; every similarity query reads only vectors in the
+current space. The `embedding.reembed` job rebuilds missing and stale vectors in
+bounded batches (see `openwiki/operations/deployment.md`, "Embedding model").
+
 ---
 
 ## Durable Background Jobs Engine

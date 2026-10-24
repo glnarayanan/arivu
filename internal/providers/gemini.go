@@ -17,7 +17,7 @@ const (
 	defaultGeneratePromptLimit = 12000
 	summaryGeneratePromptLimit = 50000
 	GeminiEmbeddingModel       = "gemini-embedding-2"
-	embeddingDimensions        = 768
+	GeminiEmbeddingDimensions  = 768
 	ProviderRequestTimeout     = 60 * time.Second
 	EmbeddingRequestTimeout    = 30 * time.Second
 )
@@ -124,61 +124,11 @@ func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, dat
 	return decoded.Candidates[0].Content.Parts[0].Text, nil
 }
 
-func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string) (values []float64, err error) {
-	defer func() { c.record("embedding", err) }()
-	ctx, cancel := context.WithTimeout(ctx, EmbeddingRequestTimeout)
-	defer cancel()
-	if c.APIKey == "" || !c.usesGeminiNative() {
-		return nil, ErrNotConfigured
-	}
-	if strings.TrimSpace(text) == "" {
-		return nil, fmt.Errorf("embedding text is required")
-	}
-	if len(text) > 12000 {
-		text = text[:12000]
-	}
-	body := map[string]any{
-		"content": map[string]any{
-			"parts": []map[string]string{{"text": text}},
-		},
-		"output_dimensionality": embeddingDimensions,
-	}
-	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(body); err != nil {
-		return nil, err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.embeddingEndpoint(), &buf)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-goog-api-key", c.APIKey)
-	resp, err := c.httpClient().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("gemini embedding status %d", resp.StatusCode)
-	}
-	var decoded struct {
-		Embedding struct {
-			Values []float64 `json:"values"`
-		} `json:"embedding"`
-		Embeddings []struct {
-			Values []float64 `json:"values"`
-		} `json:"embeddings"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
-		return nil, err
-	}
-	if len(decoded.Embedding.Values) == 0 {
-		if len(decoded.Embeddings) == 0 || len(decoded.Embeddings[0].Values) == 0 {
-			return nil, fmt.Errorf("gemini returned no embedding")
-		}
-		return decoded.Embeddings[0].Values, nil
-	}
-	return decoded.Embedding.Values, nil
+// SameProviderEmbeddingClient resolves embeddings against this client's
+// text-generation provider, key, and base URL.
+func (c GeminiClient) SameProviderEmbeddingClient() EmbeddingClient {
+	resolved := ResolveEmbedding(TextProviderSettings{Provider: c.Provider, APIKey: c.APIKey, BaseURL: c.BaseURL}, EmbeddingSelection{Provider: EmbeddingProviderSame})
+	return EmbeddingClient{Config: resolved, HTTP: c.HTTP, Recorder: c.Recorder}
 }
 
 func (c GeminiClient) generate(ctx context.Context, operation string, prompt string, promptLimit int) (result string, err error) {
@@ -427,14 +377,6 @@ func (c GeminiClient) endpoint() string {
 		model = config.DefaultGeminiModel
 	}
 	return strings.TrimRight(base, "/") + "/v1beta/models/" + model + ":generateContent?key=" + c.APIKey
-}
-
-func (c GeminiClient) embeddingEndpoint() string {
-	base := c.baseURL()
-	if base == "" {
-		base = config.DefaultGeminiBaseURL
-	}
-	return strings.TrimRight(base, "/") + "/v1beta/models/" + GeminiEmbeddingModel + ":embedContent?key=" + c.APIKey
 }
 
 func parseSummaryFields(raw string) (map[string]any, error) {

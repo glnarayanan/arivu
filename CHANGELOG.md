@@ -2,6 +2,53 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+- Embeddings now work with providers other than Gemini. Before, every
+  embedding call failed with `provider_not_configured` unless text generation
+  used Gemini, so semantic search ranking, related items, Graph similarity
+  links, and similar-content duplicates silently stopped working with any
+  other provider.
+- Admin > Settings (and Settings > Provider settings) now has two labelled
+  groups, **Text generation model** and **Embedding model**. The embedding
+  provider can be "Same as text generation" (the default), any
+  embedding-capable preset, or Off; it has its own model, API key (encrypted
+  with `SECRET_KEY` and only shown masked), Base URL, and optional dimensions.
+  `EMBEDDING_PROVIDER`, `EMBEDDING_API_KEY`, `EMBEDDING_MODEL`,
+  `EMBEDDING_BASE_URL`, and `EMBEDDING_DIMENSIONS` are the environment
+  fallbacks. When embeddings are not configured, the section says why and
+  lists the affected features.
+- Embedding-capable presets: Gemini (native API), OpenAI, OpenRouter, Mistral,
+  Fireworks AI, Perplexity (base64 int8 vectors), Ollama/local, LM Studio, and
+  Custom (any OpenAI-compatible `POST /embeddings`). xAI, Anthropic, DeepSeek,
+  Groq, Cerebras, Z.ai, MiniMax, Together AI (no serverless embedding models),
+  and the Hugging Face router (chat only) are shown as text-only, based on
+  each provider's public API docs as of October 2026.
+- Each stored vector records its space, `provider/model@dimensions`, and
+  vectors from different spaces are never compared. Changing the embedding
+  provider, model, or dimensions excludes older vectors at once and rebuilds
+  them with a new `embedding.reembed` background job: batches of 16 at low
+  priority on the existing worker, resumed after restarts, and scheduled at
+  startup, hourly, after settings changes, or with **Re-embed now**. A wrong
+  embedding model id or Base URL pauses the pass as a visible failed job
+  instead of sweeping the library. Graph
+  search falls back to keyword ranking, the Graph keeps entities and concepts,
+  and related items explain a missing embedding model.
+- A missing embedding model is reported as `embedding_not_configured` ("The
+  embedding model is not configured...") on Admin > API Usage and in the log,
+  instead of the text provider's `provider_not_configured`. API Usage also
+  shows the embedding model with embedded, stale, and missing counts, and
+  `GET /api/admin/embeddings` returns the same status.
+- Fixed the LM Studio and Hugging Face presets being saved as Custom.
+- **Upgrade note:** existing vectors are labelled
+  `gemini/gemini-embedding-2@768` on first start. Gemini deployments keep them
+  unchanged. On any other text provider that offers embeddings (for example
+  OpenRouter), "Same as text generation" starts using that provider's default
+  embedding model and key, and the first start embeds existing items in the
+  background, which uses that provider's quota. Choose a different embedding
+  model or Off in Admin > Settings before or after upgrading if that is not
+  wanted.
+
 ## [1.8.3] - 2026-10-24
 
 - Fixed blank capture attempt history in `GET /api/bookmarks/{id}`. A NULL

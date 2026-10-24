@@ -144,6 +144,9 @@ func Migrate(ctx context.Context, db *sql.DB) error {
 	if err := ensureQualityOperations(ctx, db); err != nil {
 		return err
 	}
+	if err := ensureEmbeddingSpaces(ctx, db); err != nil {
+		return err
+	}
 	if err := execSchemaStatements(ctx, db, indexes); err != nil {
 		return err
 	}
@@ -557,6 +560,31 @@ func ensureBookmarkProvenance(ctx context.Context, db *sql.DB) error {
 	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return fmt.Errorf("bookmark provenance migration: %w", err)
+		}
+	}
+	return nil
+}
+
+// LegacyEmbeddingSpace is the vector space every embedding written before
+// embedding settings existed belongs to: Gemini gemini-embedding-2 truncated
+// to 768 dimensions. It matches providers.EmbeddingSpace for that model.
+const LegacyEmbeddingSpace = "gemini/gemini-embedding-2@768"
+
+// ensureEmbeddingSpaces records the vector space of embeddings stored before
+// bookmarks.embedding_model carried requested dimensions. Earlier releases
+// wrote "gemini/gemini-embedding-2" (or nothing) for 768-dimension Gemini
+// vectors. Rows with any other model or size keep their value and are treated
+// as stale, then re-embedded in the background.
+func ensureEmbeddingSpaces(ctx context.Context, db *sql.DB) error {
+	statements := []string{
+		`UPDATE bookmarks SET embedding_dim=json_array_length(CAST(embedding AS TEXT))
+			WHERE embedding IS NOT NULL AND embedding_dim=0 AND json_valid(CAST(embedding AS TEXT)) AND json_type(CAST(embedding AS TEXT))='array'`,
+		`UPDATE bookmarks SET embedding_model='` + LegacyEmbeddingSpace + `'
+			WHERE embedding IS NOT NULL AND embedding_dim=768 AND (embedding_model IS NULL OR embedding_model IN ('','gemini/gemini-embedding-2'))`,
+	}
+	for _, statement := range statements {
+		if _, err := db.ExecContext(ctx, statement); err != nil {
+			return fmt.Errorf("embedding space migration: %w", err)
 		}
 	}
 	return nil

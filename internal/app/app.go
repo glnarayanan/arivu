@@ -98,6 +98,7 @@ func New(cfg config.Config) (*App, error) {
 	a.bookmarks.SetArtifactQuota(cfg.ArtifactQuotaBytes)
 	a.bookmarks.SetBrowserCapture(cfg.BrowserCapture)
 	a.bookmarks.SetAIProvider(a.aiClient)
+	a.bookmarks.SetEmbeddingProvider(a.embeddingClient)
 	ctx, cancel := context.WithCancel(context.Background())
 	a.cancel = cancel
 	a.startWorkers(ctx)
@@ -273,6 +274,8 @@ func (a *App) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/admin/settings", a.withAdmin(a.adminUpdateSettings))
 	mux.HandleFunc("DELETE /api/admin/settings/{key}", a.withAdmin(a.adminDeleteSetting))
 	mux.HandleFunc("GET /api/admin/api-usage", a.withAdmin(a.adminAPIUsage))
+	mux.HandleFunc("GET /api/admin/embeddings", a.withAdmin(a.adminEmbeddings))
+	mux.HandleFunc("POST /api/admin/embeddings/reembed", a.withAdmin(a.adminReembed))
 	mux.HandleFunc("POST /api/admin/jobs/retry", a.withAdmin(a.adminRetryJobs))
 	mux.HandleFunc("POST /api/admin/jobs/{id}/retry", a.withAdmin(a.adminRetryJob))
 	mux.HandleFunc("GET /api/admin/activity", a.withAdmin(a.adminActivity))

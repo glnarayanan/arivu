@@ -1959,7 +1959,7 @@ func TestBrowserFacingFirstRunContracts(t *testing.T) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
 	}
-	for _, expected := range []string{`prefix: "/today"`, `async function todayPage(scope)`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `Model Provider`, `ai_provider`, `!user.is_admin`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage(scope, id)`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `review_reasons`, `function bindNoteBookmarkLinkForms(scope)`, `function bindNoteLinkForms(scope)`, `function bindLinkDeleteControls(scope)`} {
+	for _, expected := range []string{`prefix: "/today"`, `async function todayPage(scope)`, `navigate("/today", true)`, `async function openCommandPalette()`, `data-command-save`, `data-command-note`, `data-command-search`, `data-command-current`, `(event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k"`, `arivu.offline.bookmarks`, `arivu.offline.snapshots`, `function flushOfflineBookmarks`, `function writeOfflineSnapshot`, `Showing a recent offline copy`, `Saved offline`, `function bindVoiceCapture`, `window.SpeechRecognition || window.webkitSpeechRecognition`, `data-voice-target`, `function importJobProgress`, `aria-label="Import progress"`, `id="media-import-form"`, `function bindMediaImportPanel`, `/media/import`, `requestOptions.body instanceof FormData`, `function readerQuoteSelector`, `data-annotation-jump`, `function jumpToReaderQuote`, `/links`, `/link-targets?q=`, `function feedbackControls`, `function bindFeedbackControls`, `/feedback`, `why_shown`, `id="filter-source"`, `id="filter-date-from"`, `id="filter-date-to"`, `"source", "date_from", "date_to"`, `id="profile-form"`, `id="api-keys-form"`, `Text generation provider`, `Embedding provider`, `ai_provider`, `!user.is_admin`, `id="x-connect"`, `id="x-sync"`, `id="x-disconnect"`, `id="admin-tabs"`, `/admin/api-usage`, `/admin/activity`, `/admin/collections-stats`, `data-admin-user-action`, `prefix: "/notes/"`, `/notes/${encodeURIComponent(item.id)}`, `async function noteDetailPage(scope, id)`, `/link-targets?type=note`, `/link-targets?type=bookmark`, `data-note-bookmark-link-form`, `review_reasons`, `function bindNoteBookmarkLinkForms(scope)`, `function bindNoteLinkForms(scope)`, `function bindLinkDeleteControls(scope)`} {
 		if !strings.Contains(source, expected) {
 			t.Fatalf("embedded frontend missing %s", expected)
 		}
@@ -2877,13 +2877,16 @@ func TestResurfacingScoringAndMutations(t *testing.T) {
 
 func TestDuplicateDetectionAndMergePolicy(t *testing.T) {
 	a, err := New(config.Config{
-		DBPath:         filepath.Join(t.TempDir(), "arivu.sqlite3"),
-		SecretKey:      "test-secret",
-		SignupEnabled:  true,
-		SessionTTL:     time.Hour,
-		RefreshTTL:     time.Hour,
-		ExtensionTTL:   time.Hour,
-		MaxRequestBody: 1 << 20,
+		DBPath:            filepath.Join(t.TempDir(), "arivu.sqlite3"),
+		SecretKey:         "test-secret",
+		SignupEnabled:     true,
+		SessionTTL:        time.Hour,
+		RefreshTTL:        time.Hour,
+		ExtensionTTL:      time.Hour,
+		MaxRequestBody:    1 << 20,
+		EmbeddingProvider: "custom",
+		EmbeddingModel:    "test-embed",
+		EmbeddingBaseURL:  "http://127.0.0.1:9/v1",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -2895,10 +2898,10 @@ func TestDuplicateDetectionAndMergePolicy(t *testing.T) {
 	now := time.Now().UTC()
 	insertBookmarkForTest(t, a, userID, "keep", "Keep", now.AddDate(0, 0, -10), now.AddDate(0, 0, -7), 1, 2)
 	insertBookmarkForTest(t, a, userID, "dupe", "Duplicate", now.AddDate(0, 0, -9), now.AddDate(0, 0, -1), 4, 8)
-	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET url=?, description=?, embedding=?, embedding_dim=?, embedding_model=? WHERE id=?`, "https://example.com/article?utm_source=news", "Better description", []byte(`[1,0]`), 2, "test", "dupe")
-	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET url=?, embedding=?, embedding_dim=?, embedding_model=? WHERE id=?`, "https://example.com/article#section", []byte(`[0.99,0.01]`), 2, "test", "keep")
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET url=?, description=?, embedding=?, embedding_dim=?, embedding_model=? WHERE id=?`, "https://example.com/article?utm_source=news", "Better description", []byte(`[1,0]`), 2, "custom/test-embed", "dupe")
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET url=?, embedding=?, embedding_dim=?, embedding_model=? WHERE id=?`, "https://example.com/article#section", []byte(`[0.99,0.01]`), 2, "custom/test-embed", "keep")
 	insertBookmarkForTest(t, a, userID, "similar", "Similar", now.AddDate(0, 0, -8), now.AddDate(0, 0, -4), 0, 2)
-	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET url=?, embedding=?, embedding_dim=?, embedding_model=? WHERE id=?`, "https://other.example.com/item", []byte(`[0.98,0.02]`), 2, "test", "similar")
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET url=?, embedding=?, embedding_dim=?, embedding_model=? WHERE id=?`, "https://other.example.com/item", []byte(`[0.98,0.02]`), 2, "custom/test-embed", "similar")
 	_, _ = a.db.ExecContext(context.Background(), `INSERT INTO collections(id,user_id,name,created_at,updated_at) VALUES(?,?,?,?,?)`, "collection-1", userID, "Research", now.Format(time.RFC3339), now.Format(time.RFC3339))
 	_, _ = a.db.ExecContext(context.Background(), `INSERT INTO collection_bookmarks(collection_id,bookmark_id,user_id,added_at) VALUES(?,?,?,?)`, "collection-1", "dupe", userID, now.Format(time.RFC3339))
 	_, _ = a.db.ExecContext(context.Background(), `INSERT INTO bookmark_entities(bookmark_id,user_id,entity) VALUES(?,?,?)`, "dupe", userID, "Arivu")
@@ -3010,9 +3013,9 @@ func TestSemanticKnowledgeGraphParity(t *testing.T) {
 	insertBookmarkForTest(t, a, userID, "source", "SQLite Vector Search", now.AddDate(0, 0, -4), now.AddDate(0, 0, -3), 1, 4)
 	insertBookmarkForTest(t, a, userID, "close", "Embedding Index Design", now.AddDate(0, 0, -3), now.AddDate(0, 0, -2), 1, 5)
 	insertBookmarkForTest(t, a, userID, "far", "Cooking Notes", now.AddDate(0, 0, -2), now.AddDate(0, 0, -1), 0, 2)
-	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET description=?,text_content=?,embedding=?,embedding_dim=?,embedding_model=? WHERE id=?`, "Vector database ranking", "SQLite embeddings and vector search", []byte(`[1,0]`), 2, "test", "source")
-	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET description=?,text_content=?,embedding=?,embedding_dim=?,embedding_model=? WHERE id=?`, "ANN index ranking", "Embedding search and graph retrieval", []byte(`[0.96,0.04]`), 2, "test", "close")
-	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET description=?,text_content=?,embedding=?,embedding_dim=?,embedding_model=? WHERE id=?`, "Kitchen reference", "Recipe timing and ingredients", []byte(`[0,1]`), 2, "test", "far")
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET description=?,text_content=?,embedding=?,embedding_dim=?,embedding_model=? WHERE id=?`, "Vector database ranking", "SQLite embeddings and vector search", []byte(`[1,0]`), 2, "gemini/gemini-embedding-2@768", "source")
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET description=?,text_content=?,embedding=?,embedding_dim=?,embedding_model=? WHERE id=?`, "ANN index ranking", "Embedding search and graph retrieval", []byte(`[0.96,0.04]`), 2, "gemini/gemini-embedding-2@768", "close")
+	_, _ = a.db.ExecContext(context.Background(), `UPDATE bookmarks SET description=?,text_content=?,embedding=?,embedding_dim=?,embedding_model=? WHERE id=?`, "Kitchen reference", "Recipe timing and ingredients", []byte(`[0,1]`), 2, "gemini/gemini-embedding-2@768", "far")
 	for _, row := range []struct {
 		BookmarkID string
 		Entity     string
