@@ -110,7 +110,7 @@ func TestGeminiEmbeddingUsesCurrentModel(t *testing.T) {
 	})}
 
 	gemini := GeminiClient{APIKey: "secret", BaseURL: "https://gemini.test", HTTP: client}
-	values, err := gemini.GenerateEmbedding(context.Background(), "Useable article text.")
+	values, err := gemini.SameProviderEmbeddingClient().GenerateEmbedding(context.Background(), "Useable article text.")
 	if err != nil {
 		t.Fatal(err)
 	}

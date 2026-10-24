@@ -49,6 +49,15 @@ func (q *Queue) EnqueueAt(ctx context.Context, userID, jobType, payload string, 
 	return id, err
 }
 
+// EnqueuePriority queues a job that runs after lower-numbered priorities
+// (the default is 100), for background maintenance work.
+func (q *Queue) EnqueuePriority(ctx context.Context, userID, jobType, payload string, priority int) (string, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	id := ids.New()
+	_, err := q.db.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,priority,payload_json,run_after,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)`, id, nullable(userID), jobType, "queued", priority, payload, now, now, now)
+	return id, err
+}
+
 func (q *Queue) Lease(ctx context.Context, leaseFor time.Duration) (Job, bool, error) {
 	now := time.Now().UTC()
 	tx, err := q.db.BeginTx(ctx, nil)

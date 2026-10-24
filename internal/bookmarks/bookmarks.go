@@ -33,6 +33,7 @@ type Service struct {
 	fetchPage     func(context.Context, string) (safefetch.Result, error)
 	fetchMedia    func(context.Context, string, int64) (safefetch.MediaResult, error)
 	ai            func(context.Context) providers.GeminiClient
+	embed         func(context.Context) providers.EmbeddingClient
 	assets        *assets.Store
 	browser       config.BrowserCaptureConfig
 	artifactQuota int64
@@ -532,8 +533,13 @@ func (s *Service) Related(w http.ResponseWriter, r *http.Request, user auth.User
 		writeError(w, http.StatusNotFound, "Bookmark not found")
 		return
 	}
+	status := s.semanticStatus(r.Context(), user.ID, s.embedder(r.Context()))
 	if len(source.Embedding) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"related": []any{}, "message": "Semantic analysis not yet available for this bookmark"})
+		message := "Semantic analysis not yet available for this bookmark"
+		if status == SemanticNotConfigured {
+			message = semanticStatusMessage(status)
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"related": []any{}, "message": message, "semantic_status": status})
 		return
 	}
 	bookmarks, err := s.graphBookmarks(r.Context(), user.ID, 500, true)
@@ -562,7 +568,7 @@ func (s *Service) Related(w http.ResponseWriter, r *http.Request, user auth.User
 	if len(related) > limit {
 		related = related[:limit]
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"related": related})
+	writeJSON(w, http.StatusOK, map[string]any{"related": related, "semantic_status": status})
 }
 
 func (s *Service) Collections(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -917,11 +923,21 @@ func (s *Service) MemoryJogger(w http.ResponseWriter, r *http.Request, user auth
 func (s *Service) KnowledgeGraph(w http.ResponseWriter, r *http.Request, user auth.User) {
 	limit := queryInt(r, "limit", 50, 1, 500)
 	bookmarks, err := s.graphBookmarks(r.Context(), user.ID, limit, true)
+	if err == nil && len(bookmarks) == 0 {
+		// Without current vectors the graph still shows entities and
+		// concepts; similarity links return once items are embedded.
+		bookmarks, err = s.graphBookmarksFor(r.Context(), user.ID, limit, graphSemanticBookmarks)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load knowledge graph")
 		return
 	}
 	payload := s.graphPayload(bookmarks)
+	status := s.semanticStatus(r.Context(), user.ID, s.embedder(r.Context()))
+	payload["semantic_status"] = status
+	if message := semanticStatusMessage(status); message != "" {
+		payload["semantic_message"] = message
+	}
 	writeJSON(w, http.StatusOK, payload)
 }
 
@@ -939,18 +955,30 @@ func (s *Service) GraphSearch(w http.ResponseWriter, r *http.Request, user auth.
 		return
 	}
 	limit := queryInt(r, "limit", 10, 1, 50)
+	client := s.embedder(r.Context())
+	status := s.semanticStatus(r.Context(), user.ID, client)
+	mode := "semantic"
 	bookmarks, err := s.graphBookmarks(r.Context(), user.ID, 500, true)
+	if err == nil && len(bookmarks) == 0 {
+		// No vectors in the current space (embeddings unconfigured or being
+		// rebuilt): rank the same eligible bookmarks by keywords and topics.
+		mode = "keyword"
+		bookmarks, err = s.graphBookmarksFor(r.Context(), user.ID, 500, graphSemanticBookmarks)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not search knowledge graph")
 		return
 	}
+	semanticMessage := semanticStatusMessage(status)
 	if len(bookmarks) == 0 {
-		writeJSON(w, http.StatusOK, map[string]any{"results": []any{}, "message": "No bookmarks with semantic data available"})
+		writeJSON(w, http.StatusOK, map[string]any{"results": []any{}, "message": "No bookmarks with semantic data available", "semantic_status": status, "semantic_message": semanticMessage, "mode": mode})
 		return
 	}
 	var queryEmbedding []float64
-	if embedding, err := s.aiClient(r.Context()).GenerateEmbedding(r.Context(), query); err == nil {
-		queryEmbedding = embedding
+	if mode == "semantic" {
+		if embedding, err := s.embedText(r.Context(), client, query); err == nil {
+			queryEmbedding = embedding
+		}
 	}
 	results, threshold := rankGraphSearch(query, queryEmbedding, bookmarks)
 	if len(results) > limit {
@@ -960,7 +988,7 @@ func (s *Service) GraphSearch(w http.ResponseWriter, r *http.Request, user auth.
 	if len(results) == 0 {
 		message = "No strongly matching bookmarks found. Try different search terms."
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"results": results, "query": query, "adaptive_threshold": roundFloat(threshold, 4), "message": message})
+	writeJSON(w, http.StatusOK, map[string]any{"results": results, "query": query, "adaptive_threshold": roundFloat(threshold, 4), "message": message, "semantic_status": status, "semantic_message": semanticMessage, "mode": mode})
 }
 
 func (s *Service) ExpandQuery(w http.ResponseWriter, r *http.Request, user auth.User) {
@@ -1023,7 +1051,7 @@ func (s *Service) Duplicates(w http.ResponseWriter, r *http.Request, user auth.U
 			groups = append(groups, map[string]any{"type": "similar_content", "similarity": similarity, "bookmarks": []map[string]any{bookmarks[i].Data, bookmarks[j].Data}})
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"duplicates": groups})
+	writeJSON(w, http.StatusOK, map[string]any{"duplicates": groups, "semantic_status": s.semanticStatus(r.Context(), user.ID, s.embedder(r.Context()))})
 }
 func (s *Service) Merge(w http.ResponseWriter, r *http.Request, user auth.User) {
 	bookmarkIDs, err := decodeMergeIDs(r)
@@ -1151,7 +1179,8 @@ type graphBookmark struct {
 }
 
 func (s *Service) duplicateCandidates(ctx context.Context, userID string) ([]duplicateBookmark, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,embedding FROM bookmarks WHERE user_id=? ORDER BY created_at DESC LIMIT 500`, userID)
+	space := embeddingSpaceArg(s.embedder(ctx))
+	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,`+currentEmbeddingSQL+` FROM bookmarks WHERE user_id=? ORDER BY created_at DESC LIMIT 500`, space, userID)
 	if err != nil {
 		return nil, err
 	}
@@ -1170,7 +1199,8 @@ func (s *Service) duplicateCandidates(ctx context.Context, userID string) ([]dup
 }
 
 func (s *Service) graphBookmark(ctx context.Context, userID, bookmarkID string) (graphBookmark, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,embedding FROM bookmarks WHERE user_id=? AND id=? LIMIT 1`, userID, bookmarkID)
+	space := embeddingSpaceArg(s.embedder(ctx))
+	rows, err := s.db.QueryContext(ctx, `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,`+currentEmbeddingSQL+` FROM bookmarks WHERE user_id=? AND id=? LIMIT 1`, space, userID, bookmarkID)
 	if err != nil {
 		return graphBookmark{}, err
 	}
@@ -1201,12 +1231,42 @@ func (s *Service) graphBookmark(ctx context.Context, userID, bookmarkID string) 
 	return graphBookmark{ID: bookmarkID, Data: data, Embedding: parseEmbedding(embedding), Entities: entities[bookmarkID], Concepts: concepts[bookmarkID]}, nil
 }
 
+// currentEmbeddingSQL selects a bookmark's vector only when it belongs to the
+// current embedding space (bound as the first argument); stale vectors read
+// as NULL so they are never compared with current ones.
+const currentEmbeddingSQL = `CASE WHEN embedding_model=? THEN embedding END`
+
+type graphSelection int
+
+const (
+	graphAllBookmarks graphSelection = iota
+	// graphSemanticBookmarks keeps bookmarks with complete evidence and
+	// current enrichment, with or without a current vector.
+	graphSemanticBookmarks
+	// graphEmbeddedBookmarks additionally requires a vector in the current
+	// embedding space.
+	graphEmbeddedBookmarks
+)
+
 func (s *Service) graphBookmarks(ctx context.Context, userID string, limit int, requireEmbedding bool) ([]graphBookmark, error) {
-	query := `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,embedding FROM bookmarks WHERE user_id=?`
-	args := []any{userID}
+	selection := graphAllBookmarks
 	if requireEmbedding {
-		query += ` AND embedding IS NOT NULL AND embedding_dim>0 AND enrichment_version=? AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=bookmarks.id AND e.user_id=bookmarks.user_id AND e.is_selected=1 AND e.quality_status='complete')`
+		selection = graphEmbeddedBookmarks
+	}
+	return s.graphBookmarksFor(ctx, userID, limit, selection)
+}
+
+func (s *Service) graphBookmarksFor(ctx context.Context, userID string, limit int, selection graphSelection) ([]graphBookmark, error) {
+	space := embeddingSpaceArg(s.embedder(ctx))
+	query := `SELECT id,url,title,description,domain,favicon,thumbnail,reading_time,read_status,source,created_at,updated_at,last_accessed,view_count,version,sanitized_html,text_content,` + currentEmbeddingSQL + ` FROM bookmarks WHERE user_id=?`
+	args := []any{space, userID}
+	if selection != graphAllBookmarks {
+		query += ` AND enrichment_version=? AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=bookmarks.id AND e.user_id=bookmarks.user_id AND e.is_selected=1 AND e.quality_status='complete')`
 		args = append(args, providers.SemanticVersion)
+	}
+	if selection == graphEmbeddedBookmarks {
+		query += ` AND embedding IS NOT NULL AND embedding_dim>0 AND embedding_model=?`
+		args = append(args, space)
 	}
 	query += ` ORDER BY created_at DESC LIMIT ?`
 	args = append(args, limit)

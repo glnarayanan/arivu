@@ -124,13 +124,6 @@ func (c GeminiClient) ExtractImageText(ctx context.Context, mimeType string, dat
 	return decoded.Candidates[0].Content.Parts[0].Text, nil
 }
 
-// GenerateEmbedding embeds text with the provider used for text generation
-// ("same as text generation" embeddings). Callers that honor the separate
-// embedding configuration use EmbeddingClient directly.
-func (c GeminiClient) GenerateEmbedding(ctx context.Context, text string) ([]float64, error) {
-	return c.SameProviderEmbeddingClient().GenerateEmbedding(ctx, text)
-}
-
 // SameProviderEmbeddingClient resolves embeddings against this client's
 // text-generation provider, key, and base URL.
 func (c GeminiClient) SameProviderEmbeddingClient() EmbeddingClient {

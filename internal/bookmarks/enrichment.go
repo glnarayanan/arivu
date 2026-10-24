@@ -18,10 +18,13 @@ type enrichment struct {
 	Entities   []providers.SemanticTerm
 	Concepts   []providers.SemanticTerm
 	Embedding  []float64
+	// EmbeddingSpace identifies the provider/model@dimensions that produced
+	// Embedding.
+	EmbeddingSpace string
 }
 
 func (s *Service) enrichText(ctx context.Context, bookmarkID, userID, title, description, text string, semanticResults ...providers.SemanticResult) enrichment {
-	body := strings.TrimSpace(title + "\n" + description + "\n" + text)
+	body := embeddingBody(title, description, text)
 	result := enrichment{
 		Bullets:    bulletSummary(text, 4),
 		Highlights: highlightSentences(text, 5),
@@ -37,8 +40,10 @@ func (s *Service) enrichText(ctx context.Context, bookmarkID, userID, title, des
 		result.Entities = validated.Entities
 		result.Concepts = validated.Concepts
 	}
-	if embedding, err := s.aiClient(ctx).GenerateEmbedding(ctx, body); err == nil && len(embedding) > 0 {
+	client := s.embedder(ctx)
+	if embedding, err := s.embedText(ctx, client, body); err == nil && len(embedding) > 0 {
 		result.Embedding = embedding
+		result.EmbeddingSpace = client.Space()
 	}
 	return result
 }
@@ -107,9 +112,9 @@ func (s *Service) replaceGeneratedEnrichmentTx(ctx context.Context, tx *sql.Tx, 
 			return err
 		}
 	}
-	if len(item.Embedding) > 0 {
+	if len(item.Embedding) > 0 && item.EmbeddingSpace != "" {
 		raw, _ := json.Marshal(item.Embedding)
-		if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), "gemini/"+providers.GeminiEmbeddingModel, bookmarkID, userID); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=? WHERE id=? AND user_id=?`, []byte(raw), len(item.Embedding), item.EmbeddingSpace, bookmarkID, userID); err != nil {
 			return err
 		}
 	} else {

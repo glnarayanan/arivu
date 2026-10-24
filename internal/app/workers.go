@@ -24,6 +24,8 @@ func (a *App) startWorkers(ctx context.Context) {
 		defer ticker.Stop()
 		defer maintenance.Stop()
 		a.reconcileAssets(ctx)
+		// Resume or start re-embedding after upgrades and restarts.
+		a.scheduleReembed(ctx)
 		for {
 			select {
 			case <-ctx.Done():
@@ -33,6 +35,7 @@ func (a *App) startWorkers(ctx context.Context) {
 				a.runOneJob(ctx)
 			case <-maintenance.C:
 				a.reconcileAssets(ctx)
+				a.scheduleReembed(ctx)
 			}
 		}
 	}()

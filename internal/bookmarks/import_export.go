@@ -44,6 +44,8 @@ func (s *Service) ProcessJob(ctx context.Context, jobType string, payload string
 		return s.pollFeed(ctx, b.SubscriptionID)
 	}
 	switch jobType {
+	case JobTypeReembed:
+		return s.processReembed(ctx, payload)
 	case "bookmark.process":
 		var body struct {
 			BookmarkID           string `json:"bookmark_id"`

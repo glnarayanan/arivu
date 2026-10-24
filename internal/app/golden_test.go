@@ -22,6 +22,11 @@ func TestGoldenParityFixtures(t *testing.T) {
 		RefreshTTL:     time.Hour,
 		ExtensionTTL:   time.Hour,
 		MaxRequestBody: 1 << 20,
+		// A local embedding model gives the fixtures a vector space without
+		// network access; the fixtures store vectors in that space.
+		EmbeddingProvider: "custom",
+		EmbeddingModel:    "test-embed",
+		EmbeddingBaseURL:  "http://127.0.0.1:9/v1",
 	})
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
@@ -63,7 +68,7 @@ func seedGoldenParityData(t *testing.T, a *App, userID string) {
 		{"backlog", "https://example.com/backlog", "Later reading", "Queued reading list", `[0.2,-0.98]`, false},
 	}
 	for _, update := range updates {
-		_, err := a.db.ExecContext(context.Background(), `UPDATE bookmarks SET url=?,description=?,text_content=?,embedding=?,embedding_dim=2,embedding_model='test',read_status=? WHERE id=?`, update.URL, update.Description, update.Text, []byte(update.Embedding), update.Read, update.ID)
+		_, err := a.db.ExecContext(context.Background(), `UPDATE bookmarks SET url=?,description=?,text_content=?,embedding=?,embedding_dim=2,embedding_model='custom/test-embed',read_status=? WHERE id=?`, update.URL, update.Description, update.Text, []byte(update.Embedding), update.Read, update.ID)
 		if err != nil {
 			t.Fatal(err)
 		}

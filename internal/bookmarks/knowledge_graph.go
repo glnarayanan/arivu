@@ -55,7 +55,8 @@ func (s *Service) KnowledgeGraphV2(w http.ResponseWriter, r *http.Request, user 
 		edgeFacets[edge.Type]++
 	}
 	truncated := len(nodes) >= nodeLimit || len(edges) >= edgeLimit
-	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "edges": edges, "facets": map[string]any{"node_types": nodeFacets, "edge_types": edgeFacets}, "truncated": truncated})
+	status := s.semanticStatus(r.Context(), user.ID, s.embedder(r.Context()))
+	writeJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "edges": edges, "facets": map[string]any{"node_types": nodeFacets, "edge_types": edgeFacets}, "truncated": truncated, "semantic_status": status, "semantic_message": semanticStatusMessage(status)})
 }
 
 func (s *Service) graphV2Nodes(ctx context.Context, userID string, limit int, focusType, focusID string, hasFocus bool) ([]graphV2Node, error) {
@@ -320,12 +321,12 @@ func (s *Service) graphV2Edges(ctx context.Context, userID string, nodes []graph
 	}
 	if len(bookmarkIDs) > 0 && len(edges) < limit {
 		placeholders := strings.TrimRight(strings.Repeat("?,", len(bookmarkIDs)), ",")
-		args := make([]any, 0, len(bookmarkIDs)+2)
-		args = append(args, userID, providers.SemanticVersion)
+		args := make([]any, 0, len(bookmarkIDs)+3)
+		args = append(args, userID, embeddingSpaceArg(s.embedder(ctx)), providers.SemanticVersion)
 		for _, id := range bookmarkIDs {
 			args = append(args, id)
 		}
-		rows, err = s.db.QueryContext(ctx, `SELECT b.id,b.embedding FROM bookmarks b WHERE b.user_id=? AND b.embedding IS NOT NULL AND b.enrichment_version=? AND b.id IN (`+placeholders+`) AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 AND e.quality_status='complete') ORDER BY b.id`, args...)
+		rows, err = s.db.QueryContext(ctx, `SELECT b.id,b.embedding FROM bookmarks b WHERE b.user_id=? AND b.embedding IS NOT NULL AND b.embedding_model=? AND b.enrichment_version=? AND b.id IN (`+placeholders+`) AND EXISTS (SELECT 1 FROM bookmark_evidence e WHERE e.bookmark_id=b.id AND e.user_id=b.user_id AND e.is_selected=1 AND e.quality_status='complete') ORDER BY b.id`, args...)
 		if err == nil {
 			for rows.Next() {
 				var id string

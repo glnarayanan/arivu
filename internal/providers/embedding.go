@@ -196,7 +196,10 @@ func (c EmbeddingConfig) ReasonMessage() string {
 		}
 		return message
 	case EmbeddingReasonMissingAPIKey:
-		return "The embedding provider needs an API key."
+		if c.Mode == EmbeddingProviderSame {
+			return "Embeddings use the text generation provider (" + definition.Name + "), which has no API key configured."
+		}
+		return "The embedding provider (" + definition.Name + ") needs an API key."
 	case EmbeddingReasonMissingModel:
 		return "Choose an embedding model id for " + definition.Name + "."
 	case EmbeddingReasonMissingBaseURL:

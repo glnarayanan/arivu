@@ -286,6 +286,39 @@ func (a *App) adminUpdateSettings(w http.ResponseWriter, r *http.Request, user a
 		}
 	}
 
+	if rawProvider, ok := body[runtimeconfig.KeyEmbeddingProvider]; ok {
+		effective, err := a.runtime.Effective(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "Could not load settings")
+			return
+		}
+		target := providers.NormalizeEmbeddingProvider(requestSettingString(rawProvider))
+		if target != providers.EmbeddingProviderSame && target != providers.EmbeddingProviderNone {
+			definition := providers.ModelProviderDefinition(target)
+			if !definition.SupportsEmbeddings() {
+				message := definition.Name + " has no embeddings API"
+				if definition.Embedding.Note != "" {
+					message = definition.Embedding.Note
+				}
+				writeError(w, http.StatusBadRequest, message)
+				return
+			}
+		}
+		if target != effective.EmbeddingProvider {
+			// Never send a key, model, endpoint or size chosen for one
+			// embedding provider to another.
+			for _, key := range []string{runtimeconfig.KeyEmbeddingAPIKey, runtimeconfig.KeyEmbeddingModel, runtimeconfig.KeyEmbeddingBaseURL, runtimeconfig.KeyEmbeddingDims} {
+				if submitted(key) == "" {
+					updates[key] = ""
+				}
+			}
+			if target != providers.EmbeddingProviderSame && target != providers.EmbeddingProviderNone && submitted(runtimeconfig.KeyEmbeddingAPIKey) == "" && !providers.ModelProviderDefinition(target).APIKeyOptional {
+				writeError(w, http.StatusBadRequest, "Embedding API key is required for this provider")
+				return
+			}
+		}
+	}
+
 	changed := make([]string, 0, len(updates))
 	for key := range updates {
 		changed = append(changed, key)
@@ -300,6 +333,9 @@ func (a *App) adminUpdateSettings(w http.ResponseWriter, r *http.Request, user a
 		return
 	}
 	a.auditEvent(r.Context(), user.ID, "admin.settings.update", "settings", "", map[string]any{"keys": changed})
+	// Any provider change can move the embedding space; stale vectors are
+	// excluded immediately and rebuilt in the background.
+	a.scheduleReembed(r.Context())
 	writeJSON(w, http.StatusOK, map[string]any{"status": "updated", "fields": changed})
 }
 
@@ -317,6 +353,7 @@ func (a *App) adminDeleteSetting(w http.ResponseWriter, r *http.Request, user au
 		writeError(w, http.StatusInternalServerError, "Could not remove setting")
 		return
 	}
+	a.scheduleReembed(r.Context())
 	a.auditEvent(r.Context(), user.ID, "admin.settings.delete", "settings", "", map[string]any{"keys": []string{key}})
 	status, _ := a.runtime.StatusValue(r.Context(), key)
 	writeJSON(w, http.StatusOK, map[string]any{"status": "removed", "key": key, "has_env_fallback": status.Source == "environment"})
@@ -328,6 +365,12 @@ func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.Us
 	aiConfigured := effective.AIModel != "" && effective.AIBaseURL != "" && (effective.AIAPIKey != "" || definition.APIKeyOptional)
 	geminiConfigured := effective.AIProvider == providers.ProviderGemini && effective.AIAPIKey != ""
 	usage := a.usage.Snapshot()
+	embedding, err := a.embeddingStatus(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "Could not load embedding status")
+		return
+	}
+	delete(embedding, "providers")
 	failedJobs, err := recentFailedJobs(r.Context(), a.db, 50)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "Could not load failed jobs")
@@ -351,6 +394,7 @@ func (a *App) adminAPIUsage(w http.ResponseWriter, r *http.Request, user auth.Us
 		"provider_usage":          usage,
 		"ai_configured":           aiConfigured,
 		"gemini_configured":       geminiConfigured,
+		"embedding":               embedding,
 		"summaries_completed":     countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='completed'`),
 		"summaries_pending":       countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='pending'`),
 		"summaries_failed":        countWhere(r.Context(), a.db, `SELECT COUNT(*) FROM ai_summaries WHERE processing_status='failed'`),
