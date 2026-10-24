@@ -89,9 +89,9 @@ func NormalizeModelProvider(value string) string {
 		return ProviderFireworks
 	case "groq":
 		return ProviderGroq
-	case "hf", "hugging-face":
+	case "hf", "huggingface", "hugging-face":
 		return ProviderHuggingFace
-	case "lm-studio":
+	case "lmstudio", "lm-studio":
 		return ProviderLMStudio
 	case "minimax", "mini-max":
 		return ProviderMiniMax
