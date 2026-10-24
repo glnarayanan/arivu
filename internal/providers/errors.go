@@ -14,6 +14,7 @@ const (
 	ErrorProviderUnavailable     = "provider_unavailable"
 	ErrorProviderAuth            = "provider_auth"
 	ErrorProviderNotConfigured   = "provider_not_configured"
+	ErrorEmbeddingNotConfigured  = "embedding_not_configured"
 	ErrorProviderUnsupported     = "provider_unsupported"
 	ErrorProviderRejected        = "provider_rejected"
 	ErrorProviderInvalidResponse = "provider_invalid_response"
@@ -37,6 +38,9 @@ func SafeErrorCode(err error) string {
 	var networkErr net.Error
 	if errors.As(err, &networkErr) && networkErr.Timeout() {
 		return ErrorProviderTimeout
+	}
+	if errors.Is(err, ErrEmbeddingNotConfigured) {
+		return ErrorEmbeddingNotConfigured
 	}
 	if errors.Is(err, ErrNotConfigured) {
 		return ErrorProviderNotConfigured
@@ -78,7 +82,9 @@ func SafeErrorMessage(err error) string {
 	case ErrorProviderAuth:
 		return "The model provider rejected the configured credentials."
 	case ErrorProviderNotConfigured:
-		return "The model provider is not configured."
+		return "The text generation model provider is not configured."
+	case ErrorEmbeddingNotConfigured:
+		return "The embedding model is not configured. Semantic search ranking, related items, Graph similarity, and similar-content duplicates are unavailable until an embedding model is set in Settings."
 	case ErrorProviderUnsupported:
 		return "The configured model provider does not support this operation."
 	case ErrorProviderRejected:
