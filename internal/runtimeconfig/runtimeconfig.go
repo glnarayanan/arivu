@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -30,6 +31,11 @@ const (
 	KeyGeminiAPIKey       = "gemini_api_key"
 	KeyGeminiModel        = "gemini_model"
 	KeyGeminiBaseURL      = "gemini_base_url"
+	KeyEmbeddingProvider  = "embedding_provider"
+	KeyEmbeddingAPIKey    = "embedding_api_key"
+	KeyEmbeddingModel     = "embedding_model"
+	KeyEmbeddingBaseURL   = "embedding_base_url"
+	KeyEmbeddingDims      = "embedding_dimensions"
 	KeyResendAPIKey       = "resend_api_key"
 	KeyResendFromEmail    = "resend_from_email"
 	KeyXClientID          = "x_client_id"
@@ -49,6 +55,11 @@ var Keys = []string{
 	KeyGeminiAPIKey,
 	KeyGeminiModel,
 	KeyGeminiBaseURL,
+	KeyEmbeddingProvider,
+	KeyEmbeddingAPIKey,
+	KeyEmbeddingModel,
+	KeyEmbeddingBaseURL,
+	KeyEmbeddingDims,
 	KeyResendAPIKey,
 	KeyResendFromEmail,
 	KeyXClientID,
@@ -58,11 +69,12 @@ var Keys = []string{
 }
 
 var SecretKeys = map[string]bool{
-	KeyAIAPIKey:      true,
-	KeyGeminiAPIKey:  true,
-	KeyResendAPIKey:  true,
-	KeyXClientID:     true,
-	KeyXClientSecret: true,
+	KeyAIAPIKey:        true,
+	KeyGeminiAPIKey:    true,
+	KeyEmbeddingAPIKey: true,
+	KeyResendAPIKey:    true,
+	KeyXClientID:       true,
+	KeyXClientSecret:   true,
 }
 
 var BooleanKeys = map[string]bool{
@@ -87,6 +99,11 @@ type Effective struct {
 	GeminiAPIKey        string
 	GeminiModel         string
 	GeminiBaseURL       string
+	EmbeddingProvider   string
+	EmbeddingAPIKey     string
+	EmbeddingModel      string
+	EmbeddingBaseURL    string
+	EmbeddingDimensions int
 	ResendAPIKey        string
 	ResendFromEmail     string
 	XClientID           string
@@ -159,6 +176,11 @@ func FromConfig(cfg config.Config) Effective {
 		GeminiAPIKey:        cfg.GeminiAPIKey,
 		GeminiModel:         fallbackString(cfg.GeminiModel, config.DefaultGeminiModel),
 		GeminiBaseURL:       fallbackString(cfg.GeminiBaseURL, config.DefaultGeminiBaseURL),
+		EmbeddingProvider:   providers.NormalizeEmbeddingProvider(cfg.EmbeddingProvider),
+		EmbeddingAPIKey:     strings.TrimSpace(cfg.EmbeddingAPIKey),
+		EmbeddingModel:      strings.TrimSpace(cfg.EmbeddingModel),
+		EmbeddingBaseURL:    strings.TrimRight(strings.TrimSpace(cfg.EmbeddingBaseURL), "/"),
+		EmbeddingDimensions: clampDimensions(cfg.EmbeddingDimensions),
 		ResendAPIKey:        cfg.ResendAPIKey,
 		ResendFromEmail:     cfg.ResendFrom,
 		XClientID:           cfg.XClientID,
@@ -166,6 +188,24 @@ func FromConfig(cfg config.Config) Effective {
 		XRedirectURI:        defaultXRedirectURI(cfg.AppURL),
 		XIntegrationEnabled: cfg.XEnabled,
 	}
+}
+
+// Embedding resolves the effective embedding configuration against the text
+// generation provider.
+func (e Effective) Embedding() providers.EmbeddingConfig {
+	return providers.ResolveEmbedding(
+		providers.TextProviderSettings{Provider: e.AIProvider, APIKey: e.AIAPIKey, BaseURL: e.AIBaseURL},
+		providers.EmbeddingSelection{Provider: e.EmbeddingProvider, APIKey: e.EmbeddingAPIKey, Model: e.EmbeddingModel, BaseURL: e.EmbeddingBaseURL, Dimensions: e.EmbeddingDimensions},
+	)
+}
+
+// clearsOnEmpty lists optional keys whose empty value removes the stored
+// override so the environment or preset default applies again.
+var clearsOnEmpty = map[string]bool{
+	KeyXRedirectURI:     true,
+	KeyEmbeddingModel:   true,
+	KeyEmbeddingBaseURL: true,
+	KeyEmbeddingDims:    true,
 }
 
 func Allowed(key string) bool {
@@ -237,6 +277,14 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 			geminiBaseURL.value = aiBaseURL.value
 		}
 	}
+	embedding := map[string]resolvedValue{}
+	for _, key := range []string{KeyEmbeddingProvider, KeyEmbeddingAPIKey, KeyEmbeddingModel, KeyEmbeddingBaseURL, KeyEmbeddingDims} {
+		value, err := s.resolve(ctx, key)
+		if err != nil {
+			return Effective{}, err
+		}
+		embedding[key] = value
+	}
 	resendKey, err := s.resolve(ctx, KeyResendAPIKey)
 	if err != nil {
 		return Effective{}, err
@@ -275,6 +323,11 @@ func (s *Service) Effective(ctx context.Context) (Effective, error) {
 		GeminiAPIKey:        gemini.value,
 		GeminiModel:         geminiModel.value,
 		GeminiBaseURL:       geminiBaseURL.value,
+		EmbeddingProvider:   providers.NormalizeEmbeddingProvider(embedding[KeyEmbeddingProvider].value),
+		EmbeddingAPIKey:     embedding[KeyEmbeddingAPIKey].value,
+		EmbeddingModel:      embedding[KeyEmbeddingModel].value,
+		EmbeddingBaseURL:    embedding[KeyEmbeddingBaseURL].value,
+		EmbeddingDimensions: parseDimensions(embedding[KeyEmbeddingDims].value),
 		ResendAPIKey:        resendKey.value,
 		ResendFromEmail:     resendFrom.value,
 		XClientID:           xClientID.value,
@@ -459,7 +512,7 @@ func (s *Service) Set(ctx context.Context, key string, value any, updatedBy stri
 	if err != nil {
 		return err
 	}
-	if key == KeyXRedirectURI && raw == "" {
+	if clearsOnEmpty[key] && raw == "" {
 		return s.Delete(ctx, key)
 	}
 	return s.writeSetting(ctx, s.db, key, raw, updatedBy, keyID)
@@ -477,7 +530,7 @@ func (s *Service) Apply(ctx context.Context, values map[string]any, updatedBy st
 		if err != nil {
 			return err
 		}
-		if key == KeyXRedirectURI && raw == "" {
+		if clearsOnEmpty[key] && raw == "" {
 			deleteSet[key] = true
 			continue
 		}
@@ -575,10 +628,17 @@ func validateResolved(value resolvedValue) (resolvedValue, error) {
 		value.value = providers.NormalizeModelProvider(value.value)
 		return value, nil
 	}
+	if value.key == KeyEmbeddingProvider {
+		value.value = providers.NormalizeEmbeddingProvider(value.value)
+		if value.source == "unset" {
+			value.source = "default"
+		}
+		return value, nil
+	}
 	if value.source == "default" || value.value == "" {
 		return value, nil
 	}
-	if value.key != KeyXRedirectURI && value.key != KeyAIModel && value.key != KeyAIBaseURL && value.key != KeyGeminiModel && value.key != KeyGeminiBaseURL {
+	if value.key != KeyXRedirectURI && value.key != KeyAIModel && value.key != KeyAIBaseURL && value.key != KeyGeminiModel && value.key != KeyGeminiBaseURL && value.key != KeyEmbeddingModel && value.key != KeyEmbeddingBaseURL && value.key != KeyEmbeddingDims {
 		return value, nil
 	}
 	normalized, err := normalizeValue(value.key, value.value)
@@ -632,6 +692,21 @@ func (s *Service) fallback(key string) resolvedValue {
 		} else {
 			value, source = config.DefaultGeminiBaseURL, "default"
 		}
+	case KeyEmbeddingProvider:
+		value, source = envFallback("EMBEDDING_PROVIDER", s.cfg.EmbeddingProvider)
+		if value == "" {
+			value, source = providers.EmbeddingProviderSame, "default"
+		}
+	case KeyEmbeddingAPIKey:
+		value, source = envFallback("EMBEDDING_API_KEY", s.cfg.EmbeddingAPIKey)
+	case KeyEmbeddingModel:
+		value, source = envFallback("EMBEDDING_MODEL", s.cfg.EmbeddingModel)
+	case KeyEmbeddingBaseURL:
+		value, source = envFallback("EMBEDDING_BASE_URL", s.cfg.EmbeddingBaseURL)
+	case KeyEmbeddingDims:
+		if dims := clampDimensions(s.cfg.EmbeddingDimensions); dims > 0 {
+			value, source = strconv.Itoa(dims), "environment"
+		}
 	case KeyResendAPIKey:
 		value, source = envFallback("RESEND_API_KEY", s.cfg.ResendAPIKey)
 	case KeyResendFromEmail:
@@ -681,7 +756,27 @@ func normalizeValue(key string, value any) (string, error) {
 	if key == KeyAIProvider {
 		return providers.NormalizeModelProvider(raw), nil
 	}
-	if key == KeyXRedirectURI || key == KeyAIBaseURL || key == KeyGeminiBaseURL {
+	if key == KeyEmbeddingProvider {
+		return providers.NormalizeEmbeddingProvider(raw), nil
+	}
+	if key == KeyEmbeddingModel {
+		raw = strings.TrimPrefix(raw, "models/")
+		if strings.ContainsFunc(raw, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+			return "", fmt.Errorf("embedding_model must not contain whitespace or control characters")
+		}
+		return raw, nil
+	}
+	if key == KeyEmbeddingDims {
+		if raw == "" || raw == "0" {
+			return "", nil
+		}
+		dims, err := strconv.Atoi(raw)
+		if err != nil || dims < 1 || dims > providers.MaxEmbeddingDimensions {
+			return "", fmt.Errorf("embedding_dimensions must be a whole number between 1 and %d", providers.MaxEmbeddingDimensions)
+		}
+		return strconv.Itoa(dims), nil
+	}
+	if key == KeyXRedirectURI || key == KeyAIBaseURL || key == KeyGeminiBaseURL || key == KeyEmbeddingBaseURL {
 		if raw == "" {
 			return "", nil
 		}
@@ -695,10 +790,11 @@ func normalizeValue(key string, value any) (string, error) {
 		if parsed.Scheme != "http" && parsed.Scheme != "https" {
 			return "", fmt.Errorf("%s must use http or https", key)
 		}
-		if (key == KeyAIBaseURL || key == KeyGeminiBaseURL) && parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
+		providerEndpoint := key == KeyAIBaseURL || key == KeyGeminiBaseURL || key == KeyEmbeddingBaseURL
+		if providerEndpoint && parsed.Scheme == "http" && !isLoopbackHost(parsed.Hostname()) {
 			return "", fmt.Errorf("%s must use https unless it points to localhost", key)
 		}
-		if key == KeyAIBaseURL || key == KeyGeminiBaseURL {
+		if providerEndpoint {
 			return strings.TrimRight(raw, "/"), nil
 		}
 		return raw, nil
@@ -726,6 +822,21 @@ func normalizeValue(key string, value any) (string, error) {
 		return boolString(parseBool(raw)), nil
 	}
 	return raw, nil
+}
+
+func parseDimensions(value string) int {
+	dims, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return 0
+	}
+	return clampDimensions(dims)
+}
+
+func clampDimensions(dims int) int {
+	if dims < 1 || dims > providers.MaxEmbeddingDimensions {
+		return 0
+	}
+	return dims
 }
 
 func fallbackString(value string, fallback string) string {
