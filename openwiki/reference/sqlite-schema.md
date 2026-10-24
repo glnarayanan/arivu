@@ -59,8 +59,14 @@ with foreign keys.
   A successful provider summary owns its structured summary, long form, bullets,
   highlights, and suggested tags; deterministic local extraction fills those
   display fields only as a fallback and always supplies graph entities and
-  concepts. Gemini embeddings use `gemini-embedding-2` when Gemini is selected
-  and configured.
+  concepts. Embeddings come from the configured embedding model.
+  `bookmarks.embedding` holds the vector as a JSON array, `embedding_dim` its
+  length, and `embedding_model` its space, `provider/model@dimensions` (for
+  example `gemini/gemini-embedding-2@768`, the label given to vectors written
+  before embedding settings existed). Only vectors in the current space are
+  read for similarity; others are stale until the `embedding.reembed` job
+  rebuilds them. `idx_bookmarks_user_embedding_space` indexes
+  `(user_id, embedding_model)`.
 - New bookmarks and notes enter `item_states` as `inbox`. Users can move them
   through `processing`, `processed`, and `archived` without changing the source
   bookmark or note content.

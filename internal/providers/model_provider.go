@@ -44,7 +44,7 @@ type ModelProvider struct {
 
 // EmbeddingSupport records whether and how a preset exposes an embeddings API.
 // Capabilities were checked against each provider's public API docs; see
-// openwiki/integrations/model-providers.md for the evidence list.
+// openwiki/operations/deployment.md ("Embedding model") for the matrix.
 type EmbeddingSupport struct {
 	// Style is EmbeddingStyleGemini, EmbeddingStyleOpenAI, or empty for
 	// text-only providers.

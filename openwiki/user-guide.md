@@ -117,7 +117,11 @@ queued link/quote capture, and admin data remain network-only.
 A model provider is optional. Without one, Arivu still captures, extracts,
 sanitizes, searches, links, reviews, imports, exports, builds the local graph,
 and generates deterministic insights. Missing embeddings only remove semantic
-similarity relationships; explicit and other local relationships remain.
+similarity: related items, Graph similarity links, similar-content duplicates,
+and semantic ranking in Graph search, which falls back to keywords and topics.
+Explicit and other local relationships remain. While items are being
+re-embedded for a new embedding model, they rejoin semantic results as their
+new vectors arrive.
 
 ## Import, Export, Backup, And Migration
 
@@ -140,8 +144,17 @@ Legacy migrations use the JSON export process documented in
 
 Settings and administration are under the profile menu; imports and exports
 remain inside Settings rather than appearing as a duplicate profile action.
-Non-admin users do not see provider-secret controls. Admin provider fields
-remain generic: Model Provider, Model, API Key, and Base URL. Local/keyless
+Non-admin users do not see provider-secret controls. Admin provider settings
+have two labelled groups. **Text generation model** (provider, model, API key,
+Base URL) writes summaries, insights, and answers. **Embedding model** chooses
+how saved items are embedded for semantic features: "Same as text generation"
+reuses the text provider and key when it offers embeddings, or pick an
+embedding-capable provider (Gemini, OpenAI, OpenRouter, Mistral, Fireworks AI,
+Perplexity, Ollama/local, LM Studio, or Custom) with its own key, model, Base
+URL, and optional dimensions. Text-only providers such as DeepSeek, Anthropic,
+or xAI are listed as "(text only)". When embeddings are not configured, the
+section says why and lists the affected features; when they are, it shows
+embedded, stale, and missing counts and a **Re-embed now** action. Local/keyless
 providers remain supported.
 
 Settings Automation lets each user turn AI tagging off, restrict suggestions to
