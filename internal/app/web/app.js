@@ -1832,7 +1832,8 @@ function noteList(items) {
   </article>`).join("")}</div>`;
 }
 
-function relatedList(items) {
+function relatedList(items, semanticStatus = "") {
+  if (!items.length && semanticStatus === "not_configured") return `<p class="meta">Related items need an embedding model. An administrator can set one in Settings under Embedding model.</p>`;
   if (!items.length) return `<p class="meta">Related items appear after enrichment has enough semantic data.</p>`;
   return `<div class="grid compact-grid">${items.map((item) => `<a class="panel bookmark" href="/bookmark/${escapeHTML(item.id)}">
     <span class="meta">${escapeHTML(item.domain || "web")} · ${Number(item.similarity_score || 0).toFixed(2)}</span>
@@ -2075,7 +2076,7 @@ async function bookmarkPage(scope) {
     <details class="panel disclosure-panel workbench-group">
       <summary><span>Related items</span><span class="meta">${(related.related || []).length} matches</span></summary>
       <section class="disclosure-body">
-        ${relatedList(related.related || [])}
+        ${relatedList(related.related || [], related.semantic_status || "")}
       </section>
     </details>
   `));
@@ -2958,6 +2959,165 @@ function bindModelProviderDefaults(form, prefix) {
   updateModelProviderHints(form, prefix);
 }
 
+function textModelFieldset(prefix, selected = "gemini", settings = {}) {
+  return `<fieldset class="settings-group">
+        <legend>Text generation model</legend>
+        <p class="meta">Writes summaries, insights, and answers. Embeddings are configured separately below.</p>
+        <div class="field"><label for="${prefix}ai-provider">Text generation provider</label><select id="${prefix}ai-provider">${modelProviderOptions(selected)}</select></div>
+        <div class="field"><label for="${prefix}ai-model">Text generation model</label><input id="${prefix}ai-model" type="text" autocomplete="off" value="${escapeHTML(settings.ai_model?.value || "")}"></div>
+        <div class="field"><label for="${prefix}ai-api-key">Text generation API key</label><input id="${prefix}ai-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+        <div class="field"><label for="${prefix}ai-base-url">Text generation base URL</label><input id="${prefix}ai-base-url" type="url" autocomplete="off" value="${escapeHTML(settings.ai_base_url?.value || "")}"></div>
+      </fieldset>`;
+}
+
+function embeddingFieldset(prefix) {
+  return `<fieldset class="settings-group" aria-describedby="${prefix}embedding-status">
+        <legend>Embedding model</legend>
+        <p class="meta">Embeddings power semantic search ranking, related items, Graph similarity links, and similar-content duplicates. Many text generation providers have no embeddings API, so the embedding model is chosen here.</p>
+        <div id="${prefix}embedding-status" class="embedding-status" aria-live="polite"><p class="meta">Loading embedding status.</p></div>
+        <div class="field"><label for="${prefix}embedding-provider">Embedding provider</label><select id="${prefix}embedding-provider"><option value="same">Same as text generation</option><option value="none">Off</option></select><p class="meta" id="${prefix}embedding-provider-hint" data-embedding-hint hidden></p></div>
+        <div class="field"><label for="${prefix}embedding-model">Embedding model</label><input id="${prefix}embedding-model" type="text" autocomplete="off" aria-describedby="${prefix}embedding-model-hint"><p class="meta" id="${prefix}embedding-model-hint">Leave blank to use the provider's default embedding model.</p></div>
+        <div class="field" data-embedding-separate><label for="${prefix}embedding-api-key">Embedding API key</label><input id="${prefix}embedding-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
+        <div class="field" data-embedding-separate><label for="${prefix}embedding-base-url">Embedding base URL</label><input id="${prefix}embedding-base-url" type="url" autocomplete="off"></div>
+        <div class="field" data-embedding-dimensions><label for="${prefix}embedding-dimensions">Embedding dimensions</label><input id="${prefix}embedding-dimensions" type="number" min="1" max="8192" step="1" inputmode="numeric" aria-describedby="${prefix}embedding-dimensions-hint"><p class="meta" id="${prefix}embedding-dimensions-hint">Optional. Changing the embedding model or dimensions re-embeds saved items in the background.</p></div>
+      </fieldset>`;
+}
+
+const embeddingState = new WeakMap();
+
+function embeddingPreset(presets, id) {
+  return (presets || []).find((preset) => preset.id === id) || null;
+}
+
+function embeddingProviderOptions(presets, selected) {
+  const capable = (presets || []).filter((preset) => preset.supports_embeddings);
+  const textOnly = (presets || []).filter((preset) => !preset.supports_embeddings);
+  const option = (value, label, disabled = false) => `<option value="${escapeHTML(value)}"${value === selected ? " selected" : ""}${disabled ? " disabled" : ""}>${escapeHTML(label)}</option>`;
+  return [
+    option("same", "Same as text generation"),
+    capable.length ? `<optgroup label="Embedding providers">${capable.map((preset) => option(preset.id, preset.name)).join("")}</optgroup>` : "",
+    textOnly.length ? `<optgroup label="Text only (no embeddings API)">${textOnly.map((preset) => option(preset.id, `${preset.name} (text only)`, true)).join("")}</optgroup>` : "",
+    option("none", "Off"),
+  ].join("");
+}
+
+function embeddingStatusHTML(status) {
+  if (!status) return `<p class="meta">Embedding status is unavailable.</p>`;
+  const vectors = status.vectors || {};
+  const pending = Number(vectors.stale || 0) + Number(vectors.missing || 0);
+  const busy = Boolean(vectors.job_running || vectors.job_queued);
+  const features = (status.affected_features || []).map((feature) => `<li>${escapeHTML(feature)}</li>`).join("");
+  if (!status.configured) {
+    return `<article class="annotation embedding-status-card" data-embedding-configured="false">
+      <p><strong>Embeddings are not configured.</strong> ${escapeHTML(status.message || "")}</p>
+      <p class="meta">Until an embedding model is set, these features are unavailable:</p>
+      <ul>${features}</ul>
+    </article>`;
+  }
+  const size = Number(status.dimensions || 0) > 0 ? ` · ${formatCount(status.dimensions)} dimensions` : "";
+  const source = status.mode === "same" ? "Uses the text generation provider and key." : "Uses its own provider settings.";
+  const progress = busy ? "Re-embedding in the background." : pending ? "Waiting for the next background pass." : "All eligible items are embedded.";
+  return `<article class="annotation embedding-status-card" data-embedding-configured="true">
+    <p><strong>Embedding model: ${escapeHTML(status.provider_name || status.provider || "")} · ${escapeHTML(status.model || "")}${size}</strong></p>
+    <p class="meta">${source} ${formatCount(vectors.current)} embedded · ${formatCount(vectors.stale)} from a previous model · ${formatCount(vectors.missing)} not embedded yet. ${progress}</p>
+    ${pending && !busy ? `<p class="button-row"><button type="button" class="secondary" data-embedding-reembed>Re-embed now</button></p>` : ""}
+  </article>`;
+}
+
+function updateEmbeddingFieldVisibility(form, prefix) {
+  const state = embeddingState.get(form) || {};
+  const provider = form.querySelector(`#${prefix}embedding-provider`);
+  const hint = form.querySelector(`#${prefix}embedding-provider-hint`);
+  if (!provider) return;
+  const textProvider = form.querySelector(`#${prefix}ai-provider`)?.value || state.status?.text_provider || "gemini";
+  const same = provider.value === "same";
+  const off = provider.value === "none";
+  const preset = embeddingPreset(state.status?.providers, same ? textProvider : provider.value);
+  form.querySelectorAll("[data-embedding-separate]").forEach((item) => { item.hidden = off || same; });
+  const model = form.querySelector(`#${prefix}embedding-model`);
+  model.closest(".field").hidden = off;
+  const dimensionsField = form.querySelector("[data-embedding-dimensions]");
+  if (dimensionsField) dimensionsField.hidden = off || Boolean(preset && !preset.dimensions_supported);
+  model.placeholder = preset?.default_model || "embedding-model-id";
+  form.querySelector(`#${prefix}embedding-base-url`).placeholder = preset?.base_url || "https://api.example.com/v1";
+  form.querySelector(`#${prefix}embedding-dimensions`).placeholder = preset?.default_dimensions ? String(preset.default_dimensions) : "Model default";
+  const keyPlaceholder = provider.value === state.savedProvider ? "Leave blank to keep current value" : `Required for ${preset?.name || "this provider"}`;
+  form.querySelector(`#${prefix}embedding-api-key`).placeholder = preset?.api_key_optional ? "Optional for local servers" : keyPlaceholder;
+  let message = "";
+  if (off) message = "Semantic features stay off; keyword search and extracted topics still work.";
+  else if (same && preset && !preset.supports_embeddings) message = `${preset.name} is text-only. Choose an embedding provider to enable semantic features.`;
+  else if (same && preset) message = `Embeddings will use ${preset.name} with the text generation API key.`;
+  else if (preset?.note) message = preset.note;
+  if (hint) {
+    hint.textContent = message;
+    hint.hidden = !message;
+  }
+}
+
+async function refreshEmbeddingFields(form, prefix, settings, scope) {
+  const status = await api("/admin/embeddings");
+  scope.assertCurrent();
+  if (!settings) {
+    settings = await api("/admin/settings");
+    scope.assertCurrent();
+  }
+  const selected = settings.embedding_provider?.value || "same";
+  embeddingState.set(form, { status, savedProvider: selected });
+  const select = form.querySelector(`#${prefix}embedding-provider`);
+  const statusBox = form.querySelector(`#${prefix}embedding-status`);
+  if (!select || !statusBox) return;
+  select.innerHTML = embeddingProviderOptions(status.providers, selected);
+  select.value = selected;
+  form.querySelector(`#${prefix}embedding-model`).value = settings.embedding_model?.value || "";
+  form.querySelector(`#${prefix}embedding-base-url`).value = settings.embedding_base_url?.value || "";
+  form.querySelector(`#${prefix}embedding-dimensions`).value = settings.embedding_dimensions?.value || "";
+  form.querySelector(`#${prefix}embedding-api-key`).value = "";
+  statusBox.innerHTML = embeddingStatusHTML(status);
+  statusBox.querySelector("[data-embedding-reembed]")?.addEventListener("click", async (event) => {
+    const done = setButtonBusy(event.currentTarget, "Queuing");
+    try {
+      await api("/admin/embeddings/reembed", { method: "POST", body: "{}" });
+      scope.assertCurrent();
+      await refreshEmbeddingFields(form, prefix, null, scope);
+      ui.toast("Re-embedding queued", "success");
+    } catch (err) {
+      if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+      ui.toast(err.message, "error");
+    } finally {
+      if (scope.isCurrent()) done();
+    }
+  });
+  updateEmbeddingFieldVisibility(form, prefix);
+}
+
+function bindEmbeddingFields(form, prefix) {
+  const provider = form.querySelector(`#${prefix}embedding-provider`);
+  if (!provider) return;
+  provider.addEventListener("change", () => {
+    // A different embedding provider starts from its own defaults; the server
+    // also clears the previous provider's key, endpoint, and dimensions.
+    for (const id of ["embedding-model", "embedding-base-url", "embedding-dimensions", "embedding-api-key"]) {
+      const input = form.querySelector(`#${prefix}${id}`);
+      if (input) input.value = "";
+    }
+    updateEmbeddingFieldVisibility(form, prefix);
+  });
+  form.querySelector(`#${prefix}ai-provider`)?.addEventListener("change", () => updateEmbeddingFieldVisibility(form, prefix));
+}
+
+function collectEmbeddingSettings(form, prefix, body) {
+  const provider = form.querySelector(`#${prefix}embedding-provider`);
+  if (!provider) return;
+  body.embedding_provider = provider.value;
+  if (provider.value === "none") return;
+  // Empty optional fields remove the override so the provider default applies.
+  body.embedding_model = form.querySelector(`#${prefix}embedding-model`).value.trim();
+  body.embedding_dimensions = form.querySelector(`#${prefix}embedding-dimensions`).value.trim();
+  body.embedding_base_url = provider.value === "same" ? "" : form.querySelector(`#${prefix}embedding-base-url`).value.trim();
+  const key = form.querySelector(`#${prefix}embedding-api-key`).value.trim();
+  if (key && provider.value !== "same") body.embedding_api_key = key;
+}
+
 function apiKeysPanel() {
   return `<section class="split">
     <section class="panel">
@@ -2966,10 +3126,9 @@ function apiKeysPanel() {
     </section>
     <form class="panel form" id="api-keys-form">
       <h3>Update keys</h3>
-      <div class="field"><label for="ai-provider">Model Provider</label><select id="ai-provider">${modelProviderOptions()}</select></div>
-      <div class="field"><label for="ai-model">Model</label><input id="ai-model" type="text" autocomplete="off"></div>
-      <div class="field"><label for="ai-api-key">API Key</label><input id="ai-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
-      <div class="field"><label for="ai-base-url">Base URL</label><input id="ai-base-url" type="url" autocomplete="off"></div>
+      ${textModelFieldset("")}
+      ${embeddingFieldset("")}
+      <hr>
       <div class="field"><label for="resend-api-key">Resend API key</label><input id="resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
       <div class="field"><label for="resend-from-email">Resend from email</label><input id="resend-from-email" type="email" autocomplete="off"></div>
       <div class="field"><label for="x-client-id">X client ID</label><input id="x-client-id" type="text" autocomplete="off"></div>
@@ -2987,6 +3146,7 @@ async function bindAPIKeysPanel(scope) {
   const status = document.querySelector("#api-key-status");
   if (!form || !status) return;
   bindModelProviderDefaults(form, "");
+  bindEmbeddingFields(form, "");
   const refresh = async () => {
     try {
       const keys = await api("/admin/api-keys");
@@ -3011,6 +3171,7 @@ async function bindAPIKeysPanel(scope) {
       document.querySelector("#x-redirect-uri").value = keys.x_redirect_uri?.value || "";
       document.querySelector("#x-integration-enabled").checked = Boolean(keys.x_integration_enabled?.value);
       setModelProviderFields(form, "", keys);
+      await refreshEmbeddingFields(form, "", keys, scope);
       document.querySelector("#resend-from-email").value = keys.resend_from_email?.value || "";
     } catch (err) {
       if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
@@ -3025,6 +3186,7 @@ async function bindAPIKeysPanel(scope) {
     const body = {
       ai_provider: document.querySelector("#ai-provider").value,
     };
+    collectEmbeddingSettings(form, "", body);
     for (const [key, selector] of Object.entries({
       ai_api_key: "#ai-api-key",
       ai_model: "#ai-model",
@@ -3057,10 +3219,15 @@ async function bindAPIKeysPanel(scope) {
 
 function apiKeyStatus(keys) {
   const labels = {
-    ai_provider: "Model Provider",
-    ai_model: "Model",
-    ai_api_key: "API Key",
-    ai_base_url: "Base URL",
+    ai_provider: "Text generation provider",
+    ai_model: "Text generation model",
+    ai_api_key: "Text generation API key",
+    ai_base_url: "Text generation base URL",
+    embedding_provider: "Embedding provider",
+    embedding_model: "Embedding model",
+    embedding_api_key: "Embedding API key",
+    embedding_base_url: "Embedding base URL",
+    embedding_dimensions: "Embedding dimensions",
     resend_api_key: "Resend API key",
     resend_from_email: "Resend from email",
     x_client_id: "X client ID",
@@ -3106,11 +3273,9 @@ function adminSettingsPanel(settings) {
       <div class="field"><label for="admin-app-url">Public app URL</label><input id="admin-app-url" type="url" autocomplete="url" value="${escapeHTML(settings.app_url?.value || "")}"></div>
       <label class="checkbox-row"><input id="admin-signups-enabled" type="checkbox" ${settings.signups_enabled?.value ? "checked" : ""}> Public signups enabled</label>
       <label class="checkbox-row"><input id="admin-cookie-secure" type="checkbox" ${settings.cookie_secure?.value ? "checked" : ""}> Secure browser cookies</label>
+      ${textModelFieldset("admin-", selectedProvider, settings)}
+      ${embeddingFieldset("admin-")}
       <hr>
-      <div class="field"><label for="admin-ai-provider">Model Provider</label><select id="admin-ai-provider">${modelProviderOptions(selectedProvider)}</select></div>
-      <div class="field"><label for="admin-ai-model">Model</label><input id="admin-ai-model" type="text" autocomplete="off" value="${escapeHTML(settings.ai_model?.value || "")}"></div>
-      <div class="field"><label for="admin-ai-api-key">API Key</label><input id="admin-ai-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
-      <div class="field"><label for="admin-ai-base-url">Base URL</label><input id="admin-ai-base-url" type="url" autocomplete="off" value="${escapeHTML(settings.ai_base_url?.value || "")}"></div>
       <div class="field"><label for="admin-resend-api-key">Resend API key</label><input id="admin-resend-api-key" type="password" autocomplete="off" placeholder="Leave blank to keep current value"></div>
       <div class="field"><label for="admin-resend-from-email">Resend from email</label><input id="admin-resend-from-email" type="email" autocomplete="off" value="${escapeHTML(settings.resend_from_email?.value || "")}"></div>
       <div class="field"><label for="admin-x-client-id">X client ID</label><input id="admin-x-client-id" type="text" autocomplete="off"></div>
@@ -3128,10 +3293,15 @@ function settingsStatus(settings) {
     app_url: "Public app URL",
     signups_enabled: "Public signups",
     cookie_secure: "Secure cookies",
-    ai_provider: "Model Provider",
-    ai_model: "Model",
-    ai_api_key: "API Key",
-    ai_base_url: "Base URL",
+    ai_provider: "Text generation provider",
+    ai_model: "Text generation model",
+    ai_api_key: "Text generation API key",
+    ai_base_url: "Text generation base URL",
+    embedding_provider: "Embedding provider",
+    embedding_model: "Embedding model",
+    embedding_api_key: "Embedding API key",
+    embedding_base_url: "Embedding base URL",
+    embedding_dimensions: "Embedding dimensions",
     resend_api_key: "Resend API key",
     resend_from_email: "Resend from email",
     x_client_id: "X client ID",
@@ -3149,6 +3319,12 @@ function bindAdminSettingsPanel(scope) {
   let mutationBusy = false;
   const field = (selector) => form.querySelector(selector);
   bindModelProviderDefaults(form, "admin-");
+  bindEmbeddingFields(form, "admin-");
+  refreshEmbeddingFields(form, "admin-", null, scope).catch((err) => {
+    if (!scope.isCurrent() || routeLifecycle.isStale(err)) return;
+    const box = form.querySelector("#admin-embedding-status");
+    if (box) box.innerHTML = `<p class="meta">${escapeHTML(err.message)}</p>`;
+  });
   const refresh = async () => {
     const settings = await api("/admin/settings");
     scope.assertCurrent();
@@ -3157,6 +3333,7 @@ function bindAdminSettingsPanel(scope) {
     field("#admin-signups-enabled").checked = Boolean(settings.signups_enabled?.value);
     field("#admin-cookie-secure").checked = Boolean(settings.cookie_secure?.value);
     setModelProviderFields(form, "admin-", settings);
+    await refreshEmbeddingFields(form, "admin-", settings, scope);
     field("#admin-resend-from-email").value = settings.resend_from_email?.value || "";
     field("#admin-x-redirect-uri").value = settings.x_redirect_uri?.value || "";
     field("#admin-x-integration-enabled").checked = Boolean(settings.x_integration_enabled?.value);
@@ -3196,6 +3373,7 @@ function bindAdminSettingsPanel(scope) {
       x_integration_enabled: field("#admin-x-integration-enabled").checked,
       ai_provider: field("#admin-ai-provider").value,
     };
+    collectEmbeddingSettings(form, "admin-", body);
     for (const [key, selector] of Object.entries({
       ai_api_key: "#admin-ai-api-key",
       ai_model: "#admin-ai-model",
@@ -3550,7 +3728,7 @@ async function graphPage(scope) {
   const positions = graphPositions(nodes);
   setRoot(scope, shell("Graph", `
     <section class="graph-intro">
-      <div><p class="lede">Explore how sources, notes, people, concepts, and highlights relate.</p><p class="meta">A focused, bounded view · ${nodes.length} nodes · ${edges.length} relationships${graph.truncated ? " · expand intentionally" : ""}</p></div>
+      <div><p class="lede">Explore how sources, notes, people, concepts, and highlights relate.</p><p class="meta">A focused, bounded view · ${nodes.length} nodes · ${edges.length} relationships${graph.truncated ? " · expand intentionally" : ""}</p>${graph.semantic_message ? `<p class="meta" data-semantic-status="${escapeHTML(graph.semantic_status || "")}">${escapeHTML(graph.semantic_message)}</p>` : ""}</div>
       <form class="graph-focus" id="graph-focus-form">
         <label for="graph-focus">Focus node</label>
         <select id="graph-focus"><option value="">Recent knowledge</option>${nodes.map((node) => `<option value="${escapeHTML(node.id)}"${focus === node.id ? " selected" : ""}>${escapeHTML(node.title || node.id)}</option>`).join("")}</select>
@@ -3726,6 +3904,7 @@ function adminUsagePanel(data) {
   return `<section class="grid compact-grid">
     ${adminStat("AI calls", data.requests_today, data.ai_configured || data.gemini_configured ? "Configured" : "Not configured")}
     ${adminStat("AI errors", data.provider_usage?.errors_total || 0, data.provider_usage?.since || "")}
+    ${adminStat("Embedding model", data.embedding?.configured ? data.embedding.model : "Not configured", embeddingUsageMeta(data.embedding))}
     ${adminStat("Summaries done", data.summaries_completed, `Pending ${formatCount(data.summaries_pending)} · Failed ${formatCount(data.summaries_failed)}`)}
     ${adminStat("Jobs queued", data.background_jobs_queued, `Running ${formatCount(data.background_jobs_running)} · Failed ${formatCount(data.background_jobs_failed)}`)}
   </section>
@@ -3744,6 +3923,14 @@ function adminUsagePanel(data) {
     <p class="meta">Summary validation and evidence failures, including failures that did not exhaust a background job.</p>
     ${adminFailedSummaries(data.recent_failed_summaries || [])}
   </section>`;
+}
+
+function embeddingUsageMeta(embedding) {
+  if (!embedding) return "";
+  if (!embedding.configured) return `${embedding.message || "The embedding model is not configured."} Configure it in Admin > Settings.`;
+  const vectors = embedding.vectors || {};
+  const pending = Number(vectors.stale || 0) + Number(vectors.missing || 0);
+  return `${embedding.provider_name || embedding.provider} · ${formatCount(vectors.current)} embedded${pending ? ` · ${formatCount(pending)} waiting${vectors.job_running || vectors.job_queued ? " (re-embedding)" : ""}` : ""}`;
 }
 
 function adminFailedJobs(jobs) {

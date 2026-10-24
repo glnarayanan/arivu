@@ -184,8 +184,8 @@ func (c EmbeddingConfig) ReasonMessage() string {
 	case EmbeddingReasonDisabled:
 		return "Embeddings are turned off."
 	case EmbeddingReasonTextOnly:
-		message := "The text generation provider (" + definition.Name + ") has no embeddings API, so an embedding model must be configured separately."
-		if definition.Embedding.Note != "" {
+		message := "The text generation provider (" + definition.Name + ") has no embeddings API, so embeddings need their own provider."
+		if strings.Contains(definition.Embedding.Note, "Use ") {
 			message += " " + definition.Embedding.Note
 		}
 		return message
