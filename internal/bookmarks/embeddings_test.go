@@ -337,3 +337,32 @@ func TestEnrichmentStoresTheEmbeddingSpace(t *testing.T) {
 		t.Fatalf("stored space = %q", got)
 	}
 }
+
+func TestReembedPausesOnSystemicRejection(t *testing.T) {
+	for _, status := range []int{http.StatusNotFound, http.StatusBadRequest} {
+		service, db := newKnowledgeTestService(t)
+		embedder := newFakeEmbedder("wrong-model")
+		embedder.failWith = status
+		service.SetEmbeddingProvider(embedder.client)
+		seedKnowledgeUser(t, db, "u1", "one@example.com")
+		for _, id := range []string{"a", "b", "c", "d", "e", "f"} {
+			seedEmbeddableBookmark(t, db, "u1", id, "Item "+id, "Body "+id, "", "")
+		}
+		if queued, err := service.ScheduleReembed(context.Background()); err != nil || !queued {
+			t.Fatalf("schedule: queued=%v err=%v", queued, err)
+		}
+		runQueuedReembedJobs(t, service, db, 5)
+		var failed int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM jobs WHERE type=? AND status='failed' AND last_error LIKE 're-embed paused (provider_rejected)%'`, JobTypeReembed).Scan(&failed)
+		if failed != 1 {
+			t.Fatalf("status %d: a misconfigured model must pause visibly, failed jobs=%d", status, failed)
+		}
+		maxCalls := 1
+		if status == http.StatusBadRequest {
+			maxCalls = reembedSystemicSkips
+		}
+		if calls := embedder.callCount(); calls > maxCalls {
+			t.Fatalf("status %d: swept %d items before pausing", status, calls)
+		}
+	}
+}

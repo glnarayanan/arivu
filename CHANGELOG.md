@@ -29,7 +29,9 @@ All notable changes to this project will be documented in this file.
   provider, model, or dimensions excludes older vectors at once and rebuilds
   them with a new `embedding.reembed` background job: batches of 16 at low
   priority on the existing worker, resumed after restarts, and scheduled at
-  startup, hourly, after settings changes, or with **Re-embed now**. Graph
+  startup, hourly, after settings changes, or with **Re-embed now**. A wrong
+  embedding model id or Base URL pauses the pass as a visible failed job
+  instead of sweeping the library. Graph
   search falls back to keyword ranking, the Graph keeps entities and concepts,
   and related items explain a missing embedding model.
 - A missing embedding model is reported as `embedding_not_configured` ("The

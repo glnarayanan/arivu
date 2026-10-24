@@ -257,7 +257,9 @@ provider is text-only (for example DeepSeek), `same` leaves embeddings
 unconfigured and Settings explains why; pick an embedding provider instead. A
 separately chosen provider never borrows the text generation key, and switching
 embedding providers clears the previous provider's key, model, Base URL, and
-dimensions.
+dimensions stored in SQLite. `EMBEDDING_MODEL`, `EMBEDDING_BASE_URL`, and
+`EMBEDDING_DIMENSIONS` from the environment remain fallbacks for whichever
+provider is selected, so keep them empty when switching providers in the UI.
 
 Embedding support per preset, checked against each provider's public API docs
 in October 2026:
@@ -283,7 +285,10 @@ When the embedding provider, model, or dimensions change, older vectors are
 excluded from similarity at once and rebuilt by the `embedding.reembed`
 background job: batches of 16 at low priority on the single job worker, resumed
 after restarts, scheduled at startup, hourly, after settings changes, and from
-**Re-embed now**. Admin > API Usage and the Embedding model section show
+**Re-embed now**. An item the provider rejects (400/413/422) is skipped and
+retried by a later pass; a 404, 405, or 409, or three rejections without a
+single success, pauses the pass as a failed job that names the likely cause (a
+wrong model id or Base URL). Admin > API Usage and the Embedding model section show
 embedded, stale, and missing counts. A missing embedding model is reported as
 `embedding_not_configured`, never as the text provider's
 `provider_not_configured`.

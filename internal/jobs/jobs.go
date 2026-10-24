@@ -58,6 +58,21 @@ func (q *Queue) EnqueuePriority(ctx context.Context, userID, jobType, payload st
 	return id, err
 }
 
+// EnqueuePriorityIfIdle queues a user-less job unless one of the same type is
+// already queued or leased, in a single statement so concurrent callers
+// cannot both enqueue. It reports whether a job was added.
+func (q *Queue) EnqueuePriorityIfIdle(ctx context.Context, jobType, payload string, priority int) (bool, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := q.db.ExecContext(ctx, `INSERT INTO jobs(id,user_id,type,status,priority,payload_json,run_after,created_at,updated_at)
+		SELECT ?,NULL,?,'queued',?,?,?,?,? WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE type=? AND status IN ('queued','leased'))`,
+		ids.New(), jobType, priority, payload, now, now, now, jobType)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 func (q *Queue) Lease(ctx context.Context, leaseFor time.Duration) (Job, bool, error) {
 	now := time.Now().UTC()
 	tx, err := q.db.BeginTx(ctx, nil)

@@ -156,13 +156,6 @@ func (s *Service) ScheduleReembed(ctx context.Context) (bool, error) {
 	if space == "" {
 		return false, nil
 	}
-	var pendingJob int
-	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM jobs WHERE type=? AND status IN ('queued','leased'))`, JobTypeReembed).Scan(&pendingJob); err != nil {
-		return false, err
-	}
-	if pendingJob == 1 {
-		return false, nil
-	}
 	var stale int
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM bookmarks b WHERE (b.embedding IS NULL OR COALESCE(b.embedding_model,'')<>?) AND `+embeddableBookmarkSQL+`)`, space).Scan(&stale); err != nil {
 		return false, err
@@ -170,7 +163,12 @@ func (s *Service) ScheduleReembed(ctx context.Context) (bool, error) {
 	if stale == 0 {
 		return false, nil
 	}
-	return true, s.enqueueReembed(ctx, reembedPayload{Space: space})
+	raw, err := json.Marshal(reembedPayload{Space: space})
+	if err != nil {
+		return false, err
+	}
+	// Atomic check-and-insert: the hourly tick and admin actions may race.
+	return s.jobs.EnqueuePriorityIfIdle(ctx, JobTypeReembed, string(raw), reembedPriority)
 }
 
 func (s *Service) enqueueReembed(ctx context.Context, payload reembedPayload) error {
@@ -180,6 +178,14 @@ func (s *Service) enqueueReembed(ctx context.Context, payload reembedPayload) er
 	}
 	_, err = s.jobs.EnqueuePriority(ctx, "", JobTypeReembed, string(raw), reembedPriority)
 	return err
+}
+
+// reembedSystemicSkips rejected items without a single success pause the pass.
+const reembedSystemicSkips = 3
+
+func systemicEmbeddingRejection(err error) bool {
+	message := err.Error()
+	return strings.Contains(message, "status 404") || strings.Contains(message, "status 405") || strings.Contains(message, "status 409")
 }
 
 type reembedCandidate struct {
@@ -228,6 +234,7 @@ func (s *Service) processReembed(ctx context.Context, payload string) error {
 	}
 	deadline := time.Now().Add(reembedBudget)
 	last := after
+	embedded, skipped := 0, 0
 	for _, item := range candidates {
 		if ctx.Err() != nil || time.Now().After(deadline) {
 			break
@@ -238,8 +245,15 @@ func (s *Service) processReembed(ctx context.Context, payload string) error {
 			case providers.ErrorEmbeddingNotConfigured:
 				return nil
 			case providers.ErrorProviderRejected, providers.ErrorProviderInvalidResponse:
+				// A missing endpoint or model, or rejections with no success
+				// at all, point at the configuration rather than one
+				// document: pause visibly instead of sweeping the library.
+				if systemicEmbeddingRejection(err) || (embedded == 0 && skipped+1 >= reembedSystemicSkips) {
+					return fmt.Errorf("re-embed paused (%s): %s Check the embedding model id and base URL.", providers.SafeErrorCode(err), providers.SafeErrorMessage(err))
+				}
 				// This item cannot be embedded as-is; skip it so one bad
 				// document does not block the pass. A later pass retries it.
+				skipped++
 				log.Printf("embeddings: skipped bookmark %s during re-embed: %s", item.ID, providers.SafeErrorCode(err))
 				last = item.ID
 				continue
@@ -251,6 +265,7 @@ func (s *Service) processReembed(ctx context.Context, payload string) error {
 		if _, err := s.db.ExecContext(ctx, `UPDATE bookmarks SET embedding=?,embedding_dim=?,embedding_model=? WHERE id=? AND user_id=?`, raw, len(values), space, item.ID, item.UserID); err != nil {
 			return err
 		}
+		embedded++
 		last = item.ID
 	}
 	if len(candidates) == 0 {
