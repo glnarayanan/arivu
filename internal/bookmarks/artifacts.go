@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -105,7 +106,7 @@ func usedAssetBytesReplacingBookmark(ctx context.Context, tx *sql.Tx, userID, re
 }
 
 func (s *Service) captureAttempts(ctx context.Context, userID, bookmarkID string) []map[string]any {
-	rows, err := s.db.QueryContext(ctx, `SELECT id,retry_of_id,status,requested_url,final_url,engine,engine_version,error_code,queued_at,COALESCE(started_at,''),COALESCE(finished_at,'') FROM capture_attempts WHERE user_id=? AND bookmark_id=? ORDER BY queued_at DESC`, userID, bookmarkID)
+	rows, err := s.db.QueryContext(ctx, `SELECT id,COALESCE(retry_of_id,''),status,requested_url,final_url,engine,engine_version,error_code,queued_at,COALESCE(started_at,''),COALESCE(finished_at,'') FROM capture_attempts WHERE user_id=? AND bookmark_id=? ORDER BY queued_at DESC`, userID, bookmarkID)
 	if err != nil {
 		return []map[string]any{}
 	}
@@ -113,7 +114,10 @@ func (s *Service) captureAttempts(ctx context.Context, userID, bookmarkID string
 	out := []map[string]any{}
 	for rows.Next() {
 		var id, retry, status, requested, final, engine, version, code, queued, started, finished string
-		_ = rows.Scan(&id, &retry, &status, &requested, &final, &engine, &version, &code, &queued, &started, &finished)
+		if err := rows.Scan(&id, &retry, &status, &requested, &final, &engine, &version, &code, &queued, &started, &finished); err != nil {
+			log.Printf("capture attempt row skipped for bookmark %s: %v", bookmarkID, err)
+			continue
+		}
 		out = append(out, map[string]any{"id": id, "retry_of_id": retry, "status": status, "requested_url": requested, "final_url": final, "engine": engine, "engine_version": version, "error_code": code, "queued_at": queued, "started_at": started, "finished_at": finished})
 	}
 	return out
