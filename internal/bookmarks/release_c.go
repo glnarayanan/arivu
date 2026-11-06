@@ -44,7 +44,8 @@ type feedXML struct {
 		Title string `xml:"title"`
 		ID    string `xml:"id"`
 		Links []struct {
-			Href, Rel string `xml:"href,attr"`
+			Href string `xml:"href,attr"`
+			Rel  string `xml:"rel,attr"`
 		} `xml:"link"`
 		Summary   string `xml:"summary"`
 		Content   string `xml:"content"`
@@ -65,11 +66,19 @@ func parseFeed(raw []byte) ([]feedItem, error) {
 		out = append(out, feedItem{Title: strings.TrimSpace(x.Title), Link: strings.TrimSpace(x.Link), GUID: strings.TrimSpace(x.GUID), Content: x.Description, Published: feedTime(x.PubDate)})
 	}
 	for _, x := range doc.Entries {
-		link := ""
+		// Prefer the first rel="alternate" link (a missing rel means
+		// alternate in Atom), else fall back to the first link.
+		link, alternate := "", ""
 		for _, l := range x.Links {
-			if link == "" || l.Rel == "alternate" {
+			if link == "" {
 				link = l.Href
 			}
+			if alternate == "" && (l.Rel == "" || l.Rel == "alternate") {
+				alternate = l.Href
+			}
+		}
+		if alternate != "" {
+			link = alternate
 		}
 		out = append(out, feedItem{Title: strings.TrimSpace(x.Title), Link: strings.TrimSpace(link), GUID: strings.TrimSpace(x.ID), Content: x.Summary + x.Content, Published: feedTime(fallback(x.Published, x.Updated))})
 	}

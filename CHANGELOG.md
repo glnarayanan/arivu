@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Atom feeds now save each entry's main article link. Before, the feed
+  reader ignored each link's `rel` value and took whichever link came first,
+  so entries that list a comments, enclosure, or "via" link before the
+  article could save the wrong page.
+- Updated `golang.org/x/net` to 0.62.0, which fixes two HTML parsing issues
+  (GO-2026-6860, GO-2026-6866) on the page fetching path.
+
 ## [1.8.4] - 2026-10-24
 
 - Embeddings now work with providers other than Gemini. Before, every
