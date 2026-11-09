@@ -16,6 +16,12 @@ All notable changes to this project will be documented in this file.
   `zlib1g` 1:1.3.dfsg+really1.3.1-1+deb13u1, and `libnss3`
   2:3.110-1+deb13u5 in the capture image). Rebuild the images to pick up
   new fixes.
+- The `capture` container image no longer ships npm, npx, corepack, or yarn.
+  The helper only runs `node`, as in the native capture archive, and the
+  npm bundled with the Node image was the only source of the flagged
+  `brace-expansion`, `undici`, `glob`, `minimatch`, `ip-address`, and
+  `postcss-selector-parser` packages in that image. The capture
+  dependencies are still installed with npm in the build stage.
 
 ## [1.8.4] - 2026-10-24
 

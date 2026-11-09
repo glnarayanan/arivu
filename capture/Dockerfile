@@ -41,13 +41,18 @@ ENV NODE_ENV=production \
 # Chromium's shared libraries come from the bundled Playwright, as on native
 # installs. ca-certificates lets Monolith verify TLS through the capture proxy.
 # The upgrade picks up Debian security fixes published after the Node base
-# image was built.
+# image was built. The helper runs only `node`, so the package managers the
+# Node image ships (npm, npx, corepack, yarn) are removed, as in the native
+# archive, which carries the node binary alone; npm stays in the deps stage.
 COPY --from=deps /usr/local/lib/arivu-capture/node_modules ./node_modules
 RUN export DEBIAN_FRONTEND=noninteractive \
   && node node_modules/playwright/cli.js install-deps chromium \
   && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends ca-certificates \
   && rm -rf /var/lib/apt/lists/* \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/corepack \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    /usr/local/bin/yarn /usr/local/bin/yarnpkg /opt/yarn-v* \
   && groupadd --system --gid 10001 arivu \
   && useradd --system --uid 10002 --gid arivu --no-create-home --home-dir /nonexistent \
     --shell /usr/sbin/nologin arivu-capture
