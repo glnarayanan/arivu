@@ -15,7 +15,11 @@ RUN CGO_ENABLED=1 go build -trimpath \
 
 FROM debian:trixie-slim AS runtime
 
-RUN apt-get update \
+# Upgrade first so the image picks up Debian security fixes published after
+# the base image was built (the trixie-slim tag is not rebuilt for each one).
+RUN export DEBIAN_FRONTEND=noninteractive \
+  && apt-get update \
+  && apt-get upgrade -y --no-install-recommends \
   && apt-get install -y --no-install-recommends ca-certificates tzdata \
   && rm -rf /var/lib/apt/lists/* \
   && groupadd --system --gid 10001 arivu \

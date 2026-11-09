@@ -10,6 +10,12 @@ All notable changes to this project will be documented in this file.
   article could save the wrong page.
 - Updated `golang.org/x/net` to 0.62.0, which fixes two HTML parsing issues
   (GO-2026-6860, GO-2026-6866) on the page fetching path.
+- The `arivu` and `capture` container images now upgrade their Debian
+  packages when built, so they include security fixes released after the
+  base images were published (for example `apt`/`libapt-pkg7.0` 3.0.4,
+  `zlib1g` 1:1.3.dfsg+really1.3.1-1+deb13u1, and `libnss3`
+  2:3.110-1+deb13u5 in the capture image). Rebuild the images to pick up
+  new fixes.
 
 ## [1.8.4] - 2026-10-24
 
