@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## Unreleased
+## [1.8.5] - 2026-11-09
 
 - Atom feeds now save each entry's main article link. Before, the feed
   reader ignored each link's `rel` value and took whichever link came first,
