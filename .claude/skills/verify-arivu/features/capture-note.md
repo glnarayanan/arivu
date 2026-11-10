@@ -30,7 +30,7 @@ Preconditions:
 - **Reopen.** Choose the `Release checklist` link. `#route-title` reads `Release checklist`. The `Title` field shows `Release checklist` and `Body` shows `Tag and publish`.
 - **Capture dialog entry.** Return to any authenticated page. Choose `Capture`. A dialog named `Capture` appears. Set `What are you capturing?` to `Note`. Fill `Title` with `Capture dialog note` and `Note` with `From global capture`. Choose `Save to Arivu`. Toast `Captured` appears and the app opens `/notes/:id` with heading `Capture dialog note`.
 - **Stored state.** Run `control-arivu login` then `control-arivu api GET /api/notes`. The JSON `notes` array includes both titles. Run `control-arivu db -- "SELECT title FROM notes ORDER BY title;"` and expect `Capture dialog note` and `Release checklist`.
-- **Proof.** From `/notes`, capture `.cursor/skills/verify-arivu/artifacts/$RUN_ID/capture-note/list.aria.txt` and `list.png`. Both identify Arivu, heading `Notes`, and `Release checklist`. Also save `notes.json` from the API GET.
+- **Proof.** From `/notes`, capture `.claude/skills/verify-arivu/artifacts/$RUN_ID/capture-note/list.aria.txt` and `list.png`. Both identify Arivu, heading `Notes`, and `Release checklist`. Also save `notes.json` from the API GET.
 
 ## Gotchas
 

@@ -14,10 +14,10 @@ Read `features/README.md` before driving. A proof that uses one convenient entry
 From the repository root:
 
 ```bash
-chmod +x .cursor/skills/verify-arivu/scripts/control-arivu
-.cursor/skills/verify-arivu/scripts/control-arivu launch
+chmod +x .claude/skills/verify-arivu/scripts/control-arivu
+.claude/skills/verify-arivu/scripts/control-arivu launch
 export ARIVU_VERIFY_RUN_ID=<printed RUN_ID>
-.cursor/skills/verify-arivu/scripts/control-arivu doctor
+.claude/skills/verify-arivu/scripts/control-arivu doctor
 ```
 
 `launch` builds `cmd/arivu` into `/tmp/arivu-verify-$RUN_ID/arivu` with `CGO_ENABLED=1` (required by `go-sqlite3`), then starts `serve` in a new session so the helper can exit:
@@ -47,7 +47,7 @@ Refuse to drive `http://127.0.0.1:8080` (or any other URL) unless doctor says th
 
 ## Drive
 
-Harness: Playwright MCP (preferred) or Cursor IDE browser against `{URL}`, plus `control-arivu` for doctor, API second views, SQLite side effects, and isolated CLI. If a harness blocks the **Create account** button (false-positive signup policy), use `control-arivu signup` then the browser **Sign in** path for that account step only; still prove note mutations in the UI.
+Harness: Playwright MCP (preferred) or the agent's built-in browser against `{URL}`, plus `control-arivu` for doctor, API second views, SQLite side effects, and isolated CLI. If a harness blocks the **Create account** button (false-positive signup policy), use `control-arivu signup` then the browser **Sign in** path for that account step only; still prove note mutations in the UI.
 
 Stable handles (from `internal/app/web/app.js`):
 
@@ -71,10 +71,10 @@ Stable handles (from `internal/app/web/app.js`):
 CLI (isolated `HOME` only):
 
 ```bash
-.cursor/skills/verify-arivu/scripts/control-arivu cli -- login --api "$URL/api" --email verify@arivu.test --password VerifyPass9
-.cursor/skills/verify-arivu/scripts/control-arivu cli -- save "https://example.com/verify-link"
-.cursor/skills/verify-arivu/scripts/control-arivu cli -- list
-.cursor/skills/verify-arivu/scripts/control-arivu cli -- search "verify-link"
+.claude/skills/verify-arivu/scripts/control-arivu cli -- login --api "$URL/api" --email verify@arivu.test --password VerifyPass9
+.claude/skills/verify-arivu/scripts/control-arivu cli -- save "https://example.com/verify-link"
+.claude/skills/verify-arivu/scripts/control-arivu cli -- list
+.claude/skills/verify-arivu/scripts/control-arivu cli -- search "verify-link"
 ```
 
 `save`/`list`/`search` are bookmark-only. Notes are not a CLI surface.
@@ -82,17 +82,17 @@ CLI (isolated `HOME` only):
 API second view (same account, not the primary user path):
 
 ```bash
-.cursor/skills/verify-arivu/scripts/control-arivu login
-.cursor/skills/verify-arivu/scripts/control-arivu api GET /api/notes
-.cursor/skills/verify-arivu/scripts/control-arivu api GET /api/library/items?scope=content&limit=48
-.cursor/skills/verify-arivu/scripts/control-arivu api GET /api/search/items?q=Release
+.claude/skills/verify-arivu/scripts/control-arivu login
+.claude/skills/verify-arivu/scripts/control-arivu api GET /api/notes
+.claude/skills/verify-arivu/scripts/control-arivu api GET /api/library/items?scope=content&limit=48
+.claude/skills/verify-arivu/scripts/control-arivu api GET /api/search/items?q=Release
 ```
 
 Mutating `/api/*` is not a UI proof. Use it only as a second read of stored state, or when a feature file's preconditions explicitly seed data after a prior mapped UI path.
 
 ## Evidence
 
-Write under `.cursor/skills/verify-arivu/artifacts/$RUN_ID/<feature>/`. That directory survives `stop`.
+Write under `.claude/skills/verify-arivu/artifacts/$RUN_ID/<feature>/`. That directory survives `stop`.
 
 Proof standards:
 
@@ -109,11 +109,11 @@ Proof standards:
 ## Cleanup
 
 ```bash
-.cursor/skills/verify-arivu/scripts/control-arivu stop
+.claude/skills/verify-arivu/scripts/control-arivu stop
 ```
 
-Kills only the PID in this run's state file. Deletes `/tmp/arivu-verify-$RUN_ID` and `.cursor/skills/verify-arivu/runs/$RUN_ID`. Does not delete `.cursor/skills/verify-arivu/artifacts/`. Does not kill by process name `arivu`. After a failed attempt, run `stop` before launching again so ports and temp dirs are not stranded.
+Kills only the PID in this run's state file. Deletes `/tmp/arivu-verify-$RUN_ID` and `.claude/skills/verify-arivu/runs/$RUN_ID`. Does not delete `.claude/skills/verify-arivu/artifacts/`. Does not kill by process name `arivu`. After a failed attempt, run `stop` before launching again so ports and temp dirs are not stranded.
 
 ## Helpers
 
-`.cursor/skills/verify-arivu/scripts/control-arivu` is executable. Subcommands: `launch`, `doctor`, `env`, `signup`, `login`, `api`, `db`, `cli`, `stop`. It resolves the repo root from its path. Pass `ARIVU_VERIFY_RUN_ID` or it uses the newest run directory.
+`.claude/skills/verify-arivu/scripts/control-arivu` is executable. Subcommands: `launch`, `doctor`, `env`, `signup`, `login`, `api`, `db`, `cli`, `stop`. It resolves the repo root from its path. Pass `ARIVU_VERIFY_RUN_ID` or it uses the newest run directory.
