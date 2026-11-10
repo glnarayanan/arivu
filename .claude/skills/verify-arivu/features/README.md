@@ -4,7 +4,7 @@ This directory is the maintained source for verifying Arivu's user-facing behavi
 
 ## Baseline preconditions
 
-- Launch with `.cursor/skills/verify-arivu/scripts/control-arivu launch` and export `ARIVU_VERIFY_RUN_ID`.
+- Launch with `.claude/skills/verify-arivu/scripts/control-arivu launch` and export `ARIVU_VERIFY_RUN_ID`.
 - Run `control-arivu doctor` and require the printed URL, this run's `/tmp/arivu-verify-$RUN_ID` database, and this run's binary.
 - Never drive an instance that was not started by this verification run. In particular, do not open `http://127.0.0.1:8080` unless doctor says this run owns that port.
 - Create the verify user on `{URL}/auth` with Email `verify@arivu.test` and Password `VerifyPass9` via **Create account**, unless a recipe's preconditions say the account already exists.
@@ -15,7 +15,7 @@ This directory is the maintained source for verifying Arivu's user-facing behavi
 - Start every recipe from the baseline state unless its preconditions say otherwise.
 - Prefer accessible names, `#route-title`, and the IDs in the skill over CSS position or coordinates.
 - Treat every command as literal. Keep emails, titles, and flags unchanged.
-- Run browser actions through Playwright MCP (or Cursor IDE browser) against the URL from `control-arivu env`.
+- Run browser actions through Playwright MCP (or the agent's built-in browser) against the URL from `control-arivu env`.
 - Run terminal actions through `control-arivu cli --` (isolated `HOME`) or `control-arivu api` / `db` for second reads.
 - Restore seeded data after a mutation only when the recipe says so. Do not remove proof artifacts during cleanup.
 
