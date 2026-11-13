@@ -4,7 +4,7 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 tool_root="$HOME/.local/share/arivu-orb"
 bin_dir="$HOME/.local/bin"
-go_version="1.27.4"
+go_version="$(awk '$1 == "go" { print $2; exit }' "$repo_root/go.mod")"
 node_version="24.22.1"
 
 step() {
@@ -118,10 +118,14 @@ EOF
 
 install_dependencies() {
 	local lock_hash stamp
-	lock_hash="$(sha256sum "$repo_root/capture/package-lock.json" | awk '{print $1}')"
+	lock_hash="$(
+		{ sha256sum "$repo_root/capture/package.json" "$repo_root/capture/package-lock.json"; node --version; npm --version; } |
+			sha256sum | awk '{print $1}'
+	)"
 	stamp="$repo_root/capture/node_modules/.amp-package-lock.sha256"
-	if [[ -f "$stamp" ]] && [[ "$(cat "$stamp")" == "$lock_hash" ]]; then
-		echo "    capture dependencies match package-lock.json"
+	if [[ -f "$stamp" ]] && [[ "$(cat "$stamp")" == "$lock_hash" ]] &&
+		npm ls --prefix "$repo_root/capture" --all --offline >/dev/null 2>&1; then
+		echo "    capture dependencies match manifests and toolchain"
 	else
 		npm ci --prefix "$repo_root/capture"
 		printf '%s\n' "$lock_hash" > "$stamp"
@@ -148,5 +152,10 @@ started=$SECONDS
 cd "$repo_root"
 install_dependencies
 elapsed "$started" "dependency setup"
+
+step "Warming Go build cache"
+started=$SECONDS
+go build ./...
+elapsed "$started" "Go build cache"
 
 printf '\nOrb setup complete: %s, Node.js %s\n' "$(go version)" "$(node --version)"

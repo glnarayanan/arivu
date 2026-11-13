@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Orb setup now reads Go's version from `go.mod`, warms the Go build cache,
+  and checks capture manifests, tool versions, and installed dependencies
+  before reusing them. Repository rules now ignore orb portal metadata.
 - Updated the Go toolchain to 1.27.4 (including the container and orb setup),
   which fixes an HTTP/1 server crash caused by a `MaxBytesReader` header race
   in `net/http` (GO-2026-6859) reported by the vulnerability scan.

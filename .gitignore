@@ -22,6 +22,7 @@ migration-manifest.json
 .DS_Store
 /tmp/
 .cache/
+/.amp/portals/
 .codegraph/
 .impeccable/
 .reference/

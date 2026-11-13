@@ -4,7 +4,7 @@ Thanks for your interest in contributing. This repository contains the standalon
 
 ## Local Development
 
-Use Go 1.24 or newer.
+Use the Go version declared in `go.mod`.
 
 ```bash
 git clone https://github.com/glnarayanan/arivu.git
@@ -21,6 +21,19 @@ SECRET_KEY=replace-with-at-least-32-random-bytes
 APP_URL=http://127.0.0.1:8080
 COOKIE_SECURE=false
 ```
+
+### Amp orbs
+
+`.agents/setup` installs Go from `go.mod`, Node.js 24.22.1 (matching CI),
+and the C toolchain required by SQLite. It downloads Go modules, installs
+the locked capture dependencies, and warms Go's build cache for snapshots.
+Warm runs reuse installed tools and valid capture dependencies.
+The toolchain stays available in non-interactive login shells.
+
+`.agents/resume` only checks tool availability. SQLite needs no database
+service, and neither script creates `.env` files or starts the app.
+Chromium and Monolith are not installed by orb setup; full browser-capture
+verification requires the runtime described in `capture/README.md`.
 
 ## Architecture Notes
 
