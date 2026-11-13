@@ -26,9 +26,9 @@ JSON, including `"chromium_sandbox":"active"`, `"disabled"`, or
 
 Direct package versions are exact in `package.json` and `package-lock.json`:
 
-- Playwright `1.64.1` and its pinned Chromium runtime (Apache-2.0).
+- Playwright `1.65.0` and its pinned Chromium runtime (Apache-2.0).
 - Mozilla Readability `0.6.0` (Apache-2.0).
-- JSDOM `30.1.3` (MIT).
+- JSDOM `31.0.0` (MIT).
 - Monolith `2.11.6` (CC0-1.0), installed as a separate executable.
 
 No dependency from this bundle may be imported into `internal/app/web`.

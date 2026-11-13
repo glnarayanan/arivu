@@ -62,9 +62,9 @@ carry browser and DOM dependencies. It is not linked into the Go binary and
 nothing from it is imported by the embedded frontend. Its approved direct
 dependencies are pinned in `capture/package.json` and its lockfile:
 
-- Playwright `1.64.1` with its pinned Chromium runtime.
+- Playwright `1.65.0` with its pinned Chromium runtime.
 - Mozilla Readability `0.6.0`.
-- JSDOM `30.1.3`.
+- JSDOM `31.0.0`.
 - Monolith `2.11.6` as a separately pinned executable.
 
 They are justified because a real browser, a mature article projection, an

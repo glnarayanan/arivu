@@ -540,7 +540,7 @@ profile you loaded yourself; never set it to `unconfined`.
 
 ```bash
 docker compose -p <app-name> logs capture | grep 'capture helper ready'
-# capture helper ready: Chromium 156.0.8078.4, sandbox active, Monolith 2.11.6
+# capture helper ready: Chromium 158.0.8127.18, sandbox active, Monolith 2.11.6
 docker compose -p <app-name> exec -T capture node src/preflight.mjs
 # {"chromium":"…","chromium_sandbox":"active","renderers":[{"user_namespace":true,"pid_namespace":true,"network_namespace":true,"chroot":true,"seccomp_bpf":true}],"monolith":"2.11.6"}
 docker compose -p <app-name> exec -T capture cat /proc/1/attr/current
