@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## Unreleased
+
+- Updated the capture runtime's Playwright to 1.65.0 (Chromium 158) and
+  JSDOM to 31.0.0. Neither release changes how the capture helper parses
+  pages or authenticates to the safe proxy.
+- Updated `github.com/mattn/go-sqlite3` to 1.14.53.
+- Updated the `peter-evans/create-pull-request` action used by the OpenWiki
+  workflow to 8.1.2.
+
 ## [1.8.5] - 2026-11-09
 
 - Atom feeds now save each entry's main article link. Before, the feed
