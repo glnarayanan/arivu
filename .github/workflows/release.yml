@@ -54,8 +54,8 @@ jobs:
           rm -rf /tmp/arivu-capture-runtime
           mkdir -p /tmp/arivu-capture-runtime
           (cd capture && npx playwright install --with-deps chromium)
-          rustup toolchain install 1.99.1 --profile minimal
-          cargo +1.99.1 install --locked --version 2.11.6 --root /tmp/arivu-capture-monolith monolith
+          rustup toolchain install 1.100.0 --profile minimal
+          cargo +1.100.0 install --locked --version 2.11.6 --root /tmp/arivu-capture-monolith monolith
           install -m 0755 "$(command -v node)" /tmp/arivu-capture-runtime/node
           install -m 0755 /tmp/arivu-capture-monolith/bin/monolith /tmp/arivu-capture-runtime/monolith
           cp -a capture/node_modules /tmp/arivu-capture-runtime/node_modules
