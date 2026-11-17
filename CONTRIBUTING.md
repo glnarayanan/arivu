@@ -24,7 +24,7 @@ COOKIE_SECURE=false
 
 ### Amp orbs
 
-`.agents/setup` installs Go from `go.mod`, Node.js 24.22.1 (matching CI),
+`.agents/setup` installs Go from `go.mod`, Node.js 24.22.3 (matching CI),
 and the C toolchain required by SQLite. It downloads Go modules, installs
 the locked capture dependencies, and warms Go's build cache for snapshots.
 Warm runs reuse installed tools and valid capture dependencies.

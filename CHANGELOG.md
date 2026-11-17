@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Updated Node.js to 24.22.3 in CI, the release workflow, the capture
+  image, and orb setup. This security release fixes TLS and HTTP/2 issues
+  in the Node runtime that the native capture archive and the capture image
+  ship, including a remotely reachable TLS server crash (CVE-2026-126051,
+  High) and HTTP/2 stream and buffer handling flaws (CVE-2026-123863,
+  CVE-2026-123865, CVE-2026-123866, CVE-2026-123874, High).
+- Updated `golang.org/x/crypto` to 0.59.0 (and `golang.org/x/sys` to
+  0.50.0), which clears the module-level GO-2026-5932 finding for the
+  unmaintained `openpgp` package. Arivu does not use that package.
+- Monolith 2.11.6 for the capture runtime is now built with Rust 1.100.0.
 - Orb setup now reads Go's version from `go.mod`, warms the Go build cache,
   and checks capture manifests, tool versions, and installed dependencies
   before reusing them. Repository rules now ignore orb portal metadata.
