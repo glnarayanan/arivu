@@ -2,7 +2,7 @@
 
 # Container image for the isolated browser-capture helper. It ships the same
 # pinned runtime as the native release archive (.github/workflows/release.yml):
-# Node 24.22.1, the Chromium build pinned by Playwright in package-lock.json,
+# Node 24.22.3, the Chromium build pinned by Playwright in package-lock.json,
 # and Monolith 2.11.6 built with Rust 1.99.1. Build context: this directory.
 #
 # The root compose.yaml runs it with no network, a read-only root filesystem,
@@ -10,7 +10,7 @@
 # profiles in capture/security that let Chromium's own sandbox run. See
 # openwiki/operations/deployment.md ("Compose / PaaS").
 
-ARG NODE_IMAGE=node:24.22.1-trixie-slim
+ARG NODE_IMAGE=node:24.22.3-trixie-slim
 ARG RUST_IMAGE=rust:1.99.1-trixie
 
 FROM ${RUST_IMAGE} AS monolith
