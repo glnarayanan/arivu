@@ -426,8 +426,8 @@ but a running installer host and a running stack never share data.
 | `capture` | `capture/Dockerfile` | uid 10002, group `arivu` (10001) | `network_mode: none` | `/run/arivu-capture` socket volume, `/tmp` (tmpfs) |
 
 The capture image carries the same pinned runtime as the native release
-archive: Node 24.22.1, the Chromium build pinned by Playwright in
-`capture/package-lock.json`, and Monolith 2.11.6 built with Rust 1.99.1. It
+archive: Node 24.22.3, the Chromium build pinned by Playwright in
+`capture/package-lock.json`, and Monolith 2.11.6 built with Rust 1.100.0. It
 starts the helper as the systemd unit does (`node src/index.mjs` in
 `/usr/local/lib/arivu-capture`), after creating the shared
 `/run/arivu-capture/attempts` directory with mode `0770`.
