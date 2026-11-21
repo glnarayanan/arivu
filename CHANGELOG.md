@@ -4,6 +4,12 @@ All notable changes to this project will be documented in this file.
 
 ## Unreleased
 
+- Updated the capture runtime's Playwright to 1.65.1, which moves its pinned
+  Chromium from 158 to 159, and JSDOM to 31.0.1. Neither release changes how
+  the capture helper parses pages or starts Chromium's sandbox.
+- Updated the `peter-evans/create-pull-request` action used by the OpenWiki
+  workflow to 8.1.3.
+
 - Updated Node.js to 24.22.3 in CI, the release workflow, the capture
   image, and orb setup. This security release fixes TLS and HTTP/2 issues
   in the Node runtime that the native capture archive and the capture image
